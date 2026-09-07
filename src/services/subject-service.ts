@@ -1,0 +1,232 @@
+import { getSupabaseClient } from '@/lib/supabase'
+import { mapStudent, type StudentRow } from '@/services/student-service'
+import type {
+  CreateSubjectInput,
+  Subject,
+  SubjectClassroom,
+  SubjectStudentView,
+  UpdateSubjectInput,
+} from '@/types/subject'
+
+interface SubjectRow {
+  id: string
+  teacher_id: string
+  name: string
+  subject_code: string | null
+  description: string | null
+  academic_year: string | null
+  semester: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface SubjectClassroomRow {
+  id: string
+  subject_id: string
+  classroom_id: string
+  created_at: string
+  classrooms: { name: string } | null
+}
+
+function mapSubject(row: SubjectRow): Subject {
+  return {
+    id: row.id,
+    teacherId: row.teacher_id,
+    name: row.name,
+    subjectCode: row.subject_code,
+    description: row.description,
+    academicYear: row.academic_year,
+    semester: row.semester,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapSubjectClassroom(row: SubjectClassroomRow): SubjectClassroom {
+  return {
+    id: row.id,
+    subjectId: row.subject_id,
+    classroomId: row.classroom_id,
+    classroomName: row.classrooms?.name ?? null,
+    createdAt: row.created_at,
+  }
+}
+
+export async function getSubjects(): Promise<Subject[]> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('subjects')
+    .select('*')
+    .order('created_at', { ascending: true })
+
+  if (error) throw error
+  return (data as SubjectRow[]).map(mapSubject)
+}
+
+export async function getSubjectById(subjectId: string): Promise<Subject | null> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.from('subjects').select('*').eq('id', subjectId).maybeSingle()
+
+  if (error) throw error
+  return data ? mapSubject(data as SubjectRow) : null
+}
+
+/**
+ * Creates a subject and links every selected classroom to it as a single
+ * atomic operation via the `create_subject_with_classrooms` database
+ * function — see that function's comment in
+ * supabase/migrations/0002_subjects_topics.sql. This avoids the
+ * half-created-subject risk of inserting the subject and then linking
+ * classrooms as separate client-side statements, where a failure on any
+ * one link (e.g. a classroom_id the caller doesn't own) would otherwise
+ * leave an already-committed subject with zero or a partial set of
+ * classrooms behind.
+ */
+export async function createSubject(input: CreateSubjectInput): Promise<Subject> {
+  const supabase = getSupabaseClient()
+
+  const { data, error } = await supabase.rpc('create_subject_with_classrooms', {
+    p_name: input.name,
+    p_classroom_ids: input.classroomIds,
+    p_subject_code: input.subjectCode ?? null,
+    p_description: input.description ?? null,
+    p_academic_year: input.academicYear ?? null,
+    p_semester: input.semester ?? null,
+  })
+
+  if (error) throw error
+  return mapSubject(data as SubjectRow)
+}
+
+export async function updateSubject(subjectId: string, input: UpdateSubjectInput): Promise<Subject> {
+  const supabase = getSupabaseClient()
+
+  const patch: Record<string, unknown> = {}
+  if (input.name !== undefined) patch.name = input.name
+  if (input.subjectCode !== undefined) patch.subject_code = input.subjectCode
+  if (input.description !== undefined) patch.description = input.description
+  if (input.academicYear !== undefined) patch.academic_year = input.academicYear
+  if (input.semester !== undefined) patch.semester = input.semester
+
+  const { data, error } = await supabase
+    .from('subjects')
+    .update(patch)
+    .eq('id', subjectId)
+    .select('*')
+    .single()
+
+  if (error) throw error
+  return mapSubject(data as SubjectRow)
+}
+
+/**
+ * Subjects are never hard-deleted through the app (there is no delete RLS
+ * policy for them — see 0002_subjects_topics.sql) — archiving just flips
+ * `is_active` to false via a normal update, keeping topics and links
+ * intact for history.
+ */
+export async function archiveSubject(subjectId: string): Promise<Subject> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('subjects')
+    .update({ is_active: false })
+    .eq('id', subjectId)
+    .select('*')
+    .single()
+
+  if (error) throw error
+  return mapSubject(data as SubjectRow)
+}
+
+export async function linkClassroomToSubject(subjectId: string, classroomId: string): Promise<void> {
+  const supabase = getSupabaseClient()
+  const { error } = await supabase
+    .from('subject_classrooms')
+    .insert({ subject_id: subjectId, classroom_id: classroomId })
+
+  if (error) throw error
+}
+
+export async function unlinkClassroomFromSubject(subjectId: string, classroomId: string): Promise<void> {
+  const supabase = getSupabaseClient()
+  const { error } = await supabase
+    .from('subject_classrooms')
+    .delete()
+    .eq('subject_id', subjectId)
+    .eq('classroom_id', classroomId)
+
+  if (error) throw error
+}
+
+export async function getSubjectClassrooms(subjectId: string): Promise<SubjectClassroom[]> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('subject_classrooms')
+    .select('id, subject_id, classroom_id, created_at, classrooms(name)')
+    .eq('subject_id', subjectId)
+
+  if (error) throw error
+  return (data as unknown as SubjectClassroomRow[]).map(mapSubjectClassroom)
+}
+
+/**
+ * Derives the subject's student roster from
+ * subjects -> subject_classrooms -> classroom_students -> students —
+ * never a stored/duplicated row. A student who belongs to more than one
+ * of the subject's linked classrooms is de-duplicated (returned once,
+ * attributed to whichever linked classroom is encountered first).
+ *
+ * Pass `classroomId` to scope the roster to one linked classroom only
+ * (used by the Students tab's classroom filter); omit it for the full
+ * subject roster across every linked classroom.
+ */
+export async function getSubjectStudents(
+  subjectId: string,
+  classroomId?: string,
+): Promise<SubjectStudentView[]> {
+  const supabase = getSupabaseClient()
+
+  const { data: links, error: linksError } = await supabase
+    .from('subject_classrooms')
+    .select('classroom_id, classrooms(id, name)')
+    .eq('subject_id', subjectId)
+
+  if (linksError) throw linksError
+
+  const linkRows = (links ?? []) as unknown as {
+    classroom_id: string
+    classrooms: { id: string; name: string } | null
+  }[]
+  const classroomIds = classroomId
+    ? linkRows.filter((link) => link.classroom_id === classroomId).map((link) => link.classroom_id)
+    : linkRows.map((link) => link.classroom_id)
+
+  if (classroomIds.length === 0) return []
+
+  const classroomNameById = new Map(linkRows.map((link) => [link.classroom_id, link.classrooms?.name ?? '']))
+
+  const { data, error } = await supabase
+    .from('classroom_students')
+    .select('classroom_id, students(*)')
+    .in('classroom_id', classroomIds)
+
+  if (error) throw error
+
+  const rows = data as unknown as { classroom_id: string; students: StudentRow }[]
+  const seen = new Set<string>()
+  const result: SubjectStudentView[] = []
+
+  for (const row of rows) {
+    if (seen.has(row.students.id)) continue
+    seen.add(row.students.id)
+    result.push({
+      ...mapStudent(row.students),
+      classroomId: row.classroom_id,
+      classroomName: classroomNameById.get(row.classroom_id) ?? '',
+    })
+  }
+
+  return result.sort((a, b) => (a.number ?? Number.MAX_SAFE_INTEGER) - (b.number ?? Number.MAX_SAFE_INTEGER))
+}

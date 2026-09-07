@@ -322,3 +322,202 @@ by application code.
 
 Enabled for `gen_random_uuid()`, used as the default for every table's
 `id` primary key.
+
+---
+
+# Phase 3: subjects, subject↔classroom links, topics
+
+This section explains the schema added in
+`supabase/migrations/0002_subjects_topics.sql`, on top of everything
+above. Scope is deliberately narrow: subjects, the subject↔classroom
+relationship, subject student enrollment (derived, not stored), and
+topics. Attendance, assignments, submissions, and grades stay demo-only
+in the application and are **not** modeled here yet.
+
+> Like 0001, this migration has never been applied to a live database as
+> of writing, and was dry-run against a throwaway local Postgres instance
+> (with a hand-rolled `auth` schema/role shim) during review — see
+> "Security review" below for the exact scenarios that were empirically
+> tested, not just reasoned about.
+
+## Tables
+
+### `subjects`
+
+A subject (วิชา) taught by one teacher — e.g. name "วิทยาศาสตร์", `subject_code`
+"ว32101", `academic_year` "2569", `semester` "1". Owned by exactly one
+teacher via `teacher_id`, same ownership shape as `classrooms`.
+
+### `subject_classrooms`
+
+The join table linking a subject to the classroom(s) it's taught to.
+`(subject_id, classroom_id)` unique together. A subject can link to many
+classrooms (taught to multiple sections); a classroom can host many
+subjects.
+
+### `topics`
+
+A syllabus topic/unit within a subject (e.g. "บทที่ 1 แรงและการเคลื่อนที่"),
+ordered by `position`. Always belongs to exactly one subject — no
+standalone topics.
+
+## How a subject's student roster is derived
+
+**Students are never duplicated or stored per-subject.** "Which students
+are in this subject" is always computed on read, via:
+
+```
+subjects → subject_classrooms → classroom_students → students
+```
+
+i.e. a student is "in" a subject if and only if they belong to at least
+one classroom currently linked to that subject. `subject-service.ts`'s
+`getSubjectStudents()` implements exactly this: look up the subject's
+linked classroom ids via `subject_classrooms`, then pull
+`classroom_students` for those classrooms joined with `students`,
+de-duplicating a student who happens to belong to more than one of the
+subject's linked classrooms (returned once). There is no
+`subject_students` table and no student row that "belongs to" a subject.
+
+This is why unlinking a classroom from a subject (`subject_classrooms`
+delete) is enough to remove that classroom's students from the subject's
+roster on the next read — nothing about the students or their classroom
+membership changes at all, only the link.
+
+### Future extension: `subject_students`
+
+Pure classroom-derivation can't express three real scenarios: **elective
+subjects** (a hand-picked subset of students, not "everyone in classroom
+X"), **individual removals** (a specific student opted out despite their
+classroom being linked), and **special enrollment** (a student from an
+unlinked classroom sitting in on a subject anyway). A future
+`subject_students` table with an `enrollment_type` of `'include'` /
+`'exclude'` — overriding or extending the classroom-derived roster
+without ever storing duplicate student data — is sketched in a comment
+at the bottom of `0002_subjects_topics.sql`, but deliberately not built
+yet: none of these three scenarios has a real product need today, and
+speculatively building it now would be exactly the kind of premature
+abstraction the rest of this schema has avoided.
+
+## Cross-teacher link prevention
+
+**The problem, symmetric with `classroom_students` in Phase 1:** if
+linking a classroom into a subject only checked "do I own the subject",
+a teacher could attach *another* teacher's classroom (and thus that
+classroom's students) to their own subject. If it only checked "do I own
+the classroom", a teacher could attach their classroom to a subject they
+don't own.
+
+**The fix:** `subject_classrooms_insert_own` requires **both**:
+
+1. the target subject belongs to the caller (`subjects.teacher_id = auth.uid()`), **and**
+2. the target classroom belongs to the caller (`classrooms.teacher_id = auth.uid()`).
+
+Unlike the Phase 1 `classroom_students` insert policy, this needed no
+`SECURITY DEFINER` helper functions and no RLS-visibility bootstrapping
+workaround: `subjects` and `classrooms` are both independent parent
+tables with their own straightforward ownership columns, so two direct
+`exists (...)` subqueries are sufficient — there's no self-referential
+dependency on `subject_classrooms` itself, and no table whose SELECT
+policy depends on the very row being inserted (the way
+`students_select_via_classroom` depended on `classroom_students`).
+
+## Atomic subject creation (`create_subject_with_classrooms`)
+
+Creating a subject and linking N selected classrooms used to be N+1
+separate client-side statements. If any single link insert failed
+partway through (e.g. a `classroom_id` the caller doesn't actually own —
+exactly the case `subject_classrooms_insert_own` exists to catch), the
+subject row itself would already be committed, leaving a subject with
+zero or a partial set of linked classrooms silently visible in the UI —
+a half-created subject.
+
+`public.create_subject_with_classrooms(...)` wraps the subject insert and
+every classroom-link insert in one PL/pgSQL function, run as a single
+atomic unit: if any insert raises, everything rolls back together,
+including the subject row. Like `create_student_and_enroll` in Phase 1,
+it runs as `SECURITY INVOKER` — the existing RLS policies already grant a
+legitimate teacher everything the function does, so there's nothing
+privileged to wrap, just one round trip with a transactional guarantee
+instead of N unguarded ones. `subject-service.ts`'s `createSubject()`
+calls this RPC exclusively; there is no code path that inserts into
+`subjects` directly from the client.
+
+Unlike `create_student_and_enroll`, there was no RLS-visibility
+bootstrapping problem to design around here: `subjects_select_own` only
+checks `subjects.teacher_id = auth.uid()`, which is already true the
+instant the row is inserted — it doesn't depend on `subject_classrooms`
+existing first, so the function's final `select ... into v_subject` is a
+plain, ordinary RLS-checked read.
+
+## Subject delete/cascade strategy
+
+Like `students` in Phase 1, **`subjects` has no `DELETE` RLS policy at
+all.** Retiring a subject goes through `archiveSubject()` (an `UPDATE`
+setting `is_active = false`), never a hard delete through the app. This
+keeps a subject's topics — and, once that phase is migrated, its
+attendance/assignments/grades — intact as history instead of letting a
+single teacher action silently destroy academic records.
+
+| Constraint | Behavior | Why |
+|---|---|---|
+| `subjects.teacher_id → profiles(id)` | `on delete restrict` | Same rationale as `classrooms.teacher_id` in Phase 1 — a teacher's subjects must never disappear as a *side effect* of deleting a profile. Reassigning/archiving subjects first is an explicit, forced step. |
+| `subject_classrooms.subject_id → subjects(id)` | `on delete cascade` | If a subject were ever hard-deleted (only reachable via `service_role`, never via RLS — see above), its links should go with it rather than leaving dangling rows. |
+| `subject_classrooms.classroom_id → classrooms(id)` | `on delete cascade` | Deleting a classroom (`classrooms_delete_own` does allow this) removes just the link row — the subject and its topics are unaffected; the subject only loses that one classroom's students from its derived roster. Same pattern as `classroom_students.classroom_id` in Phase 1. |
+| `topics.subject_id → subjects(id)` | `on delete cascade` | Topics have no independent existence outside their subject; if the subject were ever hard-deleted, its topics should go with it. |
+
+## Unlink vs delete
+
+`unlinkClassroomFromSubject()` (`subject_classrooms` delete) removes
+*only* that one link row. It never touches the subject, the classroom,
+or any student/membership data — a classroom's students simply stop
+appearing in that subject's derived roster on the next read. This
+mirrors `removeStudentFromClassroom` in Phase 1 removing only a
+`classroom_students` row.
+
+## Demo vs Supabase data mode
+
+There is no login page in this app yet. `src/hooks/use-data-mode.ts`
+decides, for the Subjects/Topics UI specifically, whether to read from
+the demo context (mock, in-memory, always available) or the real
+Supabase-backed services — and picks the real services **only when
+Supabase is configured AND a signed-in session actually exists**.
+"Configured but signed out" (the expected state for the deployed demo
+even if it's ever pointed at a real Supabase project, since there's no
+way to sign in yet) falls back to demo mode rather than rendering a
+broken or empty real UI. This is what keeps demo and production data
+from ever mixing — the two never read from or write to each other, and
+which one is active is decided once, before any Subjects data fetch
+happens.
+
+The เช็คชื่อ/งาน/คะแนน tabs are intentionally **not** switched by data
+mode at all in this phase: when a subject is backed by real data, those
+three tabs render a `DemoOnlyNotice` placeholder instead of the demo
+attendance/assignments/grades components, because those components' data
+(`DemoSubjectAssignment`, `DemoSubjectAttendance`) lives entirely in the
+in-memory demo context and has no relationship to a real subject's UUID
+— rendering them against a real subject would silently show unrelated
+mock data instead of that subject's data. This keeps the gap explicit
+until that phase is migrated, rather than papering over it.
+
+## Security review (Phase 3)
+
+Each item below was verified empirically against a throwaway local
+Postgres 16 instance with a hand-rolled `auth.uid()` / `authenticated` /
+`anon` role shim (not just reasoned about), covering two teachers, a
+role-`student` profile, and every INSERT/SELECT/DELETE path introduced
+by `0002_subjects_topics.sql`.
+
+| # | Item | Result |
+|---|---|---|
+| A | Subject RLS (owner-only CRUD, no delete) | PASS |
+| B | Classroom linking ownership (both subject AND classroom must be owned by caller) | PASS |
+| C | Topic ownership (transitive through subject) | PASS |
+| D | Cross-teacher isolation (subjects, links, topics) | PASS |
+| E | Anonymous access (`anon` role) | PASS — 0 rows |
+| F | Atomic subject creation (bad classroom_id rolls back the whole subject) | PASS |
+| G | Student derivation without duplication | PASS (by construction — no `subject_students` table exists) |
+| H | Delete/cascade behavior | PASS |
+
+See the top-of-file "Phase 3" section of the main security report (or the
+session's final report) for the full scenario-by-scenario writeup.

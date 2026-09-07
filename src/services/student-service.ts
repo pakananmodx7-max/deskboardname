@@ -6,7 +6,7 @@ import type {
   UpdateStudentInput,
 } from '@/types/student'
 
-interface StudentRow {
+export interface StudentRow {
   id: string
   student_code: string | null
   number: number | null
@@ -26,7 +26,10 @@ interface ClassroomStudentRow {
   students: StudentRow
 }
 
-function mapStudent(row: StudentRow): Student {
+/** Exported so subject-service.ts can map the same `students` row shape
+ * when deriving a subject's roster via subject_classrooms ->
+ * classroom_students -> students, without duplicating the mapping logic. */
+export function mapStudent(row: StudentRow): Student {
   return {
     id: row.id,
     studentCode: row.student_code,

@@ -51,7 +51,7 @@ pattern) — it will not be committed.
 Restart `npm run dev` after creating or changing this file (Vite only
 reads env files at server start).
 
-## 5. Run the SQL migration
+## 5. Run the SQL migrations
 
 In the Supabase dashboard: **SQL Editor → New query**, paste the full
 contents of `supabase/migrations/0001_init.sql`, and run it. This
@@ -59,8 +59,15 @@ creates the `profiles`, `classrooms`, `students`, and
 `classroom_students` tables with RLS enabled and the policies described
 in `docs/DATABASE.md`.
 
+Then, in a new query, paste and run
+`supabase/migrations/0002_subjects_topics.sql` (must run **after**
+0001 — it references `profiles` and `classrooms`). This adds `subjects`,
+`subject_classrooms`, and `topics`, again with RLS enabled — see the
+"Phase 3" section of `docs/DATABASE.md`.
+
 (If you use the Supabase CLI locally instead, `supabase db push` or
-`supabase migration up` against this file works the same way.)
+`supabase migration up` runs every file in `supabase/migrations/` in
+order the same way.)
 
 ## 6. Create a teacher user to test with
 
