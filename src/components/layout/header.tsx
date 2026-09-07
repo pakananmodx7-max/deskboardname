@@ -1,13 +1,40 @@
 import { Bell, Menu } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { Avatar } from '@/components/ui/avatar'
 import { NativeSelect } from '@/components/ui/select'
+import { isSupabaseConfigured } from '@/lib/supabase'
+import { getClassrooms } from '@/services/classroom-service'
+import type { Classroom } from '@/types/classroom'
 
 interface HeaderProps {
   onOpenMobileMenu: () => void
 }
 
 export function Header({ onOpenMobileMenu }: HeaderProps) {
+  const [classrooms, setClassrooms] = useState<Classroom[]>([])
+  const [selectedClassroomId, setSelectedClassroomId] = useState('')
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return
+
+    let active = true
+    getClassrooms()
+      .then((result) => {
+        if (!active) return
+        setClassrooms(result)
+        setSelectedClassroomId((current) => current || (result[0]?.id ?? ''))
+      })
+      .catch(() => {
+        // Header is shown on every page; failures here are non-critical,
+        // so we quietly fall back to the disabled placeholder below.
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
+
   return (
     <header className="flex h-16 items-center gap-3 border-b border-border bg-card px-4 sm:px-6">
       <button
@@ -26,15 +53,24 @@ export function Header({ onOpenMobileMenu }: HeaderProps) {
 
         <div className="hidden h-6 w-px bg-border sm:block" />
 
-        <NativeSelect
-          defaultValue="ม.5/1"
-          className="w-auto min-w-24"
-          aria-label="เลือกห้องเรียน"
-        >
-          <option value="ม.5/1">ม.5/1</option>
-          <option value="ม.5/2">ม.5/2</option>
-          <option value="ม.5/3">ม.5/3</option>
-        </NativeSelect>
+        {classrooms.length > 0 ? (
+          <NativeSelect
+            value={selectedClassroomId}
+            onChange={(e) => setSelectedClassroomId(e.target.value)}
+            className="w-auto min-w-24"
+            aria-label="เลือกห้องเรียน"
+          >
+            {classrooms.map((classroom) => (
+              <option key={classroom.id} value={classroom.id}>
+                {classroom.name}
+              </option>
+            ))}
+          </NativeSelect>
+        ) : (
+          <NativeSelect className="w-auto min-w-24" aria-label="เลือกห้องเรียน" disabled>
+            <option>ยังไม่มีห้องเรียน</option>
+          </NativeSelect>
+        )}
 
         <span className="hidden truncate text-sm text-muted-foreground md:block">
           ภาคเรียนที่ 1 / 2569
