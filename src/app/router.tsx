@@ -1,6 +1,12 @@
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 
+import { ProtectedRoute } from '@/components/auth/protected-route'
 import { TeacherLayout } from '@/layouts/teacher-layout'
+import { AuthProvider } from '@/lib/auth-context'
+import { ForgotPasswordPage } from '@/pages/auth/forgot-password-page'
+import { LoginPage } from '@/pages/auth/login-page'
+import { ResetPasswordPage } from '@/pages/auth/reset-password-page'
+import { SignupPage } from '@/pages/auth/signup-page'
 import { AiPage } from '@/pages/teacher/ai/ai-page'
 import { AssignmentsPage } from '@/pages/teacher/assignments/assignments-page'
 import { AttendancePage } from '@/pages/teacher/attendance/attendance-page'
@@ -19,9 +25,17 @@ const router = createBrowserRouter([
     path: '/',
     element: <Navigate to="/teacher/dashboard" replace />,
   },
+  { path: 'login', element: <LoginPage /> },
+  { path: 'signup', element: <SignupPage /> },
+  { path: 'forgot-password', element: <ForgotPasswordPage /> },
+  { path: 'reset-password', element: <ResetPasswordPage /> },
   {
     path: '/teacher',
-    element: <TeacherLayout />,
+    element: (
+      <ProtectedRoute>
+        <TeacherLayout />
+      </ProtectedRoute>
+    ),
     children: [
       { index: true, element: <Navigate to="/teacher/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
@@ -48,5 +62,9 @@ const router = createBrowserRouter([
 ])
 
 export function AppRouter() {
-  return <RouterProvider router={router} />
+  return (
+    <AuthProvider>
+      <RouterProvider router={router} />
+    </AuthProvider>
+  )
 }

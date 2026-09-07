@@ -1,19 +1,16 @@
-import { useDataMode } from '@/hooks/use-data-mode'
+import { dataMode } from '@/lib/data-mode'
 
 import { SubjectsPageDemo } from './subjects-page-demo'
 import { SubjectsPageReal } from './subjects-page-real'
 
 /**
  * Branches between the demo (mock, in-memory) Subjects page and the real
- * Supabase-backed one. See src/hooks/use-data-mode.ts for how the mode is
- * decided — real data is only used once Supabase is configured AND a
- * session is signed in, so the deployed demo (no env vars, no auth UI
- * yet) always renders SubjectsPageDemo.
+ * Supabase-backed one. ProtectedRoute (wrapping /teacher/*) already
+ * guarantees a signed-in session by the time this renders in supabase
+ * mode, so the branch here is a plain, synchronous check against the
+ * static dataMode constant — see src/lib/data-mode.ts and
+ * src/components/auth/protected-route.tsx.
  */
 export function SubjectsPage() {
-  const { status, mode } = useDataMode()
-
-  if (status === 'resolving') return null
-
-  return mode === 'supabase' ? <SubjectsPageReal /> : <SubjectsPageDemo />
+  return dataMode === 'supabase' ? <SubjectsPageReal /> : <SubjectsPageDemo />
 }

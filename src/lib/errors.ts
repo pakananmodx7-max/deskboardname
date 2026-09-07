@@ -13,6 +13,20 @@ const INVALID_AUTHORIZATION = '28000'
 const INVALID_PARAMETER = '22023'
 
 /**
+ * supabase-js's AuthError only carries a stable English `.message` (no
+ * Postgres error code) — matched by substring since the exact wording is
+ * the only stable identifier across supabase-js versions.
+ */
+const AUTH_ERROR_MESSAGES: [pattern: RegExp, thai: string][] = [
+  [/invalid login credentials/i, 'อีเมลหรือรหัสผ่านไม่ถูกต้อง'],
+  [/email not confirmed/i, 'กรุณายืนยันอีเมลของคุณก่อนเข้าสู่ระบบ'],
+  [/user already registered/i, 'อีเมลนี้มีผู้ใช้งานในระบบแล้ว'],
+  [/password should be at least/i, 'รหัสผ่านสั้นเกินไป กรุณาใช้อย่างน้อย 6 ตัวอักษร'],
+  [/unable to validate email address/i, 'รูปแบบอีเมลไม่ถูกต้อง'],
+  [/for security purposes, you can only request this after/i, 'กรุณารอสักครู่ก่อนลองใหม่อีกครั้ง'],
+]
+
+/**
  * Our own SQL functions/triggers raise exceptions with a Thai message
  * already (see supabase/migrations/0001_init.sql), so a matching error
  * code isn't automatically "generic" — only fall back to a canned
@@ -39,6 +53,13 @@ export function toFriendlyErrorMessage(error: unknown, fallback = 'เกิด�
   }
 
   const pgError = error as PostgrestLikeError
+
+  for (const [pattern, thai] of AUTH_ERROR_MESSAGES) {
+    if (pgError?.message && pattern.test(pgError.message)) {
+      return thai
+    }
+  }
+
   if (pgError?.code === UNIQUE_VIOLATION) {
     return 'ข้อมูลนี้มีอยู่ในระบบแล้ว'
   }

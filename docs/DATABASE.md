@@ -521,3 +521,144 @@ by `0002_subjects_topics.sql`.
 
 See the top-of-file "Phase 3" section of the main security report (or the
 session's final report) for the full scenario-by-scenario writeup.
+
+---
+
+# Phase 4: real teacher authentication
+
+This section explains `supabase/migrations/0003_auth_profile.sql`, on top
+of everything above. Scope: wiring `auth.users` signup to an automatic
+`public.profiles` row. Nothing about classrooms, students, subjects, or
+topics changes.
+
+## `handle_new_user` — profile creation moves entirely server-side
+
+Phase 1's `profiles_insert_own` RLS policy let an authenticated client
+`INSERT` its own `profiles` row directly, gated by
+`with check (id = auth.uid() and role = 'teacher')`. That was already
+safe against role escalation, but profile creation was still a
+client-initiated request — one more thing the frontend has to remember to
+do, and one more `INSERT` whose `WITH CHECK` clause was the only thing
+standing between a normal signup and a client that sends `role: 'admin'`.
+
+`0003_auth_profile.sql` replaces that entirely with a trigger:
+`public.handle_new_user()` fires `after insert on auth.users`, i.e. the
+instant `supabase.auth.signUp()` succeeds, and inserts the matching
+`profiles` row itself — a normal signup flow never touches `profiles` at
+all, client-side, in any way.
+
+**Why a client can never make this insert admin, or spoof another user:**
+
+- `role` is hardcoded to the literal `'teacher'` in the function body. It
+  is never read from `new.raw_user_meta_data` or anywhere else
+  client-controlled — even a client that calls
+  `supabase.auth.signUp({ ..., options: { data: { role: 'admin' } } })`
+  has that `role` key simply never looked at. There is no code path
+  through which client input can reach the `role` column. (Confirmed
+  empirically — see "Security review" below.)
+- `id` and `email` come from `new.id` / `new.email`, the just-created
+  `auth.users` row — not from any client-supplied parameter. A trigger
+  has no caller-supplied arguments at all (only `NEW`/`OLD`), so there is
+  no "which id" input to spoof in the first place, structurally, not just
+  by a runtime check.
+- `display_name` comes from `new.raw_user_meta_data->>'display_name'`
+  (the signup form's one text field). Not authorization-sensitive — same
+  as `display_name` already being freely self-editable via
+  `profiles_update_own`.
+
+**Why `SECURITY DEFINER`:** this trigger fires as part of the
+`auth.users` insert Supabase's own auth service performs, not as a normal
+client request running as `authenticated`. `profiles` has RLS enabled
+with **no INSERT policy at all** after this migration (see below), so the
+invoking role has no reason to already hold INSERT privileges on it.
+Running as the function owner is what lets it write the row regardless of
+which role performed the `auth.users` insert. `search_path` is pinned,
+same pattern as every other `SECURITY DEFINER` function in this schema.
+
+**Why no `EXECUTE` grant/revoke, unlike `is_student_creator` /
+`has_existing_classroom_link` in Phase 1:** those are called from RLS
+policies evaluated in a normal client session, so PUBLIC's default
+EXECUTE had to be revoked and re-granted narrowly. `handle_new_user`
+is declared `returns trigger`, which Postgres refuses to execute except
+as an actual trigger — `select public.handle_new_user()` fails outright —
+so it has no callable surface for a client to invoke directly regardless
+of grants. Revoking PUBLIC's default EXECUTE here would only risk
+breaking Supabase's own internal auth flow for a security property this
+function already has for free.
+
+`on conflict (id) do nothing` is defensive only: under normal operation
+this fires once per new auth user with a fresh `id`, so nothing conflicts.
+It just means a retry can never turn into a hard error that blocks
+signup.
+
+## `profiles` loses its INSERT policy
+
+`drop policy if exists "profiles_insert_own" on public.profiles;` — now
+that every profile is created automatically by the trigger, the client
+never legitimately needs to `INSERT` into `profiles` at all. Removing the
+policy removes that entire request from the app's authorization surface,
+rather than leaving a now-unnecessary "insert your own row, but only as
+`role='teacher'`" policy around for defense in depth that no longer
+defends anything. After this migration, `profiles` has:
+
+- `SELECT` — own row only (`profiles_select_own`, Phase 1, unchanged)
+- `UPDATE` — own row only, `role` separately blocked by
+  `protect_profile_privileged_fields` (Phase 1, unchanged)
+- **no `INSERT` policy** — the only way a `profiles` row comes into
+  existence is `handle_new_user()`, which bypasses RLS via
+  `SECURITY DEFINER` and is not reachable as a client-callable function.
+- no `DELETE` policy (unchanged from Phase 1)
+
+## Frontend auth architecture
+
+- **`src/lib/data-mode.ts`** — `dataMode: 'demo' | 'supabase'`, a plain
+  constant computed once from `isSupabaseConfigured`. Unlike the Phase 3
+  version of this concept, it does **not** depend on whether a session
+  exists: Supabase configured means the real system is active, full stop;
+  an unauthenticated visitor gets sent to `/login`, not silently shown
+  demo data. Supabase not configured means demo mode is active and never
+  requires signing in. This is what keeps demo and production data from
+  ever mixing, now that a real login exists to make "configured but
+  signed out" a meaningful, reachable state.
+- **`src/lib/auth-context.tsx`** — `AuthProvider` / `useAuth()`, the
+  single source of truth for session + profile state (`status`, `user`,
+  `profile`) and every auth action (`signIn`, `signUp`, `signOut`,
+  `sendPasswordReset`, `updatePassword`). Always mounted (wraps the whole
+  router), including in demo mode, where it just stays in an inert
+  `{status:'ready', user:null, profile:null}` state — nothing in demo
+  mode ever calls its action methods, since the auth pages redirect away
+  before rendering a form when `dataMode === 'demo'`.
+- **`src/components/auth/protected-route.tsx`** — wraps the `/teacher`
+  route's `element`. Demo mode: always renders. Supabase mode: renders
+  only once a session is confirmed present; no session → `<Navigate
+  to="/login" />`; still resolving the initial check → a lightweight
+  loading state (never a flash of teacher data before the check finishes).
+
+## Manual sign-in workaround retired
+
+`docs/SUPABASE_SETUP.md`'s previous "§6 Create a teacher user to test
+with" (insert a profile row by hand, sign in via the browser console) is
+no longer needed or accurate — signup now creates the profile
+automatically, and a real `/login` page exists. That section has been
+replaced with a pointer to the real signup flow.
+
+## Security review (Phase 4)
+
+Verified empirically against a throwaway local Postgres 16 instance —
+this time with the auth shim extended to include an `auth.users` table
+and a low-privilege `supabase_auth_admin` role (granted only `INSERT` on
+`auth.users`, deliberately **no** grant on `public.profiles`) standing in
+for the real Supabase auth service role, so the test actually exercises
+the `SECURITY DEFINER` bypass rather than passing only because the test
+role happened to have broad privileges.
+
+| Item | Result |
+|---|---|
+| User cannot choose `admin` role | PASS — `raw_user_meta_data` containing `{"role":"admin"}` produced a `role='teacher'` profile; the field is never read |
+| User cannot modify their own role | PASS — `protect_profile_privileged_fields` (Phase 1) still blocks it; re-verified after this migration |
+| Profile creation cannot spoof another auth user | PASS — by construction (trigger has no caller-supplied id parameter; `id`/`email` always come from `NEW`) |
+| Unauthenticated users cannot access teacher data | PASS — anon reads 0 profiles; `ProtectedRoute` redirects unauthenticated `/teacher/*` visits to `/login` (verified live against this dev environment's real, schema-applied Supabase project) |
+| Session/logout behavior is correct | PASS — sign out clears the session and returns to `/login`; verified the redirect-to-login path live in the browser |
+| RLS still works | PASS — cross-teacher profile read still denied; classroom/subject/topic policies from Phases 1–3 untouched and re-spot-checked (new teacher can still create a classroom end-to-end) |
+
+No security-critical FAIL.

@@ -65,33 +65,37 @@ Then, in a new query, paste and run
 `subject_classrooms`, and `topics`, again with RLS enabled — see the
 "Phase 3" section of `docs/DATABASE.md`.
 
+Finally, in a new query, paste and run
+`supabase/migrations/0003_auth_profile.sql` (must run **after** 0001 —
+it alters `public.profiles`). This adds the `handle_new_user` trigger
+that automatically creates a `role='teacher'` profile for every new
+signup, and removes the client's ability to insert its own profile row —
+see the "Phase 4" section of `docs/DATABASE.md`.
+
 (If you use the Supabase CLI locally instead, `supabase db push` or
 `supabase migration up` runs every file in `supabase/migrations/` in
 order the same way.)
 
-## 6. Create a teacher user to test with
+## 6. Sign up a teacher account
 
-There is no login page in this phase of the app yet, but the schema's
-RLS policies require an authenticated user (`auth.uid()`) for every
-classroom/student operation. To test manually before auth is wired up:
+With all three migrations applied, real auth is fully wired up — no
+manual profile-row workaround needed anymore:
 
-1. **Authentication → Users → Add user** in the Supabase dashboard,
-   create a test user (email + password).
-2. In **SQL Editor**, insert a matching profile row so the RLS insert
-   policies on `classrooms`/`students` recognize this user as a
-   teacher:
+1. Run `npm run dev` and open the app. Since Supabase is now configured,
+   visiting any `/teacher/*` route redirects to `/login`.
+2. Click **สมัครใช้งาน** (sign up), fill in display name / email /
+   password / confirm password, and submit.
+3. `handle_new_user` (0003) creates the matching `profiles` row
+   automatically with `role='teacher'` — there is nothing to do by hand.
+4. Depending on your project's **Authentication → Providers → Email →
+   Confirm email** setting, you'll either land straight in
+   `/teacher/dashboard` or see a "check your email" message and need to
+   click the confirmation link first.
 
-   ```sql
-   insert into public.profiles (id, display_name, email, role)
-   values ('<the-user-id-from-step-1>', 'ครูทดสอบ', 'teacher@example.com', 'teacher');
-   ```
-3. Use the Supabase JS client to sign in as that user (e.g. temporarily
-   call `supabase.auth.signInWithPassword(...)` from the browser
-   console on the running app) before exercising the Students/Classrooms
-   UI.
-
-A real login page is the natural next step — see the final report's
-recommended next step.
+If your project has email confirmation ON but no custom SMTP configured,
+Supabase's default email sender has a low rate limit — for fast local
+iteration you may want to temporarily turn confirmation off in
+**Authentication → Providers → Email**.
 
 ## Testing the connection
 
