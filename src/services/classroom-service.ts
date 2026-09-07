@@ -1,5 +1,5 @@
 import { getSupabaseClient } from '@/lib/supabase'
-import type { Classroom, CreateClassroomInput } from '@/types/classroom'
+import type { Classroom, CreateClassroomInput, UpdateClassroomInput } from '@/types/classroom'
 
 interface ClassroomRow {
   id: string
@@ -87,4 +87,48 @@ export async function createClassroom(input: CreateClassroomInput): Promise<Clas
 
   if (error) throw error
   return mapClassroom(data as ClassroomRow)
+}
+
+/**
+ * `classrooms_update_own` (0001_init.sql) already scopes this to rows
+ * where `teacher_id = auth.uid()` — there is no `teacher_id` field on
+ * `UpdateClassroomInput` at all, so ownership can never be reassigned
+ * through this function, and a teacher can never touch a classroom they
+ * don't own regardless of what id is passed in.
+ */
+export async function updateClassroom(classroomId: string, input: UpdateClassroomInput): Promise<Classroom> {
+  const supabase = getSupabaseClient()
+
+  const patch: Record<string, unknown> = {}
+  if (input.name !== undefined) patch.name = input.name
+  if (input.gradeLevel !== undefined) patch.grade_level = input.gradeLevel
+  if (input.section !== undefined) patch.section = input.section
+  if (input.academicYear !== undefined) patch.academic_year = input.academicYear
+  if (input.semester !== undefined) patch.semester = input.semester
+  if (input.isActive !== undefined) patch.is_active = input.isActive
+
+  const { data, error } = await supabase
+    .from('classrooms')
+    .update(patch)
+    .eq('id', classroomId)
+    .select('*')
+    .single()
+
+  if (error) throw error
+  return mapClassroom(data as ClassroomRow)
+}
+
+/**
+ * Classrooms are never hard-deleted through the app — there is no
+ * DELETE-through-the-UI path here, matching `students`/`subjects`
+ * (deliberately no destructive default). Archiving just flips
+ * `is_active` to false; everything the classroom still references
+ * (students, subject links) stays intact.
+ */
+export async function archiveClassroom(classroomId: string): Promise<Classroom> {
+  return updateClassroom(classroomId, { isActive: false })
+}
+
+export async function reactivateClassroom(classroomId: string): Promise<Classroom> {
+  return updateClassroom(classroomId, { isActive: true })
 }

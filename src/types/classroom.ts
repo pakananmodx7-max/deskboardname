@@ -18,3 +18,12 @@ export interface CreateClassroomInput {
   academicYear?: string | null
   semester?: string | null
 }
+
+export interface UpdateClassroomInput {
+  name?: string
+  gradeLevel?: string | null
+  section?: string | null
+  academicYear?: string | null
+  semester?: string | null
+  isActive?: boolean
+}

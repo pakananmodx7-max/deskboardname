@@ -7,6 +7,7 @@ import {
   GraduationCap,
   LayoutDashboard,
   Plug,
+  School,
   Settings,
   Users,
   type LucideIcon,
@@ -20,6 +21,7 @@ export interface NavItem {
 
 export const navItems: NavItem[] = [
   { label: 'Dashboard', to: '/teacher/dashboard', icon: LayoutDashboard },
+  { label: 'ห้องเรียน', to: '/teacher/classrooms', icon: School },
   { label: 'Students', to: '/teacher/students', icon: Users },
   { label: 'Subjects', to: '/teacher/subjects', icon: BookOpen },
   { label: 'Attendance', to: '/teacher/attendance', icon: CalendarCheck },

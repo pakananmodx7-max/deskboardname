@@ -10,6 +10,8 @@ import { SignupPage } from '@/pages/auth/signup-page'
 import { AiPage } from '@/pages/teacher/ai/ai-page'
 import { AssignmentsPage } from '@/pages/teacher/assignments/assignments-page'
 import { AttendancePage } from '@/pages/teacher/attendance/attendance-page'
+import { ClassroomDetailPage } from '@/pages/teacher/classrooms/classroom-detail-page'
+import { ClassroomsPage } from '@/pages/teacher/classrooms/classrooms-page'
 import { DashboardPage } from '@/pages/teacher/dashboard/dashboard-page'
 import { GradesPage } from '@/pages/teacher/grades/grades-page'
 import { IntegrationsPage } from '@/pages/teacher/integrations/integrations-page'
@@ -39,6 +41,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/teacher/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
+      { path: 'classrooms', element: <ClassroomsPage /> },
+      { path: 'classrooms/:classroomId', element: <ClassroomDetailPage /> },
       { path: 'students', element: <StudentsPage /> },
       { path: 'subjects', element: <SubjectsPage /> },
       { path: 'subjects/:subjectId', element: <SubjectDetailPage /> },
