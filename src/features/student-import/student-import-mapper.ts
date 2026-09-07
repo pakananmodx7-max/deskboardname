@@ -43,6 +43,16 @@ for (const field of IMPORT_TARGET_FIELDS) {
 }
 
 /**
+ * Every known header spelling across all target fields, flattened and
+ * deduped. Exported so detect-header-row.ts can score candidate header
+ * rows against the same vocabulary autoDetectMapping uses, rather than
+ * maintaining a second, potentially-drifting word list.
+ */
+export const ALL_HEADER_ALIASES: string[] = Array.from(
+  new Set(IMPORT_TARGET_FIELDS.flatMap((field) => HEADER_ALIASES[field])),
+)
+
+/**
  * Guesses which spreadsheet column maps to which target field based on
  * common Thai/English header spellings. The result is always editable by
  * the user afterward — this is a starting point, not a guarantee.

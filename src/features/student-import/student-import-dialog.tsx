@@ -11,7 +11,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { NativeSelect } from '@/components/ui/select'
-import { parseStudentFile } from '@/features/student-import/parse-student-file'
+import {
+  detectHeaderRow,
+  HEADER_DETECTION_CONFIDENCE_THRESHOLD,
+  HEADER_SCAN_LIMIT,
+} from '@/features/student-import/detect-header-row'
+import { HeaderRowPicker } from '@/features/student-import/header-row-picker'
+import {
+  buildParsedSpreadsheet,
+  readSpreadsheetGrid,
+  type SpreadsheetGrid,
+} from '@/features/student-import/parse-student-file'
 import { autoDetectMapping } from '@/features/student-import/student-import-mapper'
 import { StudentImportPreview } from '@/features/student-import/student-import-preview'
 import { commitImportRows, resolveImportRows } from '@/features/student-import/student-import-resolver'
@@ -27,7 +37,7 @@ import {
 } from '@/features/student-import/types'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 
-type Step = 'select' | 'mapping' | 'resolving' | 'preview' | 'importing' | 'result'
+type Step = 'select' | 'header-row' | 'mapping' | 'resolving' | 'preview' | 'importing' | 'result'
 
 interface StudentImportDialogProps {
   open: boolean
@@ -46,6 +56,8 @@ export function StudentImportDialog({
 }: StudentImportDialogProps) {
   const [step, setStep] = useState<Step>('select')
   const [error, setError] = useState<string | null>(null)
+  const [grid, setGrid] = useState<SpreadsheetGrid | null>(null)
+  const [headerRowIndex, setHeaderRowIndex] = useState(0)
   const [parsed, setParsed] = useState<ParsedSpreadsheet | null>(null)
   const [mapping, setMapping] = useState<ColumnMapping>({})
   const [resolvedRows, setResolvedRows] = useState<ResolvedImportRow[]>([])
@@ -61,6 +73,8 @@ export function StudentImportDialog({
   function reset() {
     setStep('select')
     setError(null)
+    setGrid(null)
+    setHeaderRowIndex(0)
     setParsed(null)
     setMapping({})
     setResolvedRows([])
@@ -72,16 +86,46 @@ export function StudentImportDialog({
     onOpenChange(nextOpen)
   }
 
-  async function handleFileSelected(file: File) {
-    setError(null)
+  function proceedWithHeaderRow(sourceGrid: SpreadsheetGrid, chosenIndex: number) {
     try {
-      const parsedSheet = await parseStudentFile(file)
+      const parsedSheet = buildParsedSpreadsheet(sourceGrid, chosenIndex)
       setParsed(parsedSheet)
       setMapping(autoDetectMapping(parsedSheet.headers))
       setStep('mapping')
     } catch (err) {
       setError(toFriendlyErrorMessage(err, 'ไม่สามารถอ่านไฟล์นี้ได้'))
+      setStep('select')
     }
+  }
+
+  async function handleFileSelected(file: File) {
+    setError(null)
+    try {
+      const sourceGrid = await readSpreadsheetGrid(file)
+      const detection = detectHeaderRow(sourceGrid.allRows)
+
+      if (detection.confidence >= HEADER_DETECTION_CONFIDENCE_THRESHOLD) {
+        // Confident guess — skip straight to mapping, same as before for
+        // any file whose header genuinely is near the top.
+        proceedWithHeaderRow(sourceGrid, detection.headerRowIndex)
+        return
+      }
+
+      // Low confidence (title rows, blank spacer rows, or an ambiguous
+      // file) — let the teacher confirm which row is actually the header,
+      // pre-selected to the best guess so far.
+      setGrid(sourceGrid)
+      setHeaderRowIndex(detection.headerRowIndex)
+      setStep('header-row')
+    } catch (err) {
+      setError(toFriendlyErrorMessage(err, 'ไม่สามารถอ่านไฟล์นี้ได้'))
+    }
+  }
+
+  function handleConfirmHeaderRow() {
+    if (!grid) return
+    setError(null)
+    proceedWithHeaderRow(grid, headerRowIndex)
   }
 
   function handleColumnFieldChange(columnIndex: number, value: string) {
@@ -166,6 +210,14 @@ export function StudentImportDialog({
             />
             <p className="text-xs text-muted-foreground">รองรับ .xlsx และ .csv สูงสุด 500 คนต่อไฟล์</p>
           </div>
+        )}
+
+        {step === 'header-row' && grid && (
+          <HeaderRowPicker
+            rows={grid.allRows.slice(0, HEADER_SCAN_LIMIT)}
+            selectedIndex={headerRowIndex}
+            onSelect={setHeaderRowIndex}
+          />
         )}
 
         {step === 'mapping' && parsed && (
@@ -273,6 +325,7 @@ export function StudentImportDialog({
         )}
 
         <DialogFooter>
+          {step === 'header-row' && <Button onClick={handleConfirmHeaderRow}>ถัดไป</Button>}
           {step === 'mapping' && (
             <Button onClick={handleConfirmMapping} disabled={!canProceedMapping}>
               ถัดไป
