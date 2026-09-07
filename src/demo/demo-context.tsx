@@ -3,6 +3,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 import { buildInitialActivity } from '@/demo/activity'
 import { buildInitialAssignments } from '@/demo/assignments'
 import { buildInitialAttendance } from '@/demo/attendance'
+import { ALL_CLASSROOM_STUDENTS, buildInitialClassrooms } from '@/demo/classrooms'
 import { buildInitialGrades } from '@/demo/grades'
 import {
   computeAtRiskStudents,
@@ -12,11 +13,21 @@ import {
   countStudentsWithMissingWork,
 } from '@/demo/selectors'
 import { DEMO_CLASSROOM_NAME, DEMO_STUDENTS } from '@/demo/students'
+import { getStudentIdsForClassrooms } from '@/demo/subject-selectors'
+import { buildInitialSubjectAssignments, buildInitialSubjects, buildInitialTopics } from '@/demo/subjects'
 import type {
   DemoAssignment,
   DemoAttendanceStatus,
+  DemoClassroomInfo,
   DemoGradeScores,
   DemoStudent,
+  DemoSubject,
+  DemoSubjectAssignment,
+  DemoSubjectAttendance,
+  DemoSubmission,
+  DemoTopic,
+  SubjectAssignmentType,
+  SubmissionStatus,
 } from '@/demo/types'
 
 export interface NewStudentInput {
@@ -27,6 +38,31 @@ export interface NewStudentInput {
   number?: number
 }
 
+export interface NewSubjectInput {
+  name: string
+  code: string
+  academicYear: string
+  semester: string
+  description: string
+  classroomIds: string[]
+}
+
+export interface NewTopicInput {
+  title: string
+  description: string
+  order: number
+  taughtDate: string
+}
+
+export interface NewSubjectAssignmentInput {
+  topicId: string | null
+  title: string
+  type: SubjectAssignmentType
+  maxScore: number
+  dueDate: string
+  description: string
+}
+
 interface DemoClassroomState {
   classroomName: string
   students: DemoStudent[]
@@ -34,9 +70,20 @@ interface DemoClassroomState {
   assignments: DemoAssignment[]
   grades: Record<string, DemoGradeScores>
   activity: { id: string; timeLabel: string; message: string }[]
+
+  classrooms: DemoClassroomInfo[]
+  allStudents: DemoStudent[]
+  subjects: DemoSubject[]
+  topics: DemoTopic[]
+  subjectAssignments: DemoSubjectAssignment[]
+  subjectAttendance: DemoSubjectAttendance
 }
 
 function buildInitialState(): DemoClassroomState {
+  const classrooms = buildInitialClassrooms()
+  const studentIdsForClassrooms = (classroomIds: string[]) =>
+    getStudentIdsForClassrooms(classroomIds, classrooms)
+
   return {
     classroomName: DEMO_CLASSROOM_NAME,
     students: DEMO_STUDENTS,
@@ -44,6 +91,13 @@ function buildInitialState(): DemoClassroomState {
     assignments: buildInitialAssignments(),
     grades: buildInitialGrades(),
     activity: buildInitialActivity(),
+
+    classrooms,
+    allStudents: ALL_CLASSROOM_STUDENTS,
+    subjects: buildInitialSubjects(),
+    topics: buildInitialTopics(),
+    subjectAssignments: buildInitialSubjectAssignments(studentIdsForClassrooms),
+    subjectAttendance: {},
   }
 }
 
@@ -68,6 +122,27 @@ interface DemoClassroomContextValue extends DemoClassroomState {
   updateGradeScore: (studentId: string, key: keyof DemoGradeScores, value: number) => void
   logActivity: (message: string) => void
   resetDemo: () => void
+
+  addSubject: (input: NewSubjectInput) => DemoSubject
+  addTopic: (subjectId: string, input: NewTopicInput) => void
+  updateTopic: (topicId: string, patch: Partial<Omit<DemoTopic, 'id' | 'subjectId'>>) => void
+  deleteTopic: (topicId: string) => void
+  addSubjectAssignment: (subjectId: string, input: NewSubjectAssignmentInput) => DemoSubjectAssignment
+  updateSubjectAssignment: (
+    assignmentId: string,
+    patch: Partial<Omit<DemoSubjectAssignment, 'id' | 'subjectId' | 'submissions'>>,
+  ) => void
+  setSubmissionStatus: (assignmentId: string, studentId: string, status: SubmissionStatus) => void
+  bulkSetSubmissionStatus: (assignmentId: string, studentIds: string[], status: SubmissionStatus) => void
+  setSubmissionScore: (assignmentId: string, studentId: string, score: number | null) => void
+  setSubmissionNote: (assignmentId: string, studentId: string, note: string) => void
+  setSubjectAttendanceStatus: (
+    subjectId: string,
+    date: string,
+    studentId: string,
+    status: DemoAttendanceStatus,
+  ) => void
+  saveSubjectAttendance: (subjectId: string, date: string) => void
 }
 
 const DemoClassroomContext = createContext<DemoClassroomContextValue | null>(null)
@@ -161,6 +236,164 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     setState(buildInitialState())
   }
 
+  // ---- Subject workspace actions ----
+
+  function addSubject(input: NewSubjectInput): DemoSubject {
+    const subject: DemoSubject = {
+      id: `demo-subject-${Date.now()}`,
+      name: input.name,
+      code: input.code,
+      academicYear: input.academicYear,
+      semester: input.semester,
+      description: input.description,
+      classroomIds: input.classroomIds,
+    }
+    setState((prev) => ({ ...prev, subjects: [...prev.subjects, subject] }))
+    logActivity(`สร้างรายวิชาใหม่: ${subject.name}`)
+    return subject
+  }
+
+  function addTopic(subjectId: string, input: NewTopicInput) {
+    const topic: DemoTopic = {
+      id: `demo-topic-${Date.now()}`,
+      subjectId,
+      title: input.title,
+      description: input.description,
+      order: input.order,
+      taughtDate: input.taughtDate,
+    }
+    setState((prev) => ({ ...prev, topics: [...prev.topics, topic] }))
+    logActivity(`เพิ่มหัวข้อใหม่: ${topic.title}`)
+  }
+
+  function updateTopic(topicId: string, patch: Partial<Omit<DemoTopic, 'id' | 'subjectId'>>) {
+    setState((prev) => ({
+      ...prev,
+      topics: prev.topics.map((t) => (t.id === topicId ? { ...t, ...patch } : t)),
+    }))
+  }
+
+  function deleteTopic(topicId: string) {
+    setState((prev) => ({
+      ...prev,
+      topics: prev.topics.filter((t) => t.id !== topicId),
+      subjectAssignments: prev.subjectAssignments.map((a) =>
+        a.topicId === topicId ? { ...a, topicId: null } : a,
+      ),
+    }))
+  }
+
+  function addSubjectAssignment(subjectId: string, input: NewSubjectAssignmentInput): DemoSubjectAssignment {
+    const subject = state.subjects.find((s) => s.id === subjectId)
+    const studentIds = subject ? getStudentIdsForClassrooms(subject.classroomIds, state.classrooms) : []
+
+    const submissions: Record<string, DemoSubmission> = Object.fromEntries(
+      studentIds.map((id) => [id, { status: 'not_submitted' as SubmissionStatus, score: null, note: '' }]),
+    )
+
+    const assignment: DemoSubjectAssignment = {
+      id: `demo-subject-assignment-${Date.now()}`,
+      subjectId,
+      topicId: input.topicId,
+      title: input.title,
+      type: input.type,
+      maxScore: input.maxScore,
+      dueDate: input.dueDate,
+      description: input.description,
+      submissions,
+    }
+
+    setState((prev) => ({ ...prev, subjectAssignments: [...prev.subjectAssignments, assignment] }))
+    logActivity(`สร้างงานใหม่ในรายวิชา: ${assignment.title}`)
+    return assignment
+  }
+
+  function updateSubjectAssignment(
+    assignmentId: string,
+    patch: Partial<Omit<DemoSubjectAssignment, 'id' | 'subjectId' | 'submissions'>>,
+  ) {
+    setState((prev) => ({
+      ...prev,
+      subjectAssignments: prev.subjectAssignments.map((a) =>
+        a.id === assignmentId ? { ...a, ...patch } : a,
+      ),
+    }))
+  }
+
+  function setSubmissionStatus(assignmentId: string, studentId: string, status: SubmissionStatus) {
+    setState((prev) => ({
+      ...prev,
+      subjectAssignments: prev.subjectAssignments.map((a) => {
+        if (a.id !== assignmentId) return a
+        const existing = a.submissions[studentId] ?? { status: 'not_submitted', score: null, note: '' }
+        return { ...a, submissions: { ...a.submissions, [studentId]: { ...existing, status } } }
+      }),
+    }))
+  }
+
+  function bulkSetSubmissionStatus(assignmentId: string, studentIds: string[], status: SubmissionStatus) {
+    const idSet = new Set(studentIds)
+    setState((prev) => ({
+      ...prev,
+      subjectAssignments: prev.subjectAssignments.map((a) => {
+        if (a.id !== assignmentId) return a
+        const submissions = { ...a.submissions }
+        for (const studentId of idSet) {
+          const existing = submissions[studentId] ?? { status: 'not_submitted', score: null, note: '' }
+          submissions[studentId] = { ...existing, status }
+        }
+        return { ...a, submissions }
+      }),
+    }))
+  }
+
+  function setSubmissionScore(assignmentId: string, studentId: string, score: number | null) {
+    setState((prev) => ({
+      ...prev,
+      subjectAssignments: prev.subjectAssignments.map((a) => {
+        if (a.id !== assignmentId) return a
+        const existing = a.submissions[studentId] ?? { status: 'not_submitted', score: null, note: '' }
+        const clamped = score === null ? null : Math.max(0, Math.min(a.maxScore, score))
+        return { ...a, submissions: { ...a.submissions, [studentId]: { ...existing, score: clamped } } }
+      }),
+    }))
+  }
+
+  function setSubmissionNote(assignmentId: string, studentId: string, note: string) {
+    setState((prev) => ({
+      ...prev,
+      subjectAssignments: prev.subjectAssignments.map((a) => {
+        if (a.id !== assignmentId) return a
+        const existing = a.submissions[studentId] ?? { status: 'not_submitted', score: null, note: '' }
+        return { ...a, submissions: { ...a.submissions, [studentId]: { ...existing, note } } }
+      }),
+    }))
+  }
+
+  function setSubjectAttendanceStatus(
+    subjectId: string,
+    date: string,
+    studentId: string,
+    status: DemoAttendanceStatus,
+  ) {
+    setState((prev) => {
+      const bySubject = prev.subjectAttendance[subjectId] ?? {}
+      const byDate = bySubject[date] ?? {}
+      return {
+        ...prev,
+        subjectAttendance: {
+          ...prev.subjectAttendance,
+          [subjectId]: { ...bySubject, [date]: { ...byDate, [studentId]: status } },
+        },
+      }
+    })
+  }
+
+  function saveSubjectAttendance(subjectId: string, date: string) {
+    const subject = state.subjects.find((s) => s.id === subjectId)
+    logActivity(`บันทึกการเช็คชื่อวิชา${subject ? ` ${subject.name}` : ''} วันที่ ${date} แล้ว`)
+  }
+
   const missingByStudent = useMemo(
     () => computeMissingCountByStudent(state.assignments),
     [state.assignments],
@@ -193,6 +426,18 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     updateGradeScore,
     logActivity,
     resetDemo,
+    addSubject,
+    addTopic,
+    updateTopic,
+    deleteTopic,
+    addSubjectAssignment,
+    updateSubjectAssignment,
+    setSubmissionStatus,
+    bulkSetSubmissionStatus,
+    setSubmissionScore,
+    setSubmissionNote,
+    setSubjectAttendanceStatus,
+    saveSubjectAttendance,
   }
 
   return <DemoClassroomContext.Provider value={value}>{children}</DemoClassroomContext.Provider>

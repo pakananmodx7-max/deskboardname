@@ -10,6 +10,9 @@ import { IntegrationsPage } from '@/pages/teacher/integrations/integrations-page
 import { ReportsPage } from '@/pages/teacher/reports/reports-page'
 import { SettingsPage } from '@/pages/teacher/settings/settings-page'
 import { StudentsPage } from '@/pages/teacher/students/students-page'
+import { SubjectAssignmentDetailPage } from '@/pages/teacher/subjects/subject-assignment-detail-page'
+import { SubjectDetailPage } from '@/pages/teacher/subjects/subject-detail-page'
+import { SubjectsPage } from '@/pages/teacher/subjects/subjects-page'
 
 const router = createBrowserRouter([
   {
@@ -23,6 +26,12 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/teacher/dashboard" replace /> },
       { path: 'dashboard', element: <DashboardPage /> },
       { path: 'students', element: <StudentsPage /> },
+      { path: 'subjects', element: <SubjectsPage /> },
+      { path: 'subjects/:subjectId', element: <SubjectDetailPage /> },
+      {
+        path: 'subjects/:subjectId/assignments/:assignmentId',
+        element: <SubjectAssignmentDetailPage />,
+      },
       { path: 'attendance', element: <AttendancePage /> },
       { path: 'assignments', element: <AssignmentsPage /> },
       { path: 'grades', element: <GradesPage /> },

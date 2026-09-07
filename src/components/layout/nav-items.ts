@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  BookOpen,
   Bot,
   CalendarCheck,
   ClipboardList,
@@ -20,6 +21,7 @@ export interface NavItem {
 export const navItems: NavItem[] = [
   { label: 'Dashboard', to: '/teacher/dashboard', icon: LayoutDashboard },
   { label: 'Students', to: '/teacher/students', icon: Users },
+  { label: 'Subjects', to: '/teacher/subjects', icon: BookOpen },
   { label: 'Attendance', to: '/teacher/attendance', icon: CalendarCheck },
   { label: 'Assignments', to: '/teacher/assignments', icon: ClipboardList },
   { label: 'Grades', to: '/teacher/grades', icon: GraduationCap },
