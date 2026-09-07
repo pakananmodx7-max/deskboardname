@@ -49,6 +49,42 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   )
 }
 
+/** Icon-only rail shown at tablet widths (md–lg) where a full labeled
+ * sidebar doesn't fit comfortably but a persistent nav still should,
+ * rather than immediately dropping to the mobile hamburger pattern. */
+function CompactSidebarContent() {
+  return (
+    <div className="flex h-full flex-col items-center">
+      <div className="flex h-16 w-full items-center justify-center border-b border-border">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <GraduationCap className="size-5" />
+        </div>
+      </div>
+
+      <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-4">
+        {navItems.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            title={item.label}
+            className={({ isActive }) =>
+              cn(
+                'flex size-10 items-center justify-center rounded-md transition-colors',
+                isActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+              )
+            }
+          >
+            <item.icon className="size-5" />
+            <span className="sr-only">{item.label}</span>
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  )
+}
+
 export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
   return (
     <>
@@ -56,8 +92,12 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
         <SidebarContent />
       </aside>
 
+      <aside className="hidden w-16 shrink-0 border-r border-border bg-card md:block lg:hidden">
+        <CompactSidebarContent />
+      </aside>
+
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-50 md:hidden">
           <div
             className="absolute inset-0 bg-black/40"
             onClick={onCloseMobile}

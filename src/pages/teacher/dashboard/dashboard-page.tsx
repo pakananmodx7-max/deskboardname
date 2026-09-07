@@ -1,5 +1,4 @@
 import { AlertTriangle, CalendarCheck, ClipboardX, Users } from 'lucide-react'
-import { useEffect, useState } from 'react'
 
 import { AiAssistantCard } from '@/components/dashboard/ai-assistant-card'
 import { AssignmentOverview } from '@/components/dashboard/assignment-overview'
@@ -9,63 +8,63 @@ import { IntegrationStatus } from '@/components/dashboard/integration-status'
 import { QuickActions } from '@/components/dashboard/quick-actions'
 import { RecentActivity } from '@/components/dashboard/recent-activity'
 import { StatCard } from '@/components/dashboard/stat-card'
-import { getDashboardData, getIntegrationStatus } from '@/services/dashboard-service'
-import type { DashboardData, IntegrationStatusItem } from '@/types/dashboard'
+import { useDemoClassroom } from '@/demo/demo-context'
+import { mockIntegrationStatus } from '@/data/integration-mock'
 
 export function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null)
-  const [integrations, setIntegrations] = useState<IntegrationStatusItem[]>([])
+  const {
+    classroomName,
+    students,
+    attendanceSummary,
+    assignments,
+    atRiskStudents,
+    studentsWithMissingWork,
+    activity,
+  } = useDemoClassroom()
 
-  useEffect(() => {
-    let active = true
+  const attendanceRate =
+    attendanceSummary.total > 0 ? Math.round((attendanceSummary.present / attendanceSummary.total) * 100) : 0
 
-    getDashboardData().then((result) => {
-      if (active) setData(result)
-    })
-    getIntegrationStatus().then((result) => {
-      if (active) setIntegrations(result)
-    })
+  const assignmentSummaries = assignments.map((assignment) => ({
+    id: assignment.id,
+    title: assignment.title,
+    dueDate: assignment.dueDate,
+    submittedCount: Object.values(assignment.submissions).filter(Boolean).length,
+    totalCount: students.length,
+  }))
 
-    return () => {
-      active = false
-    }
-  }, [])
-
-  if (!data) {
-    return <div className="text-sm text-muted-foreground">กำลังโหลดข้อมูล...</div>
-  }
-
-  const { stats, attendance, atRiskStudents, assignments, recentActivity } = data
+  const attentionList = atRiskStudents.slice(0, 5).map((item) => ({
+    id: item.student.id,
+    name: `${item.student.firstName} ${item.student.lastName}`,
+    reasons: item.reasons,
+    riskLevel: item.riskLevel,
+  }))
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">ภาพรวมห้องเรียน</h1>
-        <p className="mt-1 text-sm text-muted-foreground">ม.5/1 · ภาคเรียนที่ 1 / 2569</p>
+        <p className="mt-1 text-sm text-muted-foreground">{classroomName} · ภาคเรียนที่ 1 / 2569</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="นักเรียนทั้งหมด"
-          value={`${stats.totalStudents} คน`}
-          icon={Users}
-        />
+        <StatCard label="นักเรียนทั้งหมด" value={`${students.length} คน`} icon={Users} />
         <StatCard
           label="มาเรียนวันนี้"
-          value={`${stats.presentToday} / ${stats.totalStudents}`}
-          helperText={`${stats.attendanceRate}%`}
+          value={`${attendanceSummary.present} / ${attendanceSummary.total}`}
+          helperText={`${attendanceRate}%`}
           icon={CalendarCheck}
           tone="success"
         />
         <StatCard
-          label="งานที่ยังไม่ส่ง"
-          value={`${stats.missingAssignments} รายการ`}
+          label="นักเรียนที่มีงานค้าง"
+          value={`${studentsWithMissingWork} คน`}
           icon={ClipboardX}
           tone="warning"
         />
         <StatCard
           label="นักเรียนที่ควรติดตาม"
-          value={`${stats.studentsAtRisk} คน`}
+          value={`${atRiskStudents.length} คน`}
           icon={AlertTriangle}
           tone="destructive"
         />
@@ -75,16 +74,16 @@ export function DashboardPage() {
         <div className="space-y-4 xl:col-span-2">
           <AiAssistantCard />
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <AttendanceOverview attendance={attendance} />
-            <AssignmentOverview assignments={assignments} />
+            <AttendanceOverview attendance={attendanceSummary} />
+            <AssignmentOverview assignments={assignmentSummaries} />
           </div>
           <QuickActions />
-          <RecentActivity activity={recentActivity} />
+          <RecentActivity activity={activity.slice(0, 6)} />
         </div>
 
         <div className="space-y-4">
-          <AttentionStudents students={atRiskStudents} />
-          <IntegrationStatus items={integrations} />
+          <AttentionStudents students={attentionList} />
+          <IntegrationStatus items={mockIntegrationStatus} />
         </div>
       </div>
     </div>
