@@ -8,6 +8,19 @@ interface PostgrestLikeError {
 
 const UNIQUE_VIOLATION = '23505'
 const FOREIGN_KEY_VIOLATION = '23503'
+const INSUFFICIENT_PRIVILEGE = '42501'
+const INVALID_AUTHORIZATION = '28000'
+const INVALID_PARAMETER = '22023'
+
+/**
+ * Our own SQL functions/triggers raise exceptions with a Thai message
+ * already (see supabase/migrations/0001_init.sql), so a matching error
+ * code isn't automatically "generic" — only fall back to a canned
+ * message when Postgres's own (English) text came through instead.
+ */
+function looksLikeFriendlyMessage(message: string | undefined): message is string {
+  return Boolean(message && /[฀-๿]/.test(message))
+}
 
 /**
  * Converts a raw error (Supabase, network, or unknown) into a safe,
@@ -31,6 +44,15 @@ export function toFriendlyErrorMessage(error: unknown, fallback = 'เกิด�
   }
   if (pgError?.code === FOREIGN_KEY_VIOLATION) {
     return 'ไม่สามารถดำเนินการได้ เนื่องจากข้อมูลที่เกี่ยวข้องไม่ถูกต้อง'
+  }
+  if (pgError?.code === INSUFFICIENT_PRIVILEGE) {
+    return looksLikeFriendlyMessage(pgError.message) ? pgError.message : 'คุณไม่มีสิทธิ์ดำเนินการนี้'
+  }
+  if (pgError?.code === INVALID_AUTHORIZATION) {
+    return looksLikeFriendlyMessage(pgError.message) ? pgError.message : 'กรุณาเข้าสู่ระบบก่อนใช้งาน'
+  }
+  if (pgError?.code === INVALID_PARAMETER) {
+    return looksLikeFriendlyMessage(pgError.message) ? pgError.message : 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง'
   }
 
   if (error instanceof TypeError && /fetch/i.test(error.message)) {

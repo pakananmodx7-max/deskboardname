@@ -117,28 +117,30 @@ export async function removeStudentFromClassroom(studentId: string, classroomId:
   if (error) throw error
 }
 
+/**
+ * Creates a student and enrolls them in a classroom as a single atomic
+ * operation via the `create_student_and_enroll` database function — see
+ * that function's comment in supabase/migrations/0001_init.sql. This
+ * avoids the orphan-row risk of doing "insert student" then "insert
+ * membership" as two separate client-side statements, where a failure
+ * on the second step would leave an unreachable student record behind.
+ */
 export async function createStudent(input: CreateStudentInput): Promise<Student> {
   const supabase = getSupabaseClient()
 
-  const { data, error } = await supabase
-    .from('students')
-    .insert({
-      student_code: input.studentCode ?? null,
-      number: input.number ?? null,
-      first_name: input.firstName,
-      last_name: input.lastName,
-      nickname: input.nickname ?? null,
-      email: input.email ?? null,
-      phone: input.phone ?? null,
-    })
-    .select('*')
-    .single()
+  const { data, error } = await supabase.rpc('create_student_and_enroll', {
+    p_classroom_id: input.classroomId,
+    p_first_name: input.firstName,
+    p_last_name: input.lastName,
+    p_student_code: input.studentCode ?? null,
+    p_number: input.number ?? null,
+    p_nickname: input.nickname ?? null,
+    p_email: input.email ?? null,
+    p_phone: input.phone ?? null,
+  })
 
   if (error) throw error
-
-  const student = mapStudent(data as StudentRow)
-  await addStudentToClassroom(student.id, input.classroomId)
-  return student
+  return mapStudent(data as StudentRow)
 }
 
 export async function updateStudent(studentId: string, input: UpdateStudentInput): Promise<Student> {
