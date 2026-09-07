@@ -20,14 +20,16 @@ provide your own.
 In your project dashboard: **Project Settings → API → Project URL**.
 It looks like `https://xxxxxxxxxxxx.supabase.co`.
 
-## 3. Copy the anon (public) key
+## 3. Copy the Publishable key
 
-Same page: **Project Settings → API → Project API keys → `anon`
-`public`**.
+Same page: **Project Settings → API → Project API keys → `Publishable
+key`** (this is the public, client-safe key — the newer Supabase
+dashboards call it "Publishable key" where older projects call the
+equivalent key "anon public").
 
-⚠️ Only ever use the **anon** key in this app. Never copy the
-`service_role` key into the client — it bypasses Row Level Security
-entirely.
+⚠️ Only ever use the **Publishable** key in this app. Never copy the
+`Secret key` (a.k.a. `service_role`) into the client — it bypasses Row
+Level Security entirely.
 
 ## 4. Create `.env.local`
 
@@ -40,7 +42,7 @@ cp .env.example .env.local
 ```bash
 # .env.local
 VITE_SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key-here
+VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key-here
 ```
 
 `.env.local` is already git-ignored (see `.gitignore`'s `*.local`

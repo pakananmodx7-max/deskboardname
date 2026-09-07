@@ -18,7 +18,7 @@ export function SupabaseConfigNotice() {
           <p className="text-sm font-semibold">ยังไม่ได้ตั้งค่าการเชื่อมต่อ Supabase</p>
           <p className="text-sm text-muted-foreground">
             กรุณาตั้งค่า <code className="rounded bg-muted px-1 py-0.5 text-xs">VITE_SUPABASE_URL</code>{' '}
-            และ <code className="rounded bg-muted px-1 py-0.5 text-xs">VITE_SUPABASE_ANON_KEY</code> ใน
+            และ <code className="rounded bg-muted px-1 py-0.5 text-xs">VITE_SUPABASE_PUBLISHABLE_KEY</code> ใน
             ไฟล์ <code className="rounded bg-muted px-1 py-0.5 text-xs">.env.local</code> แล้วรีสตาร์ท
             เซิร์ฟเวอร์ ดูขั้นตอนเพิ่มเติมได้ที่ <code className="rounded bg-muted px-1 py-0.5 text-xs">docs/SUPABASE_SETUP.md</code>
           </p>
