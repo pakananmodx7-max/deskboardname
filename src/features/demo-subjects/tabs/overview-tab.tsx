@@ -2,7 +2,7 @@ import { BookOpen, ClipboardList, GraduationCap, Users } from 'lucide-react'
 
 import { Card, CardContent } from '@/components/ui/card'
 import { useDemoClassroom } from '@/demo/demo-context'
-import { computeSubjectAverageScore, getStudentIdsForClassrooms } from '@/demo/subject-selectors'
+import { computeSubjectAverageScore, getAssignmentsForClassroom, getStudentIdsForClassrooms } from '@/demo/subject-selectors'
 import type { DemoSubject } from '@/demo/types'
 
 interface OverviewTabProps {
@@ -10,19 +10,17 @@ interface OverviewTabProps {
   classroomId: string
 }
 
-/** Student count is scoped to the workspace's selected classroom, matching
- * that classroom's own Students tab. Topics stay subject-wide and
- * unfiltered — topics are subject-level by design, shared identically
- * across every linked classroom (see docs/DATABASE.md). Assignments/
- * grades summaries also stay subject-wide for now — the demo assignment
- * data model has no per-classroom scoping yet (see the future-design note
- * in subjects-real's classroom workspace page). */
+/** Student count and assignments/grades summaries are all scoped to the
+ * workspace's selected classroom, matching that classroom's own
+ * Students/Assignments tabs. Topics stay subject-wide and unfiltered —
+ * topics are subject-level by design, shared identically across every
+ * linked classroom (see docs/DATABASE.md). */
 export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
   const { classrooms, topics, subjectAssignments } = useDemoClassroom()
 
   const studentIds = getStudentIdsForClassrooms([classroomId], classrooms)
   const subjectTopics = topics.filter((t) => t.subjectId === subject.id).sort((a, b) => a.order - b.order)
-  const assignments = subjectAssignments.filter((a) => a.subjectId === subject.id)
+  const assignments = getAssignmentsForClassroom(subjectAssignments, subject.id, classroomId)
   const averageScore = computeSubjectAverageScore(assignments)
 
   return (

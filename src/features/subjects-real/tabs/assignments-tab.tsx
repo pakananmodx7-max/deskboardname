@@ -1,0 +1,194 @@
+import { ClipboardList, Plus } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { Progress } from '@/components/ui/progress'
+import { RowActionsMenu } from '@/components/ui/row-actions-menu'
+import { useToast } from '@/components/ui/toast'
+import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
+import { toFriendlyErrorMessage } from '@/lib/errors'
+import {
+  archiveAssignment,
+  getAssignments,
+  getSubmissionSummary,
+  getSubmissions,
+} from '@/services/assignment-service'
+import { getTopics } from '@/services/topic-service'
+import type { Assignment } from '@/types/assignment'
+import type { Subject } from '@/types/subject'
+import type { Topic } from '@/types/topic'
+
+interface AssignmentsTabProps {
+  subject: Subject
+  classroomId: string
+}
+
+/**
+ * Real, Supabase-backed assignments list — strictly scoped to
+ * subjectId+classroomId (assignment-service.ts's getAssignments never
+ * merges another linked classroom's assignments, even ones with a
+ * matching title). This is now the primary place assignments are
+ * created/edited/archived — see docs/DATABASE.md "Assignment delete
+ * strategy" for why archiving, not deleting.
+ */
+export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
+  const { toast } = useToast()
+  const navigate = useNavigate()
+
+  const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [summaries, setSummaries] = useState<Record<string, { submitted: number; total: number }>>({})
+  const [topics, setTopics] = useState<Topic[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const [createOpen, setCreateOpen] = useState(false)
+  const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null)
+  const [archivingAssignment, setArchivingAssignment] = useState<Assignment | null>(null)
+
+  const refresh = useCallback(() => {
+    setLoading(true)
+    setError(null)
+    return Promise.all([getAssignments(subject.id, classroomId), getTopics(subject.id)])
+      .then(async ([rows, topicRows]) => {
+        setAssignments(rows)
+        setTopics(topicRows)
+        const submissionRows = await Promise.all(rows.map((a) => getSubmissions(a.id)))
+        const nextSummaries: Record<string, { submitted: number; total: number }> = {}
+        rows.forEach((a, i) => {
+          const summary = getSubmissionSummary(submissionRows[i])
+          nextSummaries[a.id] = { submitted: summary.submitted, total: summary.total }
+        })
+        setSummaries(nextSummaries)
+      })
+      .catch((err: unknown) => setError(toFriendlyErrorMessage(err)))
+      .finally(() => setLoading(false))
+  }, [subject.id, classroomId])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  async function handleArchive() {
+    if (!archivingAssignment) return
+    try {
+      await archiveAssignment(archivingAssignment.id)
+      toast(`เก็บถาวรงาน "${archivingAssignment.title}" แล้ว`)
+      setArchivingAssignment(null)
+      refresh()
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถเก็บถาวรงานได้'))
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">{loading ? 'กำลังโหลด...' : `${assignments.length} งาน`}</p>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="size-4" />
+          เพิ่มงาน
+        </Button>
+      </div>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {!loading && assignments.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+            <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <ClipboardList className="size-6" />
+            </div>
+            <p className="text-sm font-medium">ยังไม่มีงานในห้องเรียนนี้</p>
+            <Button onClick={() => setCreateOpen(true)}>เพิ่มงาน</Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {assignments.map((assignment) => {
+            const summary = summaries[assignment.id] ?? { submitted: 0, total: 0 }
+            const percent = summary.total > 0 ? Math.round((summary.submitted / summary.total) * 100) : 0
+            const topic = topics.find((t) => t.id === assignment.topicId)
+
+            return (
+              <Card
+                key={assignment.id}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+                onClick={() =>
+                  navigate(`/teacher/subjects/${subject.id}/classrooms/${classroomId}/assignments/${assignment.id}`)
+                }
+              >
+                <CardContent className="space-y-3 pt-5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold">{assignment.title}</p>
+                    <div className="flex items-center gap-1">
+                      {assignment.isArchived && <Badge variant="outline">เก็บถาวร</Badge>}
+                      <RowActionsMenu
+                        actions={[
+                          { key: 'edit', label: 'แก้ไขงาน', onSelect: () => setEditingAssignment(assignment) },
+                          {
+                            key: 'archive',
+                            label: 'เก็บถาวร',
+                            onSelect: () => setArchivingAssignment(assignment),
+                            disabled: assignment.isArchived,
+                          },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                  {topic && <p className="text-xs text-muted-foreground">หัวข้อ: {topic.title}</p>}
+                  <Progress value={percent} />
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      {summary.submitted}/{summary.total} ส่งแล้ว
+                    </span>
+                    <span>{assignment.dueDate ? `กำหนดส่ง ${assignment.dueDate}` : 'ไม่มีกำหนดส่ง'}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{assignment.maxScore} คะแนนเต็ม</p>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      <AssignmentDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        subjectId={subject.id}
+        classroomId={classroomId}
+        topics={topics}
+        onSaved={refresh}
+      />
+
+      {editingAssignment && (
+        <AssignmentDialog
+          open={Boolean(editingAssignment)}
+          onOpenChange={(open) => !open && setEditingAssignment(null)}
+          subjectId={subject.id}
+          classroomId={classroomId}
+          topics={topics}
+          assignment={editingAssignment}
+          onSaved={() => {
+            setEditingAssignment(null)
+            refresh()
+          }}
+        />
+      )}
+
+      {archivingAssignment && (
+        <ConfirmDialog
+          open={Boolean(archivingAssignment)}
+          onOpenChange={(open) => !open && setArchivingAssignment(null)}
+          title="เก็บถาวรงาน"
+          description={`เก็บถาวร "${archivingAssignment.title}"?\nงานและคะแนนของนักเรียนจะยังคงอยู่ในระบบ`}
+          confirmLabel="เก็บถาวร"
+          onConfirm={handleArchive}
+        />
+      )}
+    </div>
+  )
+}

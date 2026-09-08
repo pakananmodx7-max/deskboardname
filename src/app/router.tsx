@@ -8,7 +8,7 @@ import { LoginPage } from '@/pages/auth/login-page'
 import { ResetPasswordPage } from '@/pages/auth/reset-password-page'
 import { SignupPage } from '@/pages/auth/signup-page'
 import { AiPage } from '@/pages/teacher/ai/ai-page'
-import { AssignmentsPage } from '@/pages/teacher/assignments/assignments-page'
+import { AssignmentsRedirectPage } from '@/pages/teacher/assignments/assignments-redirect-page'
 import { AttendancePage } from '@/pages/teacher/attendance/attendance-page'
 import { ClassroomDetailPage } from '@/pages/teacher/classrooms/classroom-detail-page'
 import { ClassroomsPage } from '@/pages/teacher/classrooms/classrooms-page'
@@ -18,7 +18,7 @@ import { IntegrationsPage } from '@/pages/teacher/integrations/integrations-page
 import { ReportsPage } from '@/pages/teacher/reports/reports-page'
 import { SettingsPage } from '@/pages/teacher/settings/settings-page'
 import { StudentsPage } from '@/pages/teacher/students/students-page'
-import { SubjectAssignmentDetailPage } from '@/pages/teacher/subjects/subject-assignment-detail-page'
+import { SubjectClassroomAssignmentDetailPage } from '@/pages/teacher/subjects/subject-classroom-assignment-detail-page'
 import { SubjectClassroomWorkspacePage } from '@/pages/teacher/subjects/subject-classroom-workspace-page'
 import { SubjectDetailPage } from '@/pages/teacher/subjects/subject-detail-page'
 import { SubjectsPage } from '@/pages/teacher/subjects/subjects-page'
@@ -52,11 +52,11 @@ const router = createBrowserRouter([
         element: <SubjectClassroomWorkspacePage />,
       },
       {
-        path: 'subjects/:subjectId/assignments/:assignmentId',
-        element: <SubjectAssignmentDetailPage />,
+        path: 'subjects/:subjectId/classrooms/:classroomId/assignments/:assignmentId',
+        element: <SubjectClassroomAssignmentDetailPage />,
       },
       { path: 'attendance', element: <AttendancePage /> },
-      { path: 'assignments', element: <AssignmentsPage /> },
+      { path: 'assignments', element: <AssignmentsRedirectPage /> },
       { path: 'grades', element: <GradesPage /> },
       { path: 'reports', element: <ReportsPage /> },
       { path: 'ai', element: <AiPage /> },

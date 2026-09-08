@@ -4,6 +4,7 @@ import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { NativeSelect } from '@/components/ui/select'
 import { DemoOnlyNotice } from '@/features/subjects-real/demo-only-notice'
+import { AssignmentsTab } from '@/features/subjects-real/tabs/assignments-tab'
 import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
 import { OverviewTab } from '@/features/subjects-real/tabs/overview-tab'
 import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
@@ -28,21 +29,19 @@ const TABS: { key: TabKey; label: string }[] = [
 /**
  * The subject + classroom workspace — "Subjects → open Subject → choose
  * Classroom → manage that classroom inside the subject." Everything
- * classroom-specific (Overview's student count, Students, Attendance)
- * is scoped to exactly the `classroomId` route param; Topics stays
- * subject-level and unfiltered on purpose (see TopicsTab — topics are
- * shared across every linked classroom, never duplicated per classroom).
+ * classroom-specific (Overview's student count, Students, Attendance,
+ * Assignments) is scoped to exactly the `classroomId` route param; Topics
+ * stays subject-level and unfiltered on purpose (see TopicsTab — topics
+ * are shared across every linked classroom, never duplicated per
+ * classroom).
  *
- * Assignments/Grades (still DemoOnlyNotice — the real assignments
- * backend hasn't been migrated, see docs/DATABASE.md) are rendered here
- * too, already inside a classroom-scoped shell, so wiring in a real,
- * classroom-aware assignments feature later is a matter of building the
- * tab itself against this same `classroomId` — no route or workspace
- * redesign required. The intended future shape (sketch, not built here):
- * an assignment optionally scoped to `classroomIds: string[] | null`
- * (null = whole subject) plus optional per-classroom due-date overrides,
- * mirroring how DemoSubjectAssignment already models submissions
- * per-student without per-classroom duplication.
+ * งาน (Assignments) is now real and classroom-scoped — see
+ * supabase/migrations/0006_subject_assignments.sql and
+ * assignment-service.ts. Grades stays DemoOnlyNotice: the real backend
+ * for it hasn't been built, and is expected to be a derived view over
+ * assignment_submissions.score (per subject+classroom) rather than a new
+ * stored table, matching how a subject's roster is already derived
+ * rather than stored (see 0006's "Future relationship" note).
  */
 export function SubjectClassroomWorkspacePageReal() {
   const { subjectId, classroomId } = useParams<{ subjectId: string; classroomId: string }>()
@@ -167,7 +166,7 @@ export function SubjectClassroomWorkspacePageReal() {
         )}
         {activeTab === 'attendance' && <AttendanceTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'topics' && <TopicsTab subject={subject} />}
-        {activeTab === 'assignments' && <DemoOnlyNotice featureLabel="งาน" />}
+        {activeTab === 'assignments' && <AssignmentsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'grades' && <DemoOnlyNotice featureLabel="คะแนน" />}
       </div>
     </div>

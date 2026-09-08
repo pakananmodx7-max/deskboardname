@@ -1,6 +1,6 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { useDemoClassroom } from '@/demo/demo-context'
-import { computeSubjectGrades, getStudentsForClassrooms } from '@/demo/subject-selectors'
+import { computeSubjectGrades, getAssignmentsForClassroom, getStudentsForClassrooms } from '@/demo/subject-selectors'
 import type { DemoSubject } from '@/demo/types'
 
 interface GradesTabProps {
@@ -8,17 +8,18 @@ interface GradesTabProps {
   classroomId: string
 }
 
-/** Displayed rows are scoped to the selected classroom (never merges
- * grade rows from the subject's other linked classrooms) — assignment
- * definitions/submissions themselves stay subject-wide in this demo data
- * model; only which student ROWS are shown is filtered here. */
+/** Both the roster and the assignment columns are scoped to the selected
+ * classroom — never merges grade rows or assignment columns from the
+ * subject's other linked classrooms, matching that classroom's own
+ * Assignments tab (assignments themselves are now classroom-scoped, not
+ * just the displayed student rows — see DemoSubjectAssignment). */
 export function GradesTab({ subject, classroomId }: GradesTabProps) {
   const { classrooms, allStudents, subjectAssignments } = useDemoClassroom()
 
   const students = getStudentsForClassrooms([classroomId], classrooms, allStudents).sort(
     (a, b) => a.number - b.number,
   )
-  const assignments = subjectAssignments.filter((a) => a.subjectId === subject.id)
+  const assignments = getAssignmentsForClassroom(subjectAssignments, subject.id, classroomId)
   const rows = computeSubjectGrades(
     students.map((s) => s.id),
     assignments,

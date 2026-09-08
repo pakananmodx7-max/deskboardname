@@ -26,6 +26,7 @@ interface AssignmentDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   subjectId: string
+  classroomId: string
   topics: DemoTopic[]
   assignment?: DemoSubjectAssignment | null
 }
@@ -45,7 +46,7 @@ function emptyForm() {
   }
 }
 
-export function AssignmentDialog({ open, onOpenChange, subjectId, topics, assignment }: AssignmentDialogProps) {
+export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, topics, assignment }: AssignmentDialogProps) {
   const { addSubjectAssignment, updateSubjectAssignment } = useDemoClassroom()
   const { toast } = useToast()
   const [form, setForm] = useState(emptyForm)
@@ -95,7 +96,7 @@ export function AssignmentDialog({ open, onOpenChange, subjectId, topics, assign
       })
       toast('บันทึกงานแล้ว')
     } else {
-      addSubjectAssignment(subjectId, {
+      addSubjectAssignment(subjectId, classroomId, {
         title: form.title.trim(),
         topicId,
         type: form.type,

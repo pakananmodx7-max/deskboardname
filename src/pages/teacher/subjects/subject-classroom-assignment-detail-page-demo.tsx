@@ -24,8 +24,21 @@ const statusButtonStyle: Record<SubmissionStatus, string> = {
   missing: 'data-[active=true]:bg-destructive data-[active=true]:text-destructive-foreground',
 }
 
-export function SubjectAssignmentDetailPage() {
-  const { subjectId, assignmentId } = useParams<{ subjectId: string; assignmentId: string }>()
+/**
+ * Demo mirror of subjects-real's assignment detail page — identical
+ * checklist/bulk-actions/score-entry UX, backed by demo state. Scoped to
+ * exactly (subjectId, classroomId, assignmentId): a demo assignment now
+ * carries its own classroomId (see DemoSubjectAssignment), so this page
+ * only ever shows that one classroom's roster, never another linked
+ * classroom's students — matching the real page and closing the "type a
+ * mismatched subject/classroom id into the URL" path the same way.
+ */
+export function SubjectClassroomAssignmentDetailPageDemo() {
+  const { subjectId, classroomId, assignmentId } = useParams<{
+    subjectId: string
+    classroomId: string
+    assignmentId: string
+  }>()
   const navigate = useNavigate()
   const { toast } = useToast()
   const {
@@ -42,18 +55,17 @@ export function SubjectAssignmentDetailPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   const subject = subjects.find((s) => s.id === subjectId)
-  const assignment = subjectAssignments.find((a) => a.id === assignmentId && a.subjectId === subjectId)
-
-  const students = useMemo(
-    () =>
-      subject
-        ? getStudentsForClassrooms(subject.classroomIds, classrooms, allStudents).sort((a, b) => a.number - b.number)
-        : [],
-    [subject, classrooms, allStudents],
+  const assignment = subjectAssignments.find(
+    (a) => a.id === assignmentId && a.subjectId === subjectId && a.classroomId === classroomId,
   )
 
-  if (!subject || !assignment) {
-    return <Navigate to="/teacher/subjects" replace />
+  const students = useMemo(
+    () => (classroomId ? getStudentsForClassrooms([classroomId], classrooms, allStudents).sort((a, b) => a.number - b.number) : []),
+    [classroomId, classrooms, allStudents],
+  )
+
+  if (!subject || !classroomId || !assignment) {
+    return <Navigate to={subject ? `/teacher/subjects/${subject.id}` : '/teacher/subjects'} replace />
   }
 
   // Re-bind to a fresh const so nested function declarations below (which
@@ -94,11 +106,11 @@ export function SubjectAssignmentDetailPage() {
       <div>
         <button
           type="button"
-          onClick={() => navigate(`/teacher/subjects/${subject.id}`)}
+          onClick={() => navigate(`/teacher/subjects/${subject.id}/classrooms/${classroomId}`)}
           className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" />
-          กลับไปที่ {subject.name}
+          กลับไปที่ห้องเรียน
         </button>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-xl font-semibold tracking-tight">{assignment.title}</h1>
@@ -168,76 +180,82 @@ export function SubjectAssignmentDetailPage() {
                   <th className="px-4 py-3"></th>
                   <th className="px-3 py-3 font-medium">เลขที่</th>
                   <th className="px-3 py-3 font-medium">ชื่อ</th>
-                  <th className="px-3 py-3 font-medium">ห้อง</th>
                   <th className="px-3 py-3 font-medium">สถานะ</th>
                   <th className="px-3 py-3 font-medium">คะแนน</th>
                   <th className="px-3 py-3 font-medium">หมายเหตุ</th>
                 </tr>
               </thead>
               <tbody>
-                {students.map((student) => {
-                  const submission = assignment.submissions[student.id] ?? {
-                    status: 'not_submitted' as SubmissionStatus,
-                    score: null,
-                    note: '',
-                  }
-                  return (
-                    <tr key={student.id} className="border-b border-border last:border-0">
-                      <td className="px-4 py-2">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(student.id)}
-                          onChange={() => toggleSelect(student.id)}
-                          className="size-4 rounded border-input"
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{student.number}</td>
-                      <td className="px-3 py-2 font-medium">
-                        {student.firstName} {student.lastName}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{student.classroom}</td>
-                      <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-1.5">
-                          {SUBMISSION_STATUS_ORDER.map((status) => (
-                            <button
-                              key={status}
-                              type="button"
-                              data-active={submission.status === status}
-                              onClick={() => setSubmissionStatus(assignment.id, student.id, status)}
-                              className={cn(
-                                'rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent',
-                                statusButtonStyle[status],
-                              )}
-                            >
-                              {SUBMISSION_STATUS_LABEL[status]}
-                            </button>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <Input
-                            type="number"
-                            min={0}
-                            max={assignment.maxScore}
-                            value={submission.score ?? ''}
-                            onChange={(e) => handleScoreChange(student.id, e.target.value)}
-                            className="h-8 w-16 text-center"
+                {students.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-6 text-center text-muted-foreground">
+                      ยังไม่มีนักเรียนในห้องเรียนนี้
+                    </td>
+                  </tr>
+                ) : (
+                  students.map((student) => {
+                    const submission = assignment.submissions[student.id] ?? {
+                      status: 'not_submitted' as SubmissionStatus,
+                      score: null,
+                      note: '',
+                    }
+                    return (
+                      <tr key={student.id} className="border-b border-border last:border-0">
+                        <td className="px-4 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(student.id)}
+                            onChange={() => toggleSelect(student.id)}
+                            className="size-4 rounded border-input"
                           />
-                          <span>/ {assignment.maxScore}</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2">
-                        <Input
-                          value={submission.note}
-                          onChange={(e) => setSubmissionNote(assignment.id, student.id, e.target.value)}
-                          placeholder="หมายเหตุ"
-                          className="h-8 w-36"
-                        />
-                      </td>
-                    </tr>
-                  )
-                })}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">{student.number}</td>
+                        <td className="px-3 py-2 font-medium">
+                          {student.firstName} {student.lastName}
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex flex-wrap gap-1.5">
+                            {SUBMISSION_STATUS_ORDER.map((status) => (
+                              <button
+                                key={status}
+                                type="button"
+                                data-active={submission.status === status}
+                                onClick={() => setSubmissionStatus(assignment.id, student.id, status)}
+                                className={cn(
+                                  'rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent',
+                                  statusButtonStyle[status],
+                                )}
+                              >
+                                {SUBMISSION_STATUS_LABEL[status]}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={assignment.maxScore}
+                              value={submission.score ?? ''}
+                              onChange={(e) => handleScoreChange(student.id, e.target.value)}
+                              className="h-8 w-16 text-center"
+                            />
+                            <span>/ {assignment.maxScore}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <Input
+                            value={submission.note}
+                            onChange={(e) => setSubmissionNote(assignment.id, student.id, e.target.value)}
+                            placeholder="หมายเหตุ"
+                            className="h-8 w-36"
+                          />
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
               </tbody>
             </table>
           </div>

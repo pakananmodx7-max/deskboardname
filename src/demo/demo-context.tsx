@@ -127,11 +127,12 @@ interface DemoClassroomContextValue extends DemoClassroomState {
   addTopic: (subjectId: string, input: NewTopicInput) => void
   updateTopic: (topicId: string, patch: Partial<Omit<DemoTopic, 'id' | 'subjectId'>>) => void
   deleteTopic: (topicId: string) => void
-  addSubjectAssignment: (subjectId: string, input: NewSubjectAssignmentInput) => DemoSubjectAssignment
+  addSubjectAssignment: (subjectId: string, classroomId: string, input: NewSubjectAssignmentInput) => DemoSubjectAssignment
   updateSubjectAssignment: (
     assignmentId: string,
-    patch: Partial<Omit<DemoSubjectAssignment, 'id' | 'subjectId' | 'submissions'>>,
+    patch: Partial<Omit<DemoSubjectAssignment, 'id' | 'subjectId' | 'classroomId' | 'submissions'>>,
   ) => void
+  archiveSubjectAssignment: (assignmentId: string) => void
   setSubmissionStatus: (assignmentId: string, studentId: string, status: SubmissionStatus) => void
   bulkSetSubmissionStatus: (assignmentId: string, studentIds: string[], status: SubmissionStatus) => void
   setSubmissionScore: (assignmentId: string, studentId: string, score: number | null) => void
@@ -305,9 +306,15 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     }))
   }
 
-  function addSubjectAssignment(subjectId: string, input: NewSubjectAssignmentInput): DemoSubjectAssignment {
-    const subject = state.subjects.find((s) => s.id === subjectId)
-    const studentIds = subject ? getStudentIdsForClassrooms(subject.classroomIds, state.classrooms) : []
+  function addSubjectAssignment(
+    subjectId: string,
+    classroomId: string,
+    input: NewSubjectAssignmentInput,
+  ): DemoSubjectAssignment {
+    // Seeded only from THIS classroom's roster — never the subject's
+    // other linked classrooms — so a fresh assignment's submissions map
+    // never includes a student who isn't actually in this classroom.
+    const studentIds = getStudentIdsForClassrooms([classroomId], state.classrooms)
 
     const submissions: Record<string, DemoSubmission> = Object.fromEntries(
       studentIds.map((id) => [id, { status: 'not_submitted' as SubmissionStatus, score: null, note: '' }]),
@@ -316,12 +323,14 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     const assignment: DemoSubjectAssignment = {
       id: `demo-subject-assignment-${Date.now()}`,
       subjectId,
+      classroomId,
       topicId: input.topicId,
       title: input.title,
       type: input.type,
       maxScore: input.maxScore,
       dueDate: input.dueDate,
       description: input.description,
+      isArchived: false,
       submissions,
     }
 
@@ -332,7 +341,7 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
 
   function updateSubjectAssignment(
     assignmentId: string,
-    patch: Partial<Omit<DemoSubjectAssignment, 'id' | 'subjectId' | 'submissions'>>,
+    patch: Partial<Omit<DemoSubjectAssignment, 'id' | 'subjectId' | 'classroomId' | 'submissions'>>,
   ) {
     setState((prev) => ({
       ...prev,
@@ -340,6 +349,10 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
         a.id === assignmentId ? { ...a, ...patch } : a,
       ),
     }))
+  }
+
+  function archiveSubjectAssignment(assignmentId: string) {
+    updateSubjectAssignment(assignmentId, { isArchived: true })
   }
 
   function setSubmissionStatus(assignmentId: string, studentId: string, status: SubmissionStatus) {
@@ -556,6 +569,7 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     deleteTopic,
     addSubjectAssignment,
     updateSubjectAssignment,
+    archiveSubjectAssignment,
     setSubmissionStatus,
     bulkSetSubmissionStatus,
     setSubmissionScore,

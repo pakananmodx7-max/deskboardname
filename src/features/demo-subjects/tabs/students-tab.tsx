@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 import { Card, CardContent } from '@/components/ui/card'
 import { useDemoClassroom } from '@/demo/demo-context'
-import { getStudentsForClassrooms } from '@/demo/subject-selectors'
+import { getAssignmentsForClassroom, getStudentsForClassrooms } from '@/demo/subject-selectors'
 import type { DemoStudent, DemoSubject } from '@/demo/types'
 import { SubjectStudentDrawer } from '@/features/demo-subjects/subject-student-drawer'
 
@@ -22,7 +22,7 @@ export function StudentsTab({ subject, classroomId }: StudentsTabProps) {
   const students = getStudentsForClassrooms([classroomId], classrooms, allStudents).sort(
     (a, b) => a.number - b.number,
   )
-  const assignments = subjectAssignments.filter((a) => a.subjectId === subject.id)
+  const assignments = getAssignmentsForClassroom(subjectAssignments, subject.id, classroomId)
 
   function missingCountFor(studentId: string): number {
     return assignments.filter((a) => {

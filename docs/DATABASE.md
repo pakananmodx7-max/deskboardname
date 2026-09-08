@@ -1017,3 +1017,156 @@ this subject" validation the workspace page uses to reject a tampered URL,
 the root page's classroom-count/student-count summary, and the canonical
 workspace URL builder — used verbatim by both real and demo mode so the
 picker/redirect/summary behavior can never drift between them.
+
+# Phase 8: Default theme, remove global Assignments workspace, subject+classroom-scoped assignments (0006)
+
+Three changes, described together because they were requested and shipped
+as one refactor, but independent of each other (no dependency between the
+theme fix and the assignment-model change).
+
+## Default theme = light
+
+`src/lib/theme.ts`'s `getStoredTheme()` previously fell back to the
+browser's `prefers-color-scheme` when nothing was stored yet
+(`systemPrefersDark()`). That meant a first-time visitor on a machine set
+to dark mode silently opened the app in dark mode with no explicit choice
+ever made. Fixed by defaulting unconditionally to `'light'` when
+`localStorage` has no stored `'ai-classroom-theme'` value; an explicit
+prior choice (light or dark) is still restored exactly as before, and the
+toggle/persistence mechanism (`applyTheme`, the theme button) is
+unchanged. `systemPrefersDark()` was removed as now-unused. Covered by
+`src/lib/theme.test.ts` (first-visit-defaults-to-light, restores stored
+dark/light, corrupt value falls back to light, SSR guard, persistence
+across a simulated refresh) using `vi.stubGlobal` mocks — this project has
+no jsdom/@testing-library installed, so component/DOM-touching logic is
+tested this way rather than via rendering.
+
+## Remove the global, classroom-less Assignments workspace
+
+The old `/teacher/assignments` sidebar item and page (`assignments-page.tsx`,
+`src/demo/legacy` `state.assignments`/`state.students` slice) let a
+teacher manage assignments with no subject or classroom context at all —
+architecturally incompatible with assignments now being scoped to a
+specific subject+classroom pair (see below). Removed from
+`src/components/layout/nav-items.ts`; the route now renders
+`AssignmentsRedirectPage`, which shows "กรุณาเลือกรายวิชาและห้องเรียนก่อน"
+and a button back to `/teacher/subjects`, rather than 404ing or silently
+showing the old ungoverned workspace to anyone with the URL bookmarked.
+The old page file and its supporting `demo-assignments/` components are
+left in place, unreferenced (not deleted), per the "don't delete reusable
+UI logic" instruction — though in practice the *subject-scoped* demo
+assignment components (`demo-subjects/tabs/assignments-tab.tsx`,
+`demo-subjects/assignment-dialog.tsx`) were what got reused/adapted for
+classroom scoping, not the legacy flat ones. Tested by
+`nav-items.test.ts` (no sidebar entry pointing at the old route, still
+links to Subjects) and `assignments-redirect-page.test.ts` (redirect copy
+and target).
+
+## Subject + classroom-scoped assignments (`0006_subject_assignments.sql`)
+
+**Status: written and empirically RLS-verified locally, but NOT applied to
+the Supabase project — requires a manual run in the Supabase SQL Editor.**
+
+Assignments are now managed from inside the subject workspace's งาน tab
+(`/teacher/subjects/:subjectId/classrooms/:classroomId`, tab `assignments`)
+instead of a separate top-level page. An assignment always belongs to
+exactly one `(subject_id, classroom_id)` pair — never a subject-wide
+thing. Two classrooms linked to the same subject get completely
+independent assignment sets, even when a title matches between them (e.g.
+DS's ม.5/1 and ม.5/2 can both have a "Worksheet 1" — two unrelated rows).
+
+Two new tables, following the same shape as every prior academic-data
+migration in this project:
+
+- **`assignments`** — `subject_id`/`classroom_id` (both required, `on
+  delete cascade`), `topic_id` (optional, `on delete set null` — an
+  assignment may reference a subject topic but topics stay subject-wide
+  per Phase 7), `title`, `description`, `max_score` (`> 0`), `due_date`,
+  `is_archived` (no hard delete — same no-DELETE-policy convention as
+  every other academic-data table in this schema), `created_by`,
+  timestamps.
+- **`assignment_submissions`** — one row per `(assignment_id, student_id)`
+  (unique constraint), `status` (`not_submitted` / `submitted` / `late` /
+  `missing`), nullable `score` (`>= 0`), `note`, timestamps.
+  `student_id` references `students.id` directly — **not**
+  `classroom_students.id` — for the same reason as `attendance_records`
+  (0004): `classroom_students` rows are ephemeral (deleted/replaced when a
+  student is removed from or moved between classrooms), so a cascade FK to
+  that row would silently destroy submission/score history on a routine
+  membership change. Classroom membership is instead checked only at
+  INSERT time via a direct `classroom_students` lookup inside the RLS
+  policy — never re-checked on UPDATE, so a teacher can still correct a
+  submission after the student has since left the classroom.
+
+RLS (`assignments`): `assignments_select_own` (owner via
+`classroom_id` → `classrooms.teacher_id`); `assignments_insert_own` — the
+same 4-part ownership+link check pattern introduced in Phase 6
+(`attendance_sessions_insert_own`): own the classroom AND own the subject
+AND a `subject_classrooms` row actually links them AND `created_by =
+auth.uid()`; `assignments_update_own` (ownership only — an assignment's
+`subject_id`/`classroom_id` are immutable after creation, there is no
+"reassign to another classroom" path). No delete policy.
+
+RLS (`assignment_submissions`): `assignment_submissions_select_own` /
+`..._insert_own` (ownership via the parent assignment's classroom, plus
+the INSERT-time-only membership check described above) /
+`..._update_own` (ownership only, no membership re-check). No delete
+policy.
+
+**No RPC.** Every prior write-heavy migration in this project (0004, 0005)
+added a `SECURITY DEFINER` RPC because a whole attendance session's worth
+of records had to be saved atomically alongside creating/reusing the
+parent session row. Assignments don't have that shape: an assignment
+already exists persistently before any submission is touched, and each
+submission edit (`setSubmissionStatus`/`setSubmissionScore`/
+`setSubmissionNote` in `assignment-service.ts`, all plain
+`.upsert(..., {onConflict: 'assignment_id,student_id'})` calls) is
+independently authorized with no shared parent write that needs
+all-or-nothing semantics — RLS alone is sufficient. `bulkSetSubmissionStatus`
+(used by "mark all as submitted") is a client-side `Promise.all` of those
+same independent upserts, not a batch RPC — a partial failure only affects
+the specific student(s) it applies to, which is the correct behavior here
+(unlike an attendance session, there's no single row whose existence all
+the writes depend on).
+
+Empirically verified against a throwaway local Postgres 16 instance (same
+`auth` schema shim as every prior phase), fixtures: teacher A owns
+classroom A1 (linked to their subject) and classroom A2 (initially
+unlinked) plus 3 students; teacher B owns a separate classroom, subject,
+and student.
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Create an assignment scoped to a linked classroom | PASS |
+| 2 | Create scoped to an unlinked classroom (own, but not linked to the subject) | PASS — rejected, RLS denial |
+| 3 | Cross-owner classroom id spoof | PASS — rejected |
+| 4 | Cross-owner subject id spoof | PASS — rejected |
+| 5 | `created_by` spoofed to another user | PASS — rejected |
+| 6 | Cross-classroom isolation — link A2 too, create a same-titled assignment there | PASS — each classroom's query returns only its own row; no merge |
+| 7 | Submission for a student who is a current classroom member | PASS |
+| 8 | Submission for a student who is NOT a member of the assignment's classroom | PASS — rejected |
+| 9 | Upsert on conflict (same assignment+student twice) | PASS — updates in place, no duplicate row |
+| 10 | Correct a submission after the student has since left the classroom | PASS — UPDATE path doesn't re-check membership |
+| 11 | Archive via UPDATE (`is_archived = true`) | PASS — submission history preserved, no data loss |
+| 12 | Cross-owner read denial | PASS — 0 rows visible |
+| 13 | Anonymous read denial | PASS — 0 rows visible |
+| 14 | Unauthorized direct UPDATE by another teacher | PASS — 0 rows affected |
+
+No security-critical FAIL. Local test database dropped and the throwaway
+Postgres cluster stopped after verification, per this project's standing
+cleanup discipline — nothing from the verification run was committed.
+
+The demo-mode assignment model (`src/demo/types.ts`'s
+`DemoSubjectAssignment`) was extended with the same `classroomId`/
+`isArchived` scoping to keep demo and real behavior identical: previously
+a subject's assignments/submissions were seeded and read from a single
+subject-wide list, actually merging submissions across every classroom
+linked to that subject (a real bug, matching what this migration's design
+fixes for the real backend) — `getAssignmentsForClassroom`
+(`src/demo/subject-selectors.ts`) now scopes every tab's assignment data
+the same way `getAssignments(subjectId, classroomId)` scopes the real
+query. The demo seed data (`buildInitialSubjectAssignments`,
+`src/demo/subjects.ts`) deliberately includes a same-titled assignment
+("ใบงานเรื่องแรง") independently in both of the science subject's linked
+classrooms, to make the classroom-isolation fix concretely demonstrable
+and regression-tested (`subjects.test.ts`, `subject-selectors.test.ts`).

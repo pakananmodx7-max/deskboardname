@@ -26,6 +26,23 @@ export function getStudentsForClassrooms(
   return allStudents.filter((s) => ids.has(s.id))
 }
 
+/**
+ * Scopes a subject's assignments to exactly one of its linked
+ * classrooms — never merges another linked classroom's assignments, even
+ * ones with a matching title (mirrors
+ * supabase/migrations/0006_subject_assignments.sql's real (subject_id,
+ * classroom_id) scoping). Shared by every demo subject-workspace tab
+ * that touches assignments (Overview, Students, Assignments, Grades)
+ * instead of each repeating the same two-clause filter.
+ */
+export function getAssignmentsForClassroom(
+  assignments: DemoSubjectAssignment[],
+  subjectId: string,
+  classroomId: string,
+): DemoSubjectAssignment[] {
+  return assignments.filter((a) => a.subjectId === subjectId && a.classroomId === classroomId)
+}
+
 export interface AssignmentSubmissionSummary {
   submitted: number
   notSubmitted: number

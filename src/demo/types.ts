@@ -97,15 +97,24 @@ export interface DemoSubmission {
   note: string
 }
 
+/**
+ * An assignment always belongs to exactly one subject AND one of that
+ * subject's linked classrooms — never a bare subject-wide thing. Two
+ * classrooms linked to the same subject get completely independent
+ * assignment sets, even when a title matches between them (mirrors
+ * supabase/migrations/0006_subject_assignments.sql's real schema).
+ */
 export interface DemoSubjectAssignment {
   id: string
   subjectId: string
+  classroomId: string
   topicId: string | null
   title: string
   type: SubjectAssignmentType
   maxScore: number
   dueDate: string
   description: string
+  isArchived: boolean
   /** studentId -> submission record */
   submissions: Record<string, DemoSubmission>
 }
