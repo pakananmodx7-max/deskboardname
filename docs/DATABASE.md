@@ -662,3 +662,170 @@ role happened to have broad privileges.
 | RLS still works | PASS — cross-teacher profile read still denied; classroom/subject/topic policies from Phases 1–3 untouched and re-spot-checked (new teacher can still create a classroom end-to-end) |
 
 No security-critical FAIL.
+
+# Phase 5: Attendance
+
+Migration: `supabase/migrations/0004_attendance.sql`. Has **not** been applied
+to a live database as of writing — do not run it automatically. Scope:
+classroom-level (homeroom) attendance only — "select classroom → select date
+→ mark each student → save". Assignments, submissions, and grades stay
+demo-only in the application; not touched by this migration.
+
+## Tables
+
+### `attendance_sessions`
+
+One row per (classroom, date[, subject]) — "the roll call for ม.5/1 on
+8 ก.ย. 2569". `classroom_id` cascades on classroom delete, matching
+`classroom_students` (Phase 1). `created_by` is an audit trail only, never
+the authorization boundary (that is always derived from `classroom_id` →
+`classrooms.teacher_id`, exactly like every other table in this schema).
+
+`subject_id` is **nullable on purpose**, not a placeholder that will need
+migrating later:
+
+- Every session the current app creates is classroom-level homeroom
+  attendance, which isn't "about" any one subject — forcing a fake
+  `subject_id` would misrepresent the data.
+- A later phase can add subject-period attendance ("history class
+  attendance for ม.5/1 on 8 ก.ย.") on the **same** table and the same
+  `attendance_records` child rows by simply setting a real `subjects.id` —
+  no new table, no data migration, no destructive redesign.
+
+Two partial unique indexes make room for both cases without conflicting:
+
+```sql
+create unique index attendance_sessions_classroom_date_no_subject_uidx
+  on attendance_sessions (classroom_id, attendance_date) where subject_id is null;
+
+create unique index attendance_sessions_classroom_subject_date_uidx
+  on attendance_sessions (classroom_id, subject_id, attendance_date) where subject_id is not null;
+```
+
+The first enforces "at most one homeroom session per classroom per day"
+(what the app uses today); the second is unused today but will enforce "at
+most one session per classroom+subject per day" the instant subject-period
+attendance starts writing non-null `subject_id` rows.
+
+### `attendance_records`
+
+One row per (session, student), unique on `(attendance_session_id,
+student_id)` — exactly one record per student per session.
+
+`student_id` (**not** `classroom_student_id`) is a deliberate choice.
+`classroom_students` rows are ephemeral by design — "เอาออกจากห้อง" and
+"ย้ายห้อง" (`student-service.ts`, Phase 4.5) delete/replace them as routine,
+everyday operations. If this table referenced `classroom_students.id` with
+`on delete cascade`, removing a student from a classroom — or moving them —
+would silently wipe every attendance record ever taken for them in that
+classroom. Referencing `students.id` directly means attendance history
+survives a membership change untouched; "was this student actually in that
+classroom on that date" is instead an application-level check made once, at
+the moment a record is first **written** (by `save_attendance_session`
+below and `attendance_records_insert_own`'s `WITH CHECK`) — never a
+constraint that would later delete history when membership changes.
+
+## RLS
+
+Ownership for both tables is always derived transitively: `attendance_sessions`
+→ `classrooms.teacher_id`, `attendance_records` → `attendance_sessions` →
+`classrooms.teacher_id`. Neither table has its own owner column (`created_by`
+on sessions is an audit trail, not an authorization check).
+
+`attendance_records_select_own` and `_update_own` deliberately do **not**
+re-check the student's *current* classroom membership — only that the
+caller owns the session. A student who later moves to a different classroom,
+or is archived, must not lose visibility into (or the ability to correct)
+attendance history that was legitimately recorded while they were there.
+
+`attendance_records_insert_own` is the one place membership **is** checked,
+and only at INSERT time: a brand-new record requires the student to be a
+*current* member of the session's classroom via a direct `classroom_students`
+lookup. This is what prevents "attendance records for students not
+belonging to that classroom" — see Security review below for the empirical
+test.
+
+Neither table has a DELETE policy — matching `students`/`subjects`/the
+no-hard-delete stance taken everywhere else in this schema. A status is
+corrected via UPDATE (`มา` → `สาย`, add/edit a note), never removed outright.
+See "Attendance delete strategy" below.
+
+## Atomic save (`save_attendance_session`)
+
+Persisting a full roll call (a session plus 30+ student records) as
+N+1 separate client-side statements risks a partial save: if one record
+write fails partway through (a student the caller no longer teaches, a bad
+status value, a network blip), everything written before that point is
+already committed, leaving a session with some students saved and others
+silently missing. `save_attendance_session(p_classroom_id, p_attendance_date,
+p_records jsonb)` wraps the session upsert and every record upsert in one
+PL/pgSQL function, so Postgres runs the whole batch as a single
+statement-level unit — any exception rolls every write in the call back
+together.
+
+Like `create_student_and_enroll` (Phase 1) and
+`create_subject_with_classrooms` (Phase 3), this is `SECURITY INVOKER`, not
+`DEFINER` — the RLS policies above already grant a legitimate teacher
+everything the function does; it's just one round trip instead of many.
+
+Calling it again for the same classroom+date **updates** the existing
+session/records in place (`on conflict ... do update`) rather than creating
+a duplicate — this is what makes reopening and re-saving a date safe, and
+is exercised directly in the Security review's Test 3.
+
+`p_records` is a JSON array of `{"student_id": uuid, "status": text, "note":
+text | null}` objects. The app always sends the full current roster's
+statuses; the function does not require that, and never deletes a record
+just because it was omitted — consistent with the no-hard-delete policy.
+
+## Attendance delete strategy
+
+No table in this migration has a DELETE policy, for the same reason
+`students` (Phase 1), `subjects` (Phase 3), and `classroom_students`
+removal-vs-deletion already draw this line: attendance is academic history.
+A wrong status is corrected via UPDATE; a whole session is never wiped from
+the UI. If a genuine "undo an entire accidental roll call" need ever comes
+up, that should be its own deliberate, audited action — not a byproduct of
+this phase's default policy set.
+
+## Demo vs Supabase data mode
+
+Same branching pattern as Students/Classrooms/Subjects (Phase 3/4.5):
+`attendance-page.tsx` picks `AttendancePageReal` or `AttendancePageDemo`
+based on the module-level `dataMode` constant. `AttendancePageDemo` is the
+original, untouched demo implementation (`src/demo/attendance.ts`,
+`src/demo/demo-context.tsx`'s legacy `students`/`attendance` slice) — no
+demo state was changed by this phase. `AttendancePageReal` calls
+`attendance-service.ts`, which is Supabase-only; demo mode never touches it
+and real mode never touches demo state. The 38 baked-in demo students are
+never shown in real mode — the real page always loads its roster from
+`classroom_students` for the selected classroom.
+
+## Security review (Phase 5)
+
+Verified empirically against a throwaway local Postgres 16 instance (same
+auth shim as Phases 1–4) with two teachers, each owning one classroom and
+its own students.
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | New session save — teacher saves a full roster's statuses for a never-before-saved classroom+date | PASS — one session row created, one record row per student, statuses exactly as sent |
+| 2 | Reopen existing attendance — read back the same classroom+date | PASS — saved statuses and notes returned unchanged |
+| 3 | Duplicate session prevention — call `save_attendance_session` again for the SAME classroom+date with different statuses | PASS — still exactly 1 session row (not 2); the 3 record rows were UPDATED in place, not duplicated |
+| 4 | Status validation — invalid status string (`"sick"`) | PASS — whole call rejected (`22023`), zero session/records created for that date (atomic rollback) |
+| 5 | Cross-owner classroom denial — teacher A calls the RPC naming teacher B's classroom | PASS — rejected `42501` before any write |
+| 6 | Spoofed student — teacher A's own classroom, but naming teacher B's student id | PASS — rejected `42501` ("นักเรียนไม่ได้อยู่ในห้องเรียนนี้"), zero session/records created |
+| 7 | Empty classroom — save with `p_records: []` | PASS — session created with zero records, no error |
+| 8 | Changing date — same classroom, second date | PASS — a distinct second session row, first session/records untouched |
+| 9 | Inactive student handling — archive a student (`status = 'inactive'`) who already has a saved record | PASS — their existing record remains fully readable; `classroom_students` membership is untouched by archiving (status and membership are independent); correcting their already-saved record via the RPC afterward still succeeds (UPDATE path does not re-check current membership, by design) |
+| 10 | Cross-owner read denial — teacher B queries teacher A's sessions/records directly | PASS — 0 rows visible |
+| 11 | Anonymous read denial — `anon` role (no JWT `sub`) queries both tables | PASS — 0 rows visible |
+| 12 | Unauthorized modification — teacher B attempts a direct `UPDATE` on a record inside teacher A's session, bypassing the RPC entirely | PASS — 0 rows updated (RLS filters the target row to nothing for this role) |
+
+No security-critical FAIL. Changing classroom (test case in the app's own
+test plan) is not a distinct database scenario — it is scenario 1 or 2
+repeated against a different `classroom_id`, already covered above; the
+UI-level "does switching the dropdown actually refetch" behavior is
+ordinary React effect re-run behavior, verified by code review of the
+`useEffect` dependency array (`[selectedClassroomId, date]`) rather than a
+separate database test.
