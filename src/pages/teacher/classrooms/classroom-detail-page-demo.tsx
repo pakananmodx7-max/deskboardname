@@ -4,6 +4,7 @@ import { Navigate, useParams } from 'react-router-dom'
 
 import { Card, CardContent } from '@/components/ui/card'
 import { useDemoClassroom } from '@/demo/demo-context'
+import { ClassroomStudentsTab } from '@/features/classroom-management-demo/classroom-students-tab'
 import { cn } from '@/lib/utils'
 
 type TabKey = 'overview' | 'students'
@@ -13,7 +14,6 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'students', label: 'นักเรียน' },
 ]
 
-/** Read-only — see classrooms-page-demo.tsx for why. */
 export function ClassroomDetailPageDemo() {
   const { classroomId } = useParams<{ classroomId: string }>()
   const { classrooms, allStudents } = useDemoClassroom()
@@ -68,38 +68,7 @@ export function ClassroomDetailPageDemo() {
         </Card>
       )}
 
-      {activeTab === 'students' && (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-border text-xs text-muted-foreground">
-                    <th className="px-5 py-3 font-medium">เลขที่</th>
-                    <th className="px-5 py-3 font-medium">ชื่อ-นามสกุล</th>
-                    <th className="px-5 py-3 font-medium">รหัสนักเรียน</th>
-                    <th className="px-5 py-3 font-medium">สถานะ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {students.map((student) => (
-                    <tr key={student.id} className="border-b border-border last:border-0">
-                      <td className="px-5 py-3 text-muted-foreground">{student.number}</td>
-                      <td className="px-5 py-3 font-medium">
-                        {student.firstName} {student.lastName}
-                      </td>
-                      <td className="px-5 py-3 text-muted-foreground">{student.studentCode}</td>
-                      <td className="px-5 py-3 text-muted-foreground">
-                        {student.status === 'active' ? 'กำลังเรียน' : 'ไม่ได้ใช้งาน'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {activeTab === 'students' && <ClassroomStudentsTab classroom={classroom} students={students} />}
     </div>
   )
 }

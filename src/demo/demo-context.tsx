@@ -143,6 +143,22 @@ interface DemoClassroomContextValue extends DemoClassroomState {
     status: DemoAttendanceStatus,
   ) => void
   saveSubjectAttendance: (subjectId: string, date: string) => void
+
+  // ---- Classroom management (per-classroom student actions) ----
+  // These operate on `allStudents`/`classrooms` (the multi-classroom
+  // roster added for the Subject Workspace demo), NOT the legacy
+  // `students`/`classroomName` slice the original standalone Students
+  // page and Dashboard/Attendance/Grades still use — those stay exactly
+  // as they were, out of scope here.
+  updateStudentInfoDemo: (
+    studentId: string,
+    patch: Partial<Pick<DemoStudent, 'number' | 'studentCode' | 'firstName' | 'lastName' | 'nickname' | 'status'>>,
+  ) => void
+  removeStudentFromClassroomDemo: (studentId: string, classroomId: string) => void
+  moveStudentToClassroomDemo: (studentId: string, fromClassroomId: string, toClassroomId: string) => void
+  archiveStudentDemo: (studentId: string) => void
+  bulkRemoveStudentsFromClassroomDemo: (studentIds: string[], classroomId: string) => void
+  bulkSetStudentsStatusDemo: (studentIds: string[], status: DemoStudent['status']) => void
 }
 
 const DemoClassroomContext = createContext<DemoClassroomContextValue | null>(null)
@@ -394,6 +410,88 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     logActivity(`บันทึกการเช็คชื่อวิชา${subject ? ` ${subject.name}` : ''} วันที่ ${date} แล้ว`)
   }
 
+  // ---- Classroom management (per-classroom student actions) ----
+
+  function updateStudentInfoDemo(
+    studentId: string,
+    patch: Partial<Pick<DemoStudent, 'number' | 'studentCode' | 'firstName' | 'lastName' | 'nickname' | 'status'>>,
+  ) {
+    setState((prev) => ({
+      ...prev,
+      allStudents: prev.allStudents.map((s) => (s.id === studentId ? { ...s, ...patch } : s)),
+    }))
+  }
+
+  function removeStudentFromClassroomDemo(studentId: string, classroomId: string) {
+    setState((prev) => ({
+      ...prev,
+      classrooms: prev.classrooms.map((c) =>
+        c.id === classroomId ? { ...c, studentIds: c.studentIds.filter((id) => id !== studentId) } : c,
+      ),
+    }))
+  }
+
+  // Mirrors student-service.ts's moveStudentToClassroom: add to the target
+  // classroom, then remove from the source — so a mid-operation failure
+  // (not really reachable in-memory, but kept consistent with the real
+  // implementation's safety reasoning) never leaves the student in zero
+  // classrooms. Also keeps the legacy display field `classroom` (a name
+  // string, not an id) in sync so the older Students/Dashboard/Attendance
+  // surfaces that still read it don't show a stale classroom name.
+  function moveStudentToClassroomDemo(studentId: string, fromClassroomId: string, toClassroomId: string) {
+    if (fromClassroomId === toClassroomId) return
+
+    setState((prev) => {
+      const toClassroom = prev.classrooms.find((c) => c.id === toClassroomId)
+      const classrooms = prev.classrooms.map((c) => {
+        if (c.id === toClassroomId) {
+          return c.studentIds.includes(studentId) ? c : { ...c, studentIds: [...c.studentIds, studentId] }
+        }
+        if (c.id === fromClassroomId) {
+          return { ...c, studentIds: c.studentIds.filter((id) => id !== studentId) }
+        }
+        return c
+      })
+
+      const allStudents = toClassroom
+        ? prev.allStudents.map((s) => (s.id === studentId ? { ...s, classroom: toClassroom.name } : s))
+        : prev.allStudents
+
+      return { ...prev, classrooms, allStudents }
+    })
+  }
+
+  // "ลบนักเรียน" archives rather than removes — see
+  // student-confirm-messages.ts / docs/DATABASE.md for why the real
+  // service does the same (no DELETE RLS policy on students by design).
+  // Classroom memberships are deliberately left untouched, same as the
+  // real archiveStudent(): archiving never cascades into removing a
+  // student from their classrooms.
+  function archiveStudentDemo(studentId: string) {
+    setState((prev) => ({
+      ...prev,
+      allStudents: prev.allStudents.map((s) => (s.id === studentId ? { ...s, status: 'inactive' } : s)),
+    }))
+  }
+
+  function bulkRemoveStudentsFromClassroomDemo(studentIds: string[], classroomId: string) {
+    const idSet = new Set(studentIds)
+    setState((prev) => ({
+      ...prev,
+      classrooms: prev.classrooms.map((c) =>
+        c.id === classroomId ? { ...c, studentIds: c.studentIds.filter((id) => !idSet.has(id)) } : c,
+      ),
+    }))
+  }
+
+  function bulkSetStudentsStatusDemo(studentIds: string[], status: DemoStudent['status']) {
+    const idSet = new Set(studentIds)
+    setState((prev) => ({
+      ...prev,
+      allStudents: prev.allStudents.map((s) => (idSet.has(s.id) ? { ...s, status } : s)),
+    }))
+  }
+
   const missingByStudent = useMemo(
     () => computeMissingCountByStudent(state.assignments),
     [state.assignments],
@@ -438,6 +536,12 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     setSubmissionNote,
     setSubjectAttendanceStatus,
     saveSubjectAttendance,
+    updateStudentInfoDemo,
+    removeStudentFromClassroomDemo,
+    moveStudentToClassroomDemo,
+    archiveStudentDemo,
+    bulkRemoveStudentsFromClassroomDemo,
+    bulkSetStudentsStatusDemo,
   }
 
   return <DemoClassroomContext.Provider value={value}>{children}</DemoClassroomContext.Provider>

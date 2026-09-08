@@ -121,6 +121,36 @@ export async function removeStudentFromClassroom(studentId: string, classroomId:
 }
 
 /**
+ * Moves a student from one classroom to another as two client-side
+ * statements, deliberately ordered ADD-then-REMOVE rather than the
+ * reverse: if the add to `toClassroomId` fails for any reason (network
+ * blip, or — impossible under normal UI use, since the target list is
+ * populated from the teacher's own classrooms, but still worth being
+ * safe against — a classroom_id the caller doesn't own), the function
+ * throws before ever touching the existing membership, so the student is
+ * never left enrolled in zero classrooms. The worst case on a failure
+ * between the two calls is the student temporarily enrolled in BOTH
+ * classrooms — visible and easy to correct — never a lost enrollment.
+ *
+ * No new RPC/migration needed: RLS already allows this. Linking the
+ * student into the new classroom is authorized by
+ * `classroom_students_insert_own`'s `has_existing_classroom_link` custody
+ * branch (0001_init.sql) — the student already has an existing
+ * classroom_students row owned by this same teacher, which is exactly
+ * the "already legitimately teaches them" case that policy exists for.
+ */
+export async function moveStudentToClassroom(
+  studentId: string,
+  fromClassroomId: string,
+  toClassroomId: string,
+): Promise<void> {
+  if (fromClassroomId === toClassroomId) return
+
+  await addStudentToClassroom(studentId, toClassroomId)
+  await removeStudentFromClassroom(studentId, fromClassroomId)
+}
+
+/**
  * Creates a student and enrolls them in a classroom as a single atomic
  * operation via the `create_student_and_enroll` database function — see
  * that function's comment in supabase/migrations/0001_init.sql. This
