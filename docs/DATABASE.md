@@ -1548,3 +1548,128 @@ migration as committed, and both fixes are verified, not just argued.
   `/student/pending`; teacher-side `/teacher/student-link-requests`
   (pending queue, approve/reject with an optional note, bulk approve),
   added to the sidebar.
+
+# Phase 11: Classroom-scoped student account-linking lookup (0009)
+
+## Problem
+
+Live on production: entering a real, valid student_code on
+`/student/link-account` (e.g. `04103`) returned "พบรหัสนักเรียนนี้มากกว่าหนึ่งคน"
+("this code matches more than one person") and blocked linking entirely.
+Root cause: `student_code` is deliberately NOT unique across the whole
+`students` table (0001's "student_code duplicate strategy" — each
+teacher numbers their own roster independently), but 0008's
+`find_student_for_link(student_code)` matched on `student_code` ALONE
+against the entire table. Any code that happened to repeat across two
+classrooms — normal, expected, not a data-quality bug — made that RPC
+raise its ambiguity error for every student sharing it, a permanent dead
+end, not just a rare edge case.
+
+The fix is **not** a `student_code` uniqueness constraint (rejected, same
+reasoning as 0001): identity is scoped to `student_code + classroom`,
+which is what actually identifies a student uniquely in this schema.
+
+## Schema
+
+No table/column changes. This migration only adds two new
+`SECURITY DEFINER` functions and revokes `EXECUTE` on one existing one —
+0008 itself is left completely unmodified (it had already been applied).
+
+## New RPCs
+
+- **`list_classrooms_for_student_code(student_code)`** — backs the new
+  classroom selector on `/student/link-account`. Returns
+  `(classroom_id, classroom_name)` for classrooms that currently contain
+  an **unlinked** student with the given code — never the full classroom
+  directory. A student account has zero baseline `SELECT` on
+  `classrooms` at all (0001's `classrooms_select_own` is teacher-only),
+  so `SECURITY DEFINER` is what lets this narrow, purpose-built query see
+  across teachers for this one purpose, same bootstrapping pattern as
+  `student_link_target_valid` (0008). Requires an authenticated
+  `role = 'student'` caller; empty code or no session raises.
+- **`find_student_for_link_in_classroom(student_code, classroom_id)`** —
+  replaces `find_student_for_link(student_code)` as the RPC the frontend
+  calls. Verifies through `students` → `classroom_students` →
+  `classrooms`: a match must be an unlinked student whose `student_code`
+  equals the input AND who is currently enrolled in the given
+  `classroom_id`. Still refuses to guess — if more than one unlinked
+  student in the SAME classroom somehow shares the same code (a
+  data-quality edge case; `student_code` was never constrained unique),
+  this raises instead of returning an arbitrary match, exactly like
+  0008's original guard, just re-scoped to "within this classroom."
+  Returns `(student_id, student_code, first_name, last_name,
+  classroom_name)` — `student_code` is now safe to echo back (the caller
+  already typed it to get here, and it's no longer the whole lookup key
+  by itself) — never any other column, never the roster, never the
+  teacher.
+- **`find_student_for_link(student_code)` (0008) — EXECUTE revoked from
+  `authenticated`.** Left in place, unmodified, but no longer callable by
+  a normal client session. Kept rather than dropped (smallest possible
+  change, fully reversible), but retiring it as a live entrypoint closes
+  a real gap: it would otherwise still succeed whenever a code happens to
+  be globally unique (most codes — just not the colliding ones), silently
+  bypassing the classroom disambiguation this migration exists to
+  enforce.
+
+## Information-leak review (classroom selector)
+
+Considered and rejected: listing *every* classroom in the system for the
+selector. That would hand any signed-in student account the full
+classroom directory — every section name run by every teacher — which is
+more than linking requires and not something a student account has any
+other way to see. Adopted instead: `list_classrooms_for_student_code`
+returns only classrooms that actually contain an unlinked student with
+the code just entered — typically one, occasionally a handful for a
+colliding code, never the whole school. Fields are capped to
+`classroom_id`/`classroom_name`; no `teacher_id`, `is_active`, roster
+size, or any other column is exposed by either new RPC.
+
+## Frontend
+
+- **`src/types/student-link-request.ts`** — new
+  `StudentLinkClassroomOption { classroomId, classroomName }`;
+  `StudentLinkCandidate` gains `studentCode` and `classroomName`.
+- **`src/services/student-link-service.ts`** — new
+  `listClassroomsForStudentCode`; `findStudentForLink` now takes
+  `(studentCode, classroomId)` and calls
+  `find_student_for_link_in_classroom`.
+- **`src/pages/student/link-account-page.tsx`** — three-step flow: enter
+  code → `list_classrooms_for_student_code` → pick a classroom (a single
+  match is pre-selected via the pure, unit-tested `pickDefaultClassroom`,
+  but the student still confirms explicitly) →
+  `find_student_for_link_in_classroom` → confirm name + classroom →
+  submit the pending request exactly as before (unchanged: `students`.
+  `linked_profile_id` is still only ever set by
+  `approve_student_link_request`).
+
+## Empirical verification — PASS (all scenarios)
+
+Same local-Postgres methodology as every prior phase in this document.
+Fixtures: two teachers, three classrooms; `student_code "04103"` shared
+across two DIFFERENT classrooms (the exact reported bug); `student_code
+"99001"` shared by two DIFFERENT students inside the SAME classroom (the
+still-ambiguous case that must stay rejected); one already-linked
+(claimed) student.
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | `list_classrooms_for_student_code("04103")` | PASS — returns both classrooms, id+name only |
+| 2 | `find_student_for_link_in_classroom("04103", classroom A)` | PASS — returns only classroom A's student |
+| 3 | `find_student_for_link_in_classroom("04103", classroom B)` | PASS — returns only classroom B's student |
+| 4 | Same code, WRONG classroom (not enrolled there) | PASS — empty result, no error, no data guessed |
+| 5 | Duplicate code inside the SAME classroom ("99001") | PASS — rejected as ambiguous, no row guessed |
+| 6 | Already-linked (claimed) student — both RPCs | PASS — excluded from both; 0 rows either way |
+| 7 | Return-type introspection | PASS — exactly the documented minimal columns, nothing else |
+| 7b | Student account's baseline direct `SELECT` on `classrooms`/`students`/`classroom_students` | PASS — 0 rows each; the RPCs are the only path |
+| 8 | Old `find_student_for_link(text)` called directly | PASS — `permission denied`, EXECUTE revoked |
+| 9 | Full happy path: submit in classroom A, teacher A approves | PASS — `linked_profile_id` set correctly |
+| 10 | Teacher B (wrong teacher) tries to approve a classroom-A request | PASS — invisible via SELECT (0 rows) and rejected by the RPC |
+
+**Overall verdict: PASS.** The reported bug is fixed (a duplicate
+`student_code` across classrooms no longer blocks linking), the
+still-genuinely-ambiguous case (duplicate code within one classroom)
+still correctly refuses to guess, no additional data (roster, teacher,
+grades, attendance, assignments) is exposed by either new RPC, and every
+Phase 10 protection (no self-approval, no auto-link, one link per
+student/account, teacher-owns-classroom required to approve) is
+unaffected.

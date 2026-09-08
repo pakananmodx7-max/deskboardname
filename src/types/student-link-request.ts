@@ -1,12 +1,28 @@
 export type StudentLinkRequestStatus = 'pending' | 'approved' | 'rejected'
 
-/** Minimal, non-enumerable match returned by the find_student_for_link
- * RPC — never the full students row (no student_code, email, phone;
- * see supabase/migrations/0008_student_account_links.sql). */
+/** One minimal classroom choice for the /student/link-account classroom
+ * selector — id + name ONLY (never roster, teacher, grades, attendance,
+ * or assignments). Returned by list_classrooms_for_student_code, scoped
+ * to classrooms that actually contain an unlinked student with the
+ * entered student_code — never the full classroom directory. See
+ * supabase/migrations/0009_student_link_classroom_lookup.sql. */
+export interface StudentLinkClassroomOption {
+  classroomId: string
+  classroomName: string
+}
+
+/** Minimal, non-enumerable match returned by
+ * find_student_for_link_in_classroom — never the full students row (no
+ * email, phone, number, nickname, status; see
+ * supabase/migrations/0009_student_link_classroom_lookup.sql). Identity
+ * is confirmed by student_code + classroom together, not student_code
+ * alone — student_code is not unique across the whole students table. */
 export interface StudentLinkCandidate {
   studentId: string
+  studentCode: string
   firstName: string
   lastName: string
+  classroomName: string
 }
 
 export interface StudentAccountLinkRequest {

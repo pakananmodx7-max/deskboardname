@@ -3,6 +3,7 @@ import type { ProfileRole } from '@/types/profile'
 import type {
   StudentAccountLinkRequest,
   StudentLinkCandidate,
+  StudentLinkClassroomOption,
   StudentLinkRequestForReview,
   StudentLinkRequestStatus,
 } from '@/types/student-link-request'
@@ -56,24 +57,66 @@ export async function getMyRole(): Promise<ProfileRole> {
 }
 
 /**
- * The ONLY way a student account may query anything about the students
- * table — see find_student_for_link's doc comment in
- * 0008_student_account_links.sql for the full security rationale (exact
- * student_code match only, minimal fields, excludes already-linked
- * students, rejects an ambiguous multi-match rather than guessing).
- * Returns null for "not found" (or already claimed — indistinguishable
- * on purpose); throws for an ambiguous match or an unauthorized caller.
+ * The classroom choices for the /student/link-account selector — scoped
+ * to classrooms that actually contain an unlinked student with the given
+ * student_code (never the full classroom directory). See
+ * list_classrooms_for_student_code's doc comment in
+ * 0009_student_link_classroom_lookup.sql for the full security
+ * rationale. An empty array means the code matched no unlinked student
+ * in any classroom.
  */
-export async function findStudentForLink(studentCode: string): Promise<StudentLinkCandidate | null> {
+export async function listClassroomsForStudentCode(studentCode: string): Promise<StudentLinkClassroomOption[]> {
   const supabase = getSupabaseClient()
-  const { data, error } = await supabase.rpc('find_student_for_link', { p_student_code: studentCode })
+  const { data, error } = await supabase.rpc('list_classrooms_for_student_code', {
+    p_student_code: studentCode,
+  })
   if (error) throw error
 
-  const rows = data as { student_id: string; first_name: string; last_name: string }[]
-  if (!rows || rows.length === 0) return null
+  const rows = (data ?? []) as { classroom_id: string; classroom_name: string }[]
+  return rows.map((row) => ({ classroomId: row.classroom_id, classroomName: row.classroom_name }))
+}
+
+/**
+ * The ONLY way a student account may query anything about the students
+ * table — see find_student_for_link_in_classroom's doc comment in
+ * 0009_student_link_classroom_lookup.sql for the full security
+ * rationale. Identity is confirmed by student_code + classroom_id
+ * together (student_code alone is not unique across the whole students
+ * table — see 0001's "student_code duplicate strategy"), minimal fields
+ * only, excludes already-linked students, and rejects an ambiguous
+ * multi-match WITHIN the selected classroom rather than guessing.
+ * Returns null for "not found in this classroom" (or already claimed —
+ * indistinguishable on purpose); throws for an ambiguous match or an
+ * unauthorized caller.
+ */
+export async function findStudentForLink(
+  studentCode: string,
+  classroomId: string,
+): Promise<StudentLinkCandidate | null> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('find_student_for_link_in_classroom', {
+    p_student_code: studentCode,
+    p_classroom_id: classroomId,
+  })
+  if (error) throw error
+
+  const rows = (data ?? []) as {
+    student_id: string
+    student_code: string
+    first_name: string
+    last_name: string
+    classroom_name: string
+  }[]
+  if (rows.length === 0) return null
 
   const row = rows[0]
-  return { studentId: row.student_id, firstName: row.first_name, lastName: row.last_name }
+  return {
+    studentId: row.student_id,
+    studentCode: row.student_code,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    classroomName: row.classroom_name,
+  }
 }
 
 /**
