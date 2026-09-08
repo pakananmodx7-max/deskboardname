@@ -1,12 +1,17 @@
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 
 import { ProtectedRoute } from '@/components/auth/protected-route'
+import { StudentProtectedRoute } from '@/components/auth/student-protected-route'
 import { TeacherLayout } from '@/layouts/teacher-layout'
 import { AuthProvider } from '@/lib/auth-context'
 import { ForgotPasswordPage } from '@/pages/auth/forgot-password-page'
 import { LoginPage } from '@/pages/auth/login-page'
 import { ResetPasswordPage } from '@/pages/auth/reset-password-page'
 import { SignupPage } from '@/pages/auth/signup-page'
+import { StudentLinkAccountPage } from '@/pages/student/link-account-page'
+import { StudentLoginPage } from '@/pages/student/login-page'
+import { StudentPendingPage } from '@/pages/student/pending-page'
+import { StudentSignupPage } from '@/pages/student/signup-page'
 import { AiPage } from '@/pages/teacher/ai/ai-page'
 import { AssignmentsRedirectPage } from '@/pages/teacher/assignments/assignments-redirect-page'
 import { AttendancePage } from '@/pages/teacher/attendance/attendance-page'
@@ -17,6 +22,7 @@ import { GradesRedirectPage } from '@/pages/teacher/grades/grades-redirect-page'
 import { IntegrationsPage } from '@/pages/teacher/integrations/integrations-page'
 import { ReportsPage } from '@/pages/teacher/reports/reports-page'
 import { SettingsPage } from '@/pages/teacher/settings/settings-page'
+import { StudentLinkRequestsPage } from '@/pages/teacher/student-link-requests/student-link-requests-page'
 import { StudentsPage } from '@/pages/teacher/students/students-page'
 import { SubjectClassroomAssignmentDetailPage } from '@/pages/teacher/subjects/subject-classroom-assignment-detail-page'
 import { SubjectClassroomWorkspacePage } from '@/pages/teacher/subjects/subject-classroom-workspace-page'
@@ -32,6 +38,24 @@ const router = createBrowserRouter([
   { path: 'signup', element: <SignupPage /> },
   { path: 'forgot-password', element: <ForgotPasswordPage /> },
   { path: 'reset-password', element: <ResetPasswordPage /> },
+  { path: 'student/login', element: <StudentLoginPage /> },
+  { path: 'student/signup', element: <StudentSignupPage /> },
+  {
+    path: 'student/link-account',
+    element: (
+      <StudentProtectedRoute>
+        <StudentLinkAccountPage />
+      </StudentProtectedRoute>
+    ),
+  },
+  {
+    path: 'student/pending',
+    element: (
+      <StudentProtectedRoute>
+        <StudentPendingPage />
+      </StudentProtectedRoute>
+    ),
+  },
   {
     path: '/teacher',
     element: (
@@ -58,6 +82,7 @@ const router = createBrowserRouter([
       { path: 'attendance', element: <AttendancePage /> },
       { path: 'assignments', element: <AssignmentsRedirectPage /> },
       { path: 'grades', element: <GradesRedirectPage /> },
+      { path: 'student-link-requests', element: <StudentLinkRequestsPage /> },
       { path: 'reports', element: <ReportsPage /> },
       { path: 'ai', element: <AiPage /> },
       { path: 'integrations', element: <IntegrationsPage /> },

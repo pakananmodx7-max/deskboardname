@@ -1319,3 +1319,232 @@ phase's instructions: create for review, don't apply automatically).
 student score write is possible under 0006 as it stands; the one
 WARNING was a same-teacher data-integrity gap, not an authorization
 issue, and a fix is staged in 0007 pending a manual apply.
+
+# Phase 10: Student Portal Phase 1 — account linking + teacher approval (0008)
+
+**Status: `supabase/migrations/0008_student_account_links.sql` written and
+empirically verified (14+ adversarial scenarios, all PASS), NOT applied.**
+
+Scope, explicitly bounded per this phase's instructions: a student gets
+their own Supabase Auth account, separate from the `students` row a
+teacher already created for them; they REQUEST to be linked to that row
+by entering their student_code; a teacher who actually teaches that
+student approves or rejects the request; only approval ever establishes
+the permanent link. No auto-link by student_code anywhere. No Student
+Dashboard yet — an approved student sees a stub "your account is linked"
+message and nothing else. This phase does not touch Grades or
+Assignments.
+
+## Schema
+
+- **`students.linked_profile_id`** (new column, nullable `uuid
+  references profiles(id) on delete set null`) — the permanent link.
+  Guarded by a new `protect_students_linked_profile_id` BEFORE UPDATE
+  trigger (see "RLS-recursion and trigger-bypass findings" below) so it
+  can only ever be set by `approve_student_link_request`, never by a
+  teacher's normal `UPDATE students ...` (which the existing
+  `students_update_via_classroom` policy from 0001 would otherwise allow
+  for any column, including this one). A partial unique index
+  (`where linked_profile_id is not null`) enforces "one auth account =
+  maximum one approved student"; "one student = maximum one approved
+  account" is structurally true (a single column can only hold one value).
+
+- **`student_account_link_requests`** (new table) — one row per request,
+  never per student (a student may have a rejected-then-retried history,
+  all kept, no hard delete). Columns: `id`, `student_id`, `requested_by`
+  (the requesting profile), `status` (`pending`/`approved`/`rejected`),
+  `reviewed_by`, `reviewed_at`, `review_note`, `created_at`, `updated_at`.
+  Deliberately does NOT store `classroom_id` — which teacher(s) can see
+  and act on a request is derived live from the student's CURRENT
+  `classroom_students` membership at query/RPC time, the same
+  recompute-don't-snapshot choice as `students_select_via_classroom`
+  (0001). Two partial unique indexes: at most one `pending` row per
+  `requested_by` (a student can't spray requests at multiple targets at
+  once) and at most one `pending` row per `student_id` (two accounts
+  can't both have a live claim on the same student, avoiding an
+  ambiguous review queue).
+
+## RLS
+
+- **`student_account_link_requests_select_own_or_teacher`** — a student
+  sees their own request history; a teacher sees requests for students
+  currently in one of their own classrooms (derived via
+  `classroom_students`/`classrooms`, same pattern as every other
+  ownership check in this schema).
+- **`student_account_link_requests_select_admin`** — mirrors
+  `classroom_students_insert_admin` (0001): an admin sees every request,
+  independent of classroom ownership, so the RPC-level admin override
+  below isn't paired with a dead end where an admin can approve a request
+  they have no way to find in the first place.
+- **`student_account_link_requests_insert_own`** — SECURITY-CRITICAL: a
+  student may insert a request only for themselves
+  (`requested_by = auth.uid()`), only with `status = 'pending'` and
+  `reviewed_by`/`reviewed_at` both null (closes a direct
+  self-approval-by-forged-insert path — see battery scenario 2b below),
+  only as a `role = 'student'` profile, and only against a target that
+  `student_link_target_valid` (a SECURITY DEFINER helper, same
+  bootstrapping-problem fix as `is_student_creator` in 0001) confirms
+  exists and isn't already linked.
+- **No UPDATE policy, no DELETE policy, for ANY role.** This is the
+  literal enforcement of "students must never be able to approve
+  themselves": there is categorically no client-reachable path, for
+  anyone, that can ever transition a request's status. The only two ways
+  a request changes are the two SECURITY DEFINER RPCs below, each of
+  which re-verifies authorization itself in PL/pgSQL rather than leaning
+  on a declarative RLS policy.
+- **`profiles_select_via_link_request`** (new, additive to
+  `profiles_select_own` from 0001) — lets a teacher see the identity
+  (email/display name) of an account that has requested to link to one
+  of their own students, via the `teacher_can_view_link_requester`
+  helper (see below). No broader "teachers can browse all profiles"
+  access is introduced.
+
+## RPCs / functions
+
+- **`student_link_target_valid(student_id)`** — SECURITY DEFINER
+  boolean helper (student existence + unclaimed check), the standard fix
+  for the same "caller has no SELECT visibility into the table being
+  checked" bootstrapping problem `is_student_creator` solved in 0001.
+- **`teacher_can_view_link_requester(profile_id)`** — SECURITY DEFINER
+  boolean helper backing `profiles_select_via_link_request`. Its
+  existence is itself the direct result of an empirical finding — see
+  next section.
+- **`find_student_for_link(student_code)`** — the secure minimal lookup
+  RPC: exact `student_code` match only (no name search), requires an
+  authenticated `role = 'student'` caller, returns only
+  `(student_id, first_name, last_name)` — never `student_code`, email,
+  phone, or any other column — silently excludes already-linked
+  students rather than revealing "that code exists but is taken," and
+  raises rather than guessing when a code ambiguously matches more than
+  one unlinked student (`student_code` is not unique in this schema —
+  see 0001's "student_code duplicate strategy").
+- **`approve_student_link_request(request_id)`** /
+  **`reject_student_link_request(request_id, note)`** — SECURITY
+  DEFINER, deliberately NOT the SECURITY INVOKER choice
+  `create_student_and_enroll` (0001) made, because there is intentionally
+  no RLS UPDATE policy for these to lean on — each re-verifies caller is
+  teacher/admin, owns a classroom containing the target student (or is
+  admin), locks the row (`for update`) to close a concurrent-approval
+  race, and — approve only — re-checks the target isn't already linked
+  and the requester doesn't already have an approved student elsewhere,
+  then sets `students.linked_profile_id` and the request's status in the
+  same transaction. Approving also auto-rejects any other stray pending
+  request from the same requester (they could never be approved anyway
+  once one is granted). Bulk approve is a client-side
+  `Promise.allSettled` loop over this single RPC (same pattern as
+  `assignment-service.ts`'s `bulkSetSubmissionStatus`), not a dedicated
+  SQL bulk function — one ineligible request must never block the rest.
+
+## RLS-recursion and trigger-bypass findings (both fixed before this migration was finalized)
+
+Empirical verification against a local Postgres 16 instance (same `auth`
+schema shim used throughout this project) surfaced two real, non-obvious
+bugs that a purely written-not-tested migration would have shipped:
+
+1. **A `profiles` SELECT policy referencing `classroom_students` broke
+   an unrelated, pre-existing statement.** The first draft of
+   `profiles_select_via_link_request` queried
+   `student_account_link_requests` → `classroom_students` → `classrooms`
+   directly. The moment that policy existed, ANY `insert into
+   classroom_students` anywhere in the app — including the
+   already-working 0001 flow, confirmed by reproducing on a
+   0001–0007-only database where it works fine — started failing with
+   `infinite recursion detected in policy for relation
+   "classroom_students"`, even though nothing in
+   `classroom_students_insert_own`'s own policy text mentions `profiles`.
+   Root cause not fully resolved theoretically, but empirically
+   confirmed and fixed the same way `is_student_creator`/
+   `has_existing_classroom_link` (0001) already fix this exact class of
+   problem: wrapping the check in a narrowly-scoped SECURITY DEFINER
+   function (`teacher_can_view_link_requester`) instead of a raw
+   cross-table subquery inline in the policy. Verified fixed by
+   reproducing the failure, applying the fix, and confirming the same
+   `classroom_students` insert then succeeds.
+2. **`current_setting('role', true) = 'authenticated'`, the guard
+   `protect_profile_privileged_fields` (0003) uses, does NOT distinguish
+   a SECURITY DEFINER caller from a normal client request** — verified
+   directly: a minimal SECURITY DEFINER function was confirmed to still
+   report `current_setting('role', true) = 'authenticated'` internally
+   (SECURITY DEFINER does not do a `SET ROLE`-equivalent change to the
+   `role` GUC), while `current_user` DOES change to the function's owner
+   for the duration of the call. Had `protect_students_linked_profile_id`
+   copied 0003's exact guard expression, it would have silently blocked
+   `approve_student_link_request`'s own UPDATE, breaking every approval.
+   Fixed by using `current_user = 'authenticated'` instead, empirically
+   confirmed to correctly allow the RPC's internal UPDATE while still
+   blocking a direct client UPDATE attempt (battery scenario 6a). This is
+   now documented inline in the migration as the deliberate, verified
+   reason the two triggers in this schema use different guard
+   expressions for what looks like the same purpose.
+
+## Empirical RLS/RPC verification — PASS (all scenarios)
+
+Fixtures: two teachers (A, B) each with one classroom and students of
+their own (including a same-`student_code` pair across teachers, to
+exercise the ambiguous-lookup case); three student portal accounts
+signed up through the real `handle_new_user` trigger path (`auth.users`
+insert with `intended_role` metadata, not hand-inserted profile rows);
+two adversarial signups requesting `intended_role: 'admin'` and garbage
+values.
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Signup requesting `intended_role: 'admin'` or garbage | PASS — both landed as `role = 'teacher'` (the safe default), never 'admin' |
+| 2 | `find_student_for_link` — exact match | PASS — returns id/first/last name only |
+| 3 | `find_student_for_link` — not found | PASS — empty result |
+| 4 | `find_student_for_link` — ambiguous code (two unlinked students share it) | PASS — rejected with a clear error, no row guessed |
+| 5 | `find_student_for_link` — called by a teacher account | PASS — rejected, role check |
+| 6 | `find_student_for_link` — anonymous | PASS — rejected |
+| 7 | `find_student_for_link` — target already linked | PASS — excluded from results |
+| 8 | Submit a valid pending request | PASS |
+| 9 | **Self-approval via forged INSERT** (`status: 'approved'`, `reviewed_by: self`) | PASS — rejected by WITH CHECK |
+| 10 | Second pending request from the same account while one is pending | PASS — rejected, unique index |
+| 11 | Competing pending request for the same target student from a different account | PASS — rejected, unique index |
+| 12 | Forging `requested_by` to another account | PASS — rejected |
+| 13 | A teacher account submitting a request | PASS — rejected, role check |
+| 14 | **Student direct UPDATE to `status: 'approved'` on their own request** | PASS — 0 rows affected (no UPDATE policy) |
+| 15 | **Owning teacher's direct UPDATE instead of the RPC** | PASS — 0 rows affected (RPC is the only path, even for the legitimate teacher) |
+| 16 | Cross-teacher SELECT visibility | PASS — Teacher B sees 0 rows for Teacher A's student |
+| 17 | Wrong teacher approves a REAL, known, still-pending request id | PASS — rejected "คุณไม่มีสิทธิ์อนุมัติคำขอของนักเรียนคนนี้" (not merely "not found") |
+| 18 | Anonymous caller approves | PASS — rejected |
+| 19 | Legitimate approval by the owning teacher | PASS — `students.linked_profile_id` set correctly |
+| 20 | Re-approving an already-approved request | PASS — rejected, not pending |
+| 21 | **Direct `UPDATE students SET linked_profile_id = ...`** by the owning teacher, bypassing approval entirely | PASS — rejected by `protect_students_linked_profile_id` |
+| 22 | Already-approved account submits a second request for a DIFFERENT student (allowed to sit pending) | PASS — insert succeeds |
+| 23 | ...then that second request is approved | PASS — rejected at approval time, "บัญชีนี้เชื่อมกับนักเรียนคนอื่นไปแล้ว" |
+| 24 | Rejection with a note, then retry after rejection | PASS — `linked_profile_id` untouched by rejection; retry succeeds since the old row is `rejected`, not `pending` |
+| 25 | Teacher visibility into the requester's profile (email/display name) | PASS — visible only once a request ties that profile to one of the teacher's own students; an unrelated profile stays invisible |
+| 26 | Student account (now approved/linked) reads `students` directly | PASS — 0 rows; the table stays fully closed to student accounts even after linking |
+| 27 | Admin approves a request for a student in a classroom the admin doesn't own | PASS — admin override works, mirrors `classroom_students_insert_admin` |
+| 28 | Student attempts self-escalation to `role = 'admin'` via direct `profiles` UPDATE | PASS — rejected by 0003's existing `protect_profile_privileged_fields`, confirmed unaffected by this phase |
+
+**Overall verdict: PASS.** No scenario allowed a student to approve their
+own request, approve another account's request, read the `students`
+table, or escalate role. The two findings above were real bugs in the
+first draft, not merely defense-in-depth — both are fixed in the
+migration as committed, and both fixes are verified, not just argued.
+
+## Frontend
+
+- **`src/lib/auth-context.tsx`** — `SignUpInput` gains an optional
+  `intendedRole?: 'student'` field (type-restricted to that one literal,
+  so there's no way to even attempt requesting anything else through
+  this code path).
+- **`src/components/auth/protected-route.tsx`** (`/teacher/*`) — now
+  also waits for `profile` to load (not just `user`) before rendering,
+  and redirects a `role = 'student'` session to `/student/pending`. This
+  is a deliberate UX tradeoff over the pre-Student-Portal version (which
+  rendered as soon as `user` was set): a student must never even briefly
+  see the `/teacher/*` shell.
+- **`src/components/auth/student-protected-route.tsx`** (new) — the
+  `/student/link-account` and `/student/pending` equivalent; requires a
+  session, does not redirect a teacher account away (RLS already makes
+  every write there meaningless for one).
+- **`src/services/student-link-service.ts`** (new) — thin client for
+  every RPC/table above, plus `deriveMyLinkStatus` (pure: picks the most
+  recent request from a student's own history to decide what
+  `/student/login` and `/student/pending` show — unit tested).
+- Pages: `/student/login`, `/student/signup`, `/student/link-account`,
+  `/student/pending`; teacher-side `/teacher/student-link-requests`
+  (pending queue, approve/reject with an optional note, bulk approve),
+  added to the sidebar.

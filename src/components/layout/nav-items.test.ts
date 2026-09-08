@@ -25,3 +25,9 @@ describe('navItems — no global Grades destination', () => {
     expect(navItems.some((item) => item.label.toLowerCase() === 'grades')).toBe(false)
   })
 })
+
+describe('navItems — student link requests entry', () => {
+  it('links to the teacher-side student-link-requests review page', () => {
+    expect(navItems.some((item) => item.to === '/teacher/student-link-requests')).toBe(true)
+  })
+})

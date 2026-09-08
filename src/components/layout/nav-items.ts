@@ -7,6 +7,7 @@ import {
   Plug,
   School,
   Settings,
+  UserCheck,
   Users,
   type LucideIcon,
 } from 'lucide-react'
@@ -32,6 +33,7 @@ export const navItems: NavItem[] = [
   { label: 'Students', to: '/teacher/students', icon: Users },
   { label: 'Subjects', to: '/teacher/subjects', icon: BookOpen },
   { label: 'Attendance', to: '/teacher/attendance', icon: CalendarCheck },
+  { label: 'คำขอเชื่อมบัญชีนักเรียน', to: '/teacher/student-link-requests', icon: UserCheck },
   { label: 'Reports', to: '/teacher/reports', icon: BarChart3 },
   { label: 'AI Assistant', to: '/teacher/ai', icon: Bot },
   { label: 'Integrations', to: '/teacher/integrations', icon: Plug },

@@ -40,6 +40,17 @@ export interface SignUpInput {
   email: string
   password: string
   displayName: string
+  /**
+   * Omit for the normal teacher signup form (the server-side default —
+   * see handle_new_user in 0008_student_account_links.sql). Pass
+   * 'student' ONLY from the dedicated /student/signup form. This is
+   * safe to trust client-side specifically because 'student' is a
+   * strictly LOWER-privileged role than the 'teacher' default in every
+   * RLS policy in this schema — see 0008's threat-model comment on
+   * handle_new_user for the full reasoning. There is no way to request
+   * any OTHER role through this field; the type only allows 'student'.
+   */
+  intendedRole?: 'student'
 }
 
 interface AuthContextValue extends AuthState {
@@ -123,17 +134,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error
       },
 
-      // `role` is never sent here — there is no role field in the signup
-      // form at all, and the server-side trigger (handle_new_user in
-      // 0003_auth_profile.sql) hardcodes every new account to 'teacher'
-      // regardless of anything a client sends in options.data. This
-      // function only ever passes displayName through as metadata.
-      async signUp({ email, password, displayName }) {
+      // `role` itself is never sent here — the server-side trigger
+      // (handle_new_user, 0003 + 0008) is what actually decides the
+      // profile's role, and it only ever honors the literal string
+      // 'student' from intended_role (anything else, including no
+      // signup form ever exists to send anything else in the first
+      // place). See SignUpInput's doc comment for why trusting this one
+      // narrow, lower-privilege-only signal is safe.
+      async signUp({ email, password, displayName, intendedRole }) {
         const client = getSupabaseClient()
         const { data, error } = await client.auth.signUp({
           email,
           password,
-          options: { data: { display_name: displayName } },
+          options: {
+            data: {
+              display_name: displayName,
+              ...(intendedRole ? { intended_role: intendedRole } : {}),
+            },
+          },
         })
         if (error) throw error
         return { needsEmailConfirmation: !data.session }
