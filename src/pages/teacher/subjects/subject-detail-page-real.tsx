@@ -1,117 +1,143 @@
-import { useEffect, useState } from 'react'
-import { Navigate, useParams } from 'react-router-dom'
+import { ChevronRight, Pencil, Users } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
-import { DemoOnlyNotice } from '@/features/subjects-real/demo-only-notice'
-import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
-import { OverviewTab } from '@/features/subjects-real/tabs/overview-tab'
-import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
-import { TopicsTab } from '@/features/subjects-real/tabs/topics-tab'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { EditSubjectDialog } from '@/features/subjects-real/edit-subject-dialog'
+import {
+  buildSubjectClassroomPath,
+  resolveAutoRedirectClassroomId,
+  summarizeSubjectClassrooms,
+} from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { cn } from '@/lib/utils'
-import { getSubjectClassrooms, getSubjectById, getSubjectStudents } from '@/services/subject-service'
-import type { Subject, SubjectClassroom } from '@/types/subject'
+import { getSubjectById, getSubjectClassroomsWithCounts } from '@/services/subject-service'
+import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
-type TabKey = 'overview' | 'students' | 'attendance' | 'topics' | 'assignments' | 'grades'
-
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'overview', label: 'ภาพรวม' },
-  { key: 'students', label: 'นักเรียน' },
-  { key: 'attendance', label: 'เช็คชื่อ' },
-  { key: 'topics', label: 'หัวข้อ' },
-  { key: 'assignments', label: 'งาน' },
-  { key: 'grades', label: 'คะแนน' },
-]
-
+/**
+ * Subject root page — overview + "choose which classroom" screen (see
+ * subject-classroom-workspace-page-real.tsx for the classroom-scoped
+ * workspace this leads into). A subject linked to exactly one classroom
+ * has no real choice to make, so it redirects straight into that
+ * classroom's workspace instead of showing a one-card picker; a subject
+ * linked to several classrooms shows one card per classroom with its own
+ * student count, matching each classroom's own Students tab exactly
+ * (see getSubjectClassroomsWithCounts).
+ */
 export function SubjectDetailPageReal() {
   const { subjectId } = useParams<{ subjectId: string }>()
-  const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  const navigate = useNavigate()
   const [subject, setSubject] = useState<Subject | null | undefined>(undefined)
-  const [classroomLinks, setClassroomLinks] = useState<SubjectClassroom[]>([])
-  const [studentCount, setStudentCount] = useState<number | null>(null)
+  const [links, setLinks] = useState<SubjectClassroomWithCount[]>([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
 
-  useEffect(() => {
-    if (!subjectId) return
-    let active = true
-
-    getSubjectById(subjectId)
+  const refresh = useCallback(() => {
+    if (!subjectId) return undefined
+    setLoading(true)
+    setError(null)
+    return getSubjectById(subjectId)
       .then(async (row) => {
-        if (!active) return
         setSubject(row)
         if (!row) return
-        const [links, students] = await Promise.all([getSubjectClassrooms(row.id), getSubjectStudents(row.id)])
-        if (!active) return
-        setClassroomLinks(links)
-        setStudentCount(students.length)
+        const linkRows = await getSubjectClassroomsWithCounts(row.id)
+        setLinks(linkRows)
       })
-      .catch((err: unknown) => {
-        if (active) setError(toFriendlyErrorMessage(err))
-      })
-
-    return () => {
-      active = false
-    }
+      .catch((err: unknown) => setError(toFriendlyErrorMessage(err)))
+      .finally(() => setLoading(false))
   }, [subjectId])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
 
   if (!subjectId) {
     return <Navigate to="/teacher/subjects" replace />
   }
 
   if (subject === undefined) {
-    return error ? <Navigate to="/teacher/subjects" replace /> : <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
+    return error ? (
+      <Navigate to="/teacher/subjects" replace />
+    ) : (
+      <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
+    )
   }
 
   if (subject === null) {
     return <Navigate to="/teacher/subjects" replace />
   }
 
-  const classroomNames = classroomLinks.map((link) => link.classroomName).filter(Boolean)
+  const autoRedirectClassroomId = resolveAutoRedirectClassroomId(links)
+  if (!loading && autoRedirectClassroomId) {
+    return <Navigate to={buildSubjectClassroomPath(subject.id, autoRedirectClassroomId)} replace />
+  }
+
+  const summary = summarizeSubjectClassrooms(links)
 
   return (
-    <div className="space-y-4">
-      <div className="sticky top-0 z-10 -mx-4 space-y-4 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-3 pt-1">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{subject.name}</h1>
-              {subject.subjectCode && <Badge variant="outline">{subject.subjectCode}</Badge>}
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {classroomNames.join(', ')} · {studentCount ?? 0} คน
-              {subject.academicYear ? ` · ปีการศึกษา ${subject.academicYear}` : ''}
-              {subject.semester ? ` ภาคเรียนที่ ${subject.semester}` : ''}
-            </p>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold tracking-tight">{subject.name}</h1>
+            {subject.subjectCode && <Badge variant="outline">{subject.subjectCode}</Badge>}
           </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {loading
+              ? 'กำลังโหลด...'
+              : `${summary.totalClassrooms} ห้องเรียน · ${summary.totalStudents} นักเรียน`}
+            {subject.academicYear ? ` · ปีการศึกษา ${subject.academicYear}` : ''}
+            {subject.semester ? ` ภาคเรียนที่ ${subject.semester}` : ''}
+          </p>
         </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+          <Pencil className="size-4" />
+          แก้ไขรายวิชา
+        </Button>
+      </div>
 
-        <div className="flex gap-1 overflow-x-auto">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className={cn(
-                'shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-                activeTab === tab.key
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground',
-              )}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
+      ) : links.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+            <p className="text-sm font-medium">รายวิชานี้ยังไม่ได้เชื่อมกับห้องเรียนใด</p>
+            <Button type="button" onClick={() => setEditOpen(true)}>
+              เชื่อมห้องเรียน
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {links.map((link) => (
+            <Card
+              key={link.id}
+              className="cursor-pointer transition-shadow hover:shadow-md"
+              onClick={() => navigate(buildSubjectClassroomPath(subject.id, link.classroomId))}
             >
-              {tab.label}
-            </button>
+              <CardContent className="flex items-center justify-between pt-5">
+                <div>
+                  <p className="text-base font-semibold">{link.classroomName ?? '-'}</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <Users className="size-3.5" />
+                    {link.studentCount} คน
+                  </p>
+                </div>
+                <span className="flex items-center gap-1 text-sm font-medium text-primary">
+                  เปิดห้อง
+                  <ChevronRight className="size-4" />
+                </span>
+              </CardContent>
+            </Card>
           ))}
         </div>
-      </div>
+      )}
 
-      <div>
-        {activeTab === 'overview' && <OverviewTab subject={subject} />}
-        {activeTab === 'students' && <StudentsTab subject={subject} />}
-        {activeTab === 'attendance' && <AttendanceTab subject={subject} />}
-        {activeTab === 'topics' && <TopicsTab subject={subject} />}
-        {activeTab === 'assignments' && <DemoOnlyNotice featureLabel="งาน" />}
-        {activeTab === 'grades' && <DemoOnlyNotice featureLabel="คะแนน" />}
-      </div>
+      <EditSubjectDialog open={editOpen} onOpenChange={setEditOpen} subject={subject} onSaved={refresh} />
     </div>
   )
 }

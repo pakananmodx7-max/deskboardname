@@ -22,6 +22,12 @@ export interface SubjectClassroom {
   createdAt: string
 }
 
+/** A subject↔classroom link plus that classroom's current member count —
+ * used by the subject root page's classroom picker and the link/unlink editor. */
+export interface SubjectClassroomWithCount extends SubjectClassroom {
+  studentCount: number
+}
+
 export interface CreateSubjectInput {
   name: string
   classroomIds: string[]

@@ -1,15 +1,21 @@
 import { Avatar } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import type { SubjectStudentView } from '@/types/subject'
+import type { ClassroomStudent } from '@/types/student'
 
 interface SubjectStudentDrawerProps {
   subjectName: string
-  student: SubjectStudentView | null
+  classroomName: string
+  student: ClassroomStudent | null
   onOpenChange: (open: boolean) => void
 }
 
-export function SubjectStudentDrawer({ subjectName, student, onOpenChange }: SubjectStudentDrawerProps) {
+/** Classroom-scoped equivalent of the earlier cross-classroom
+ * SubjectStudentDrawer — now that the subject workspace itself is
+ * classroom-scoped (see subject-classroom-workspace-page-real.tsx), the
+ * viewed student is always a plain ClassroomStudent from the selected
+ * classroom, not a merged SubjectStudentView. */
+export function SubjectStudentDrawer({ subjectName, classroomName, student, onOpenChange }: SubjectStudentDrawerProps) {
   if (!student) return null
 
   return (
@@ -17,7 +23,9 @@ export function SubjectStudentDrawer({ subjectName, student, onOpenChange }: Sub
       <SheetContent>
         <SheetHeader>
           <SheetTitle>ข้อมูลนักเรียนในรายวิชา</SheetTitle>
-          <SheetDescription>{subjectName}</SheetDescription>
+          <SheetDescription>
+            {subjectName} · {classroomName}
+          </SheetDescription>
         </SheetHeader>
 
         <div className="flex items-center gap-3">
@@ -28,8 +36,7 @@ export function SubjectStudentDrawer({ subjectName, student, onOpenChange }: Sub
             </p>
             <p className="text-sm text-muted-foreground">
               {student.nickname ? `${student.nickname} · ` : ''}
-              {student.number !== null ? `เลขที่ ${student.number} · ` : ''}
-              {student.classroomName}
+              {student.number !== null ? `เลขที่ ${student.number}` : ''}
             </p>
           </div>
         </div>
@@ -56,7 +63,7 @@ export function SubjectStudentDrawer({ subjectName, student, onOpenChange }: Sub
         </div>
 
         <p className="text-xs text-muted-foreground">
-          ข้อมูลงานค้างและการเข้าเรียนยังใช้งานได้เฉพาะในโหมดสาธิต — ยังไม่เชื่อมต่อกับฐานข้อมูลจริงในเฟสนี้
+          ข้อมูลงานค้างและคะแนนยังใช้งานได้เฉพาะในโหมดสาธิต — ยังไม่เชื่อมต่อกับฐานข้อมูลจริงในเฟสนี้
         </p>
       </SheetContent>
     </Sheet>

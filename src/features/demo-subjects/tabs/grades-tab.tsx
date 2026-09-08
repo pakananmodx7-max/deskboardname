@@ -5,12 +5,17 @@ import type { DemoSubject } from '@/demo/types'
 
 interface GradesTabProps {
   subject: DemoSubject
+  classroomId: string
 }
 
-export function GradesTab({ subject }: GradesTabProps) {
+/** Displayed rows are scoped to the selected classroom (never merges
+ * grade rows from the subject's other linked classrooms) — assignment
+ * definitions/submissions themselves stay subject-wide in this demo data
+ * model; only which student ROWS are shown is filtered here. */
+export function GradesTab({ subject, classroomId }: GradesTabProps) {
   const { classrooms, allStudents, subjectAssignments } = useDemoClassroom()
 
-  const students = getStudentsForClassrooms(subject.classroomIds, classrooms, allStudents).sort(
+  const students = getStudentsForClassrooms([classroomId], classrooms, allStudents).sort(
     (a, b) => a.number - b.number,
   )
   const assignments = subjectAssignments.filter((a) => a.subjectId === subject.id)

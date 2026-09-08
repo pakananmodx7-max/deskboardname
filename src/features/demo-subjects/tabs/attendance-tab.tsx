@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
 import { ATTENDANCE_STATUS_LABEL, ATTENDANCE_STATUS_ORDER } from '@/demo/attendance'
 import { useDemoClassroom } from '@/demo/demo-context'
@@ -14,6 +13,7 @@ import { cn } from '@/lib/utils'
 
 interface AttendanceTabProps {
   subject: DemoSubject
+  classroomId: string
 }
 
 function todayIso(): string {
@@ -29,20 +29,26 @@ const statusButtonStyle: Record<DemoAttendanceStatus, string> = {
   absent: 'data-[active=true]:bg-destructive data-[active=true]:text-destructive-foreground',
 }
 
-export function AttendanceTab({ subject }: AttendanceTabProps) {
+/**
+ * Scoped to exactly one of the subject's linked classrooms — which
+ * classroom is decided one level up, by the workspace's own classroom
+ * switcher (see subject-classroom-workspace-page-demo.tsx), matching
+ * subjects-real's AttendanceTab. subjectAttendance is keyed subjectId ->
+ * classroomId -> date -> studentId (demo/types.ts), so saving here can
+ * never be visible under, or overwrite, another linked classroom's roll
+ * call for the same subject+date.
+ */
+export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
   const { classrooms, allStudents, subjectAttendance, setSubjectAttendanceStatus, saveSubjectAttendance } =
     useDemoClassroom()
   const { toast } = useToast()
   const [date, setDate] = useState(todayIso)
-  const [classroomFilter, setClassroomFilter] = useState('all')
 
-  const subjectClassrooms = classrooms.filter((c) => subject.classroomIds.includes(c.id))
-  const filterClassroomIds = classroomFilter === 'all' ? subject.classroomIds : [classroomFilter]
-  const students = getStudentsForClassrooms(filterClassroomIds, classrooms, allStudents).sort(
+  const students = getStudentsForClassrooms([classroomId], classrooms, allStudents).sort(
     (a, b) => a.number - b.number,
   )
 
-  const recordForDate = subjectAttendance[subject.id]?.[date] ?? EMPTY_RECORD
+  const recordForDate = subjectAttendance[subject.id]?.[classroomId]?.[date] ?? EMPTY_RECORD
 
   const statuses = useMemo(() => {
     const result: Record<string, DemoAttendanceStatus> = {}
@@ -50,6 +56,7 @@ export function AttendanceTab({ subject }: AttendanceTabProps) {
       result[student.id] = recordForDate[student.id] ?? 'present'
     }
     return result
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [students, recordForDate])
 
   const summary = useMemo(() => {
@@ -59,41 +66,26 @@ export function AttendanceTab({ subject }: AttendanceTabProps) {
   }, [statuses])
 
   function handleSetStatus(studentId: string, status: DemoAttendanceStatus) {
-    setSubjectAttendanceStatus(subject.id, date, studentId, status)
+    setSubjectAttendanceStatus(subject.id, classroomId, date, studentId, status)
   }
 
   function handleSave() {
     // Persist the resolved (default-included) status for every visible student,
     // not just the ones explicitly clicked, so the saved record is complete.
     for (const student of students) {
-      setSubjectAttendanceStatus(subject.id, date, student.id, statuses[student.id])
+      setSubjectAttendanceStatus(subject.id, classroomId, date, student.id, statuses[student.id])
     }
-    saveSubjectAttendance(subject.id, date)
+    saveSubjectAttendance(subject.id, classroomId, date)
     toast('บันทึกการเช็คชื่อของรายวิชาเรียบร้อยแล้ว')
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-auto" />
-          <NativeSelect
-            value={classroomFilter}
-            onChange={(e) => setClassroomFilter(e.target.value)}
-            className="w-auto"
-            aria-label="กรองตามห้องเรียน"
-          >
-            <option value="all">ทุกห้องเรียน</option>
-            {subjectClassrooms.map((classroom) => (
-              <option key={classroom.id} value={classroom.id}>
-                {classroom.name}
-              </option>
-            ))}
-          </NativeSelect>
-        </div>
+        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-auto" />
         <Button onClick={handleSave}>
           <Save className="size-4" />
-          Save Demo Attendance
+          บันทึกการเช็คชื่อ
         </Button>
       </div>
 
@@ -123,41 +115,47 @@ export function AttendanceTab({ subject }: AttendanceTabProps) {
                 <tr className="border-b border-border text-xs text-muted-foreground">
                   <th className="px-5 py-3 font-medium">เลขที่</th>
                   <th className="px-5 py-3 font-medium">ชื่อ-นามสกุล</th>
-                  <th className="px-5 py-3 font-medium">ห้อง</th>
                   <th className="px-5 py-3 font-medium">สถานะ</th>
                 </tr>
               </thead>
               <tbody>
-                {students.map((student) => {
-                  const current = statuses[student.id]
-                  return (
-                    <tr key={student.id} className="border-b border-border last:border-0">
-                      <td className="px-5 py-3 text-muted-foreground">{student.number}</td>
-                      <td className="px-5 py-3 font-medium">
-                        {student.firstName} {student.lastName}
-                      </td>
-                      <td className="px-5 py-3 text-muted-foreground">{student.classroom}</td>
-                      <td className="px-5 py-3">
-                        <div className="flex flex-wrap gap-1.5">
-                          {ATTENDANCE_STATUS_ORDER.map((status) => (
-                            <button
-                              key={status}
-                              type="button"
-                              data-active={current === status}
-                              onClick={() => handleSetStatus(student.id, status)}
-                              className={cn(
-                                'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent',
-                                statusButtonStyle[status],
-                              )}
-                            >
-                              {ATTENDANCE_STATUS_LABEL[status]}
-                            </button>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
+                {students.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-5 py-6 text-center text-muted-foreground">
+                      ยังไม่มีนักเรียนในห้องเรียนนี้
+                    </td>
+                  </tr>
+                ) : (
+                  students.map((student) => {
+                    const current = statuses[student.id]
+                    return (
+                      <tr key={student.id} className="border-b border-border last:border-0">
+                        <td className="px-5 py-3 text-muted-foreground">{student.number}</td>
+                        <td className="px-5 py-3 font-medium">
+                          {student.firstName} {student.lastName}
+                        </td>
+                        <td className="px-5 py-3">
+                          <div className="flex flex-wrap gap-1.5">
+                            {ATTENDANCE_STATUS_ORDER.map((status) => (
+                              <button
+                                key={status}
+                                type="button"
+                                data-active={current === status}
+                                onClick={() => handleSetStatus(student.id, status)}
+                                className={cn(
+                                  'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent',
+                                  statusButtonStyle[status],
+                                )}
+                              >
+                                {ATTENDANCE_STATUS_LABEL[status]}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
               </tbody>
             </table>
           </div>

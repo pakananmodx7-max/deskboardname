@@ -13,6 +13,17 @@ import { AssignmentDialog } from '@/features/demo-subjects/assignment-dialog'
 
 interface AssignmentsTabProps {
   subject: DemoSubject
+  /**
+   * Accepted (not yet used to filter) so this tab already receives
+   * exactly what it will need once assignments support classroom
+   * scoping (see the future-design note in
+   * subject-classroom-workspace-page-real.tsx) — an assignment card's
+   * submitted/total count would then be computed against only the
+   * selected classroom's students, the same way GradesTab already scopes
+   * its displayed rows, instead of every assignment always summarizing
+   * the whole subject roster as it does today.
+   */
+  classroomId: string
 }
 
 export function AssignmentsTab({ subject }: AssignmentsTabProps) {

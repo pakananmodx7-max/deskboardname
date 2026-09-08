@@ -8,11 +8,12 @@ import type { DemoAttendanceStatus, DemoStudent, DemoSubject } from '@/demo/type
 
 interface SubjectStudentDrawerProps {
   subject: DemoSubject
+  classroomId: string
   student: DemoStudent | null
   onOpenChange: (open: boolean) => void
 }
 
-export function SubjectStudentDrawer({ subject, student, onOpenChange }: SubjectStudentDrawerProps) {
+export function SubjectStudentDrawer({ subject, classroomId, student, onOpenChange }: SubjectStudentDrawerProps) {
   const { subjectAssignments, subjectAttendance } = useDemoClassroom()
 
   if (!student) return null
@@ -30,10 +31,14 @@ export function SubjectStudentDrawer({ subject, student, onOpenChange }: Subject
         gradedAssignments.length
       : null
 
+  // Scoped to this classroom's roll calls only (subjectAttendance is now
+  // keyed subjectId -> classroomId -> date -> studentId, matching the real
+  // schema's per-classroom attendance_sessions) — never merges attendance
+  // recorded for this student under this subject in a different classroom.
   const attendanceCounts: Record<DemoAttendanceStatus, number> = { present: 0, late: 0, leave: 0, absent: 0 }
-  const bySubject = subjectAttendance[subject.id] ?? {}
+  const byClassroom = subjectAttendance[subject.id]?.[classroomId] ?? {}
   let recordedDays = 0
-  for (const byDate of Object.values(bySubject)) {
+  for (const byDate of Object.values(byClassroom)) {
     const status = byDate[student.id]
     if (status) {
       attendanceCounts[status] += 1

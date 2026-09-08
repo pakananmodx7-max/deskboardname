@@ -138,11 +138,17 @@ interface DemoClassroomContextValue extends DemoClassroomState {
   setSubmissionNote: (assignmentId: string, studentId: string, note: string) => void
   setSubjectAttendanceStatus: (
     subjectId: string,
+    classroomId: string,
     date: string,
     studentId: string,
     status: DemoAttendanceStatus,
   ) => void
-  saveSubjectAttendance: (subjectId: string, date: string) => void
+  saveSubjectAttendance: (subjectId: string, classroomId: string, date: string) => void
+  /** Whether this subject+classroom has ever recorded attendance —
+   * mirrors the real hasSubjectClassroomAttendance safeguard check
+   * (subject-service.ts) for the demo EditSubjectDialog's unlink warning. */
+  hasSubjectClassroomAttendanceDemo: (subjectId: string, classroomId: string) => boolean
+  updateSubjectClassroomIdsDemo: (subjectId: string, classroomIds: string[]) => void
 
   // ---- Classroom management (per-classroom student actions) ----
   // These operate on `allStudents`/`classrooms` (the multi-classroom
@@ -388,26 +394,46 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
 
   function setSubjectAttendanceStatus(
     subjectId: string,
+    classroomId: string,
     date: string,
     studentId: string,
     status: DemoAttendanceStatus,
   ) {
     setState((prev) => {
       const bySubject = prev.subjectAttendance[subjectId] ?? {}
-      const byDate = bySubject[date] ?? {}
+      const byClassroom = bySubject[classroomId] ?? {}
+      const byDate = byClassroom[date] ?? {}
       return {
         ...prev,
         subjectAttendance: {
           ...prev.subjectAttendance,
-          [subjectId]: { ...bySubject, [date]: { ...byDate, [studentId]: status } },
+          [subjectId]: {
+            ...bySubject,
+            [classroomId]: { ...byClassroom, [date]: { ...byDate, [studentId]: status } },
+          },
         },
       }
     })
   }
 
-  function saveSubjectAttendance(subjectId: string, date: string) {
+  function saveSubjectAttendance(subjectId: string, classroomId: string, date: string) {
     const subject = state.subjects.find((s) => s.id === subjectId)
-    logActivity(`บันทึกการเช็คชื่อวิชา${subject ? ` ${subject.name}` : ''} วันที่ ${date} แล้ว`)
+    const classroom = state.classrooms.find((c) => c.id === classroomId)
+    logActivity(
+      `บันทึกการเช็คชื่อวิชา${subject ? ` ${subject.name}` : ''}${classroom ? ` ห้อง ${classroom.name}` : ''} วันที่ ${date} แล้ว`,
+    )
+  }
+
+  function hasSubjectClassroomAttendanceDemo(subjectId: string, classroomId: string): boolean {
+    const byClassroom = state.subjectAttendance[subjectId]?.[classroomId]
+    return Boolean(byClassroom && Object.keys(byClassroom).length > 0)
+  }
+
+  function updateSubjectClassroomIdsDemo(subjectId: string, classroomIds: string[]) {
+    setState((prev) => ({
+      ...prev,
+      subjects: prev.subjects.map((s) => (s.id === subjectId ? { ...s, classroomIds } : s)),
+    }))
   }
 
   // ---- Classroom management (per-classroom student actions) ----
@@ -536,6 +562,8 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     setSubmissionNote,
     setSubjectAttendanceStatus,
     saveSubjectAttendance,
+    hasSubjectClassroomAttendanceDemo,
+    updateSubjectClassroomIdsDemo,
     updateStudentInfoDemo,
     removeStudentFromClassroomDemo,
     moveStudentToClassroomDemo,

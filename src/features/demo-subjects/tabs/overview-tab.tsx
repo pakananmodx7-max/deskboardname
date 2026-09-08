@@ -7,12 +7,20 @@ import type { DemoSubject } from '@/demo/types'
 
 interface OverviewTabProps {
   subject: DemoSubject
+  classroomId: string
 }
 
-export function OverviewTab({ subject }: OverviewTabProps) {
+/** Student count is scoped to the workspace's selected classroom, matching
+ * that classroom's own Students tab. Topics stay subject-wide and
+ * unfiltered — topics are subject-level by design, shared identically
+ * across every linked classroom (see docs/DATABASE.md). Assignments/
+ * grades summaries also stay subject-wide for now — the demo assignment
+ * data model has no per-classroom scoping yet (see the future-design note
+ * in subjects-real's classroom workspace page). */
+export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
   const { classrooms, topics, subjectAssignments } = useDemoClassroom()
 
-  const studentIds = getStudentIdsForClassrooms(subject.classroomIds, classrooms)
+  const studentIds = getStudentIdsForClassrooms([classroomId], classrooms)
   const subjectTopics = topics.filter((t) => t.subjectId === subject.id).sort((a, b) => a.order - b.order)
   const assignments = subjectAssignments.filter((a) => a.subjectId === subject.id)
   const averageScore = computeSubjectAverageScore(assignments)

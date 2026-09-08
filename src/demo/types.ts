@@ -110,5 +110,17 @@ export interface DemoSubjectAssignment {
   submissions: Record<string, DemoSubmission>
 }
 
-/** subjectId -> date (YYYY-MM-DD) -> studentId -> status */
-export type DemoSubjectAttendance = Record<string, Record<string, Record<string, DemoAttendanceStatus>>>
+/**
+ * subjectId -> classroomId -> date (YYYY-MM-DD) -> studentId -> status
+ *
+ * Keyed by classroomId (not merged across a subject's linked classrooms)
+ * so subject attendance mirrors the real Supabase schema's
+ * attendance_sessions, which is scoped to (classroom_id, subject_id,
+ * attendance_date) — see supabase/migrations/0005_subject_attendance.sql.
+ * Recording ม.5/1's roll call for a subject must never be visible under,
+ * or overwrite, ม.5/2's roll call for that same subject+date.
+ */
+export type DemoSubjectAttendance = Record<
+  string,
+  Record<string, Record<string, Record<string, DemoAttendanceStatus>>>
+>

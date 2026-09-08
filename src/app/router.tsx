@@ -19,6 +19,7 @@ import { ReportsPage } from '@/pages/teacher/reports/reports-page'
 import { SettingsPage } from '@/pages/teacher/settings/settings-page'
 import { StudentsPage } from '@/pages/teacher/students/students-page'
 import { SubjectAssignmentDetailPage } from '@/pages/teacher/subjects/subject-assignment-detail-page'
+import { SubjectClassroomWorkspacePage } from '@/pages/teacher/subjects/subject-classroom-workspace-page'
 import { SubjectDetailPage } from '@/pages/teacher/subjects/subject-detail-page'
 import { SubjectsPage } from '@/pages/teacher/subjects/subjects-page'
 
@@ -46,6 +47,10 @@ const router = createBrowserRouter([
       { path: 'students', element: <StudentsPage /> },
       { path: 'subjects', element: <SubjectsPage /> },
       { path: 'subjects/:subjectId', element: <SubjectDetailPage /> },
+      {
+        path: 'subjects/:subjectId/classrooms/:classroomId',
+        element: <SubjectClassroomWorkspacePage />,
+      },
       {
         path: 'subjects/:subjectId/assignments/:assignmentId',
         element: <SubjectAssignmentDetailPage />,

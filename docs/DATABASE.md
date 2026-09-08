@@ -961,3 +961,59 @@ No security-critical FAIL. Scenario 9 surfaced a real backward-compatibility
 bug during verification (the function-overload ambiguity above) — it was
 fixed in the migration before this table was finalized, not worked around
 in application code.
+
+# Phase 7: Subject Workspace classroom scoping (UI/routing only — no schema change)
+
+Pure UI/routing/service-scoping change — no migration, no RLS change. A
+subject linked to multiple classrooms (subject_classrooms, 0002) was, until
+now, presented as one merged workspace (Students/Attendance/Grades all
+showing every linked classroom's data at once). This phase makes the
+subject workspace classroom-scoped end to end, matching how the rest of
+the app already treats "which classroom" as the thing a teacher picks
+first, everywhere else.
+
+New route: `/teacher/subjects/:subjectId/classrooms/:classroomId` (the
+classroom-scoped workspace: header + 6 tabs). The existing
+`/teacher/subjects/:subjectId` route becomes the root — an overview +
+classroom picker (one card per linked classroom, with that classroom's own
+student count) that auto-redirects straight into the workspace when the
+subject has exactly one linked classroom, since there's no real choice to
+present in that case.
+
+Scoping rules, applied identically in real and demo mode:
+- **Students, Attendance** — scoped strictly to the selected classroomId;
+  never merge another linked classroom's roster. Attendance already had
+  this scoping at the database level (0005); this phase only changes which
+  classroom the UI hands it, dropping the tab's own internal classroom
+  picker in favor of one shared switcher in the workspace header.
+- **Topics** — deliberately NOT classroom-scoped. Topics are subject-level
+  by design (0002) and stay visible identically regardless of which linked
+  classroom is selected — this is unchanged from before this phase.
+- **Assignments, Grades** — the real backend for these is still demo-only
+  (not migrated); GradesTab's demo implementation now filters which
+  student rows are displayed to the selected classroom (assignment
+  definitions/submissions remain a subject-wide demo data structure).
+  AssignmentsTab (both real's DemoOnlyNotice and demo's card grid) now
+  receives `classroomId` as a prop without using it yet, specifically so a
+  future real assignments feature — described in a design-note comment on
+  `subject-classroom-workspace-page-real.tsx` — can add classroom scoping
+  (whole-subject, classroom-subset, or per-classroom due dates) without
+  re-plumbing the route or workspace shell.
+- **Editing subject↔classroom links** — a new EditSubjectDialog (real and
+  demo) lets a teacher link/unlink classrooms and see each one's student
+  count. Unlinking a classroom that already has subject-scoped attendance
+  recorded (`hasSubjectClassroomAttendance`, subject-service.ts) is
+  confirmed first — unlinking never actually deletes that attendance data
+  (attendance_sessions references subject_id/classroom_id directly, not
+  the subject_classrooms link row, per 0005), so this is a "you won't be
+  able to check attendance here again" warning, not a data-loss
+  prevention. The same confirm-before-unlink pattern is documented as the
+  template for a future assignments/grades safeguard once those become
+  classroom-scoped and have real orphanable data.
+
+Shared pure logic (`src/features/subjects-shared/subject-classroom-nav.ts`,
+unit-tested): the auto-redirect rule, the "classroomId actually belongs to
+this subject" validation the workspace page uses to reject a tampered URL,
+the root page's classroom-count/student-count summary, and the canonical
+workspace URL builder — used verbatim by both real and demo mode so the
+picker/redirect/summary behavior can never drift between them.

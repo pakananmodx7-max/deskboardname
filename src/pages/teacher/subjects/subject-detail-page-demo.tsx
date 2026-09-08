@@ -1,32 +1,30 @@
+import { ChevronRight, Pencil, Users } from 'lucide-react'
 import { useState } from 'react'
-import { Navigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { useDemoClassroom } from '@/demo/demo-context'
-import { getStudentIdsForClassrooms } from '@/demo/subject-selectors'
-import { AssignmentsTab } from '@/features/demo-subjects/tabs/assignments-tab'
-import { AttendanceTab } from '@/features/demo-subjects/tabs/attendance-tab'
-import { GradesTab } from '@/features/demo-subjects/tabs/grades-tab'
-import { OverviewTab } from '@/features/demo-subjects/tabs/overview-tab'
-import { StudentsTab } from '@/features/demo-subjects/tabs/students-tab'
-import { TopicsTab } from '@/features/demo-subjects/tabs/topics-tab'
-import { cn } from '@/lib/utils'
+import { EditSubjectDialog } from '@/features/demo-subjects/edit-subject-dialog'
+import {
+  buildSubjectClassroomPath,
+  resolveAutoRedirectClassroomId,
+  summarizeSubjectClassrooms,
+} from '@/features/subjects-shared/subject-classroom-nav'
 
-type TabKey = 'overview' | 'students' | 'attendance' | 'topics' | 'assignments' | 'grades'
-
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'overview', label: 'ภาพรวม' },
-  { key: 'students', label: 'นักเรียน' },
-  { key: 'attendance', label: 'เช็คชื่อ' },
-  { key: 'topics', label: 'หัวข้อ' },
-  { key: 'assignments', label: 'งาน' },
-  { key: 'grades', label: 'คะแนน' },
-]
-
+/**
+ * Demo mirror of subjects-real's root page — same UX: overview +
+ * "choose which classroom" screen, auto-redirecting straight into the
+ * workspace when there is only one linked classroom to choose from. See
+ * subject-classroom-workspace-page-demo.tsx for the classroom-scoped
+ * workspace this leads into.
+ */
 export function SubjectDetailPageDemo() {
   const { subjectId } = useParams<{ subjectId: string }>()
   const { subjects, classrooms } = useDemoClassroom()
-  const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  const navigate = useNavigate()
+  const [editOpen, setEditOpen] = useState(false)
 
   const subject = subjects.find((s) => s.id === subjectId)
 
@@ -34,54 +32,77 @@ export function SubjectDetailPageDemo() {
     return <Navigate to="/teacher/subjects" replace />
   }
 
-  const studentIds = getStudentIdsForClassrooms(subject.classroomIds, classrooms)
-  const classroomNames = subject.classroomIds
-    .map((id) => classrooms.find((c) => c.id === id)?.name)
-    .filter(Boolean)
+  const links = subject.classroomIds.map((classroomId) => {
+    const classroom = classrooms.find((c) => c.id === classroomId)
+    return {
+      classroomId,
+      classroomName: classroom?.name ?? '-',
+      studentCount: classroom?.studentIds.length ?? 0,
+    }
+  })
+
+  const autoRedirectClassroomId = resolveAutoRedirectClassroomId(links)
+  if (autoRedirectClassroomId) {
+    return <Navigate to={buildSubjectClassroomPath(subject.id, autoRedirectClassroomId)} replace />
+  }
+
+  const summary = summarizeSubjectClassrooms(links)
 
   return (
-    <div className="space-y-4">
-      <div className="sticky top-0 z-10 -mx-4 space-y-4 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-3 pt-1">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{subject.name}</h1>
-              <Badge variant="outline">{subject.code}</Badge>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {classroomNames.join(', ')} · {studentIds.length} คน · ปีการศึกษา {subject.academicYear} ภาคเรียนที่{' '}
-              {subject.semester}
-            </p>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold tracking-tight">{subject.name}</h1>
+            <Badge variant="outline">{subject.code}</Badge>
           </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {summary.totalClassrooms} ห้องเรียน · {summary.totalStudents} นักเรียน · ปีการศึกษา {subject.academicYear}{' '}
+            ภาคเรียนที่ {subject.semester}
+          </p>
         </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+          <Pencil className="size-4" />
+          แก้ไขรายวิชา
+        </Button>
+      </div>
 
-        <div className="flex gap-1 overflow-x-auto">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className={cn(
-                'shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-                activeTab === tab.key
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground',
-              )}
+      {links.length === 0 ? (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+            <p className="text-sm font-medium">รายวิชานี้ยังไม่ได้เชื่อมกับห้องเรียนใด</p>
+            <Button type="button" onClick={() => setEditOpen(true)}>
+              เชื่อมห้องเรียน
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {links.map((link) => (
+            <Card
+              key={link.classroomId}
+              className="cursor-pointer transition-shadow hover:shadow-md"
+              onClick={() => navigate(buildSubjectClassroomPath(subject.id, link.classroomId))}
             >
-              {tab.label}
-            </button>
+              <CardContent className="flex items-center justify-between pt-5">
+                <div>
+                  <p className="text-base font-semibold">{link.classroomName}</p>
+                  <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <Users className="size-3.5" />
+                    {link.studentCount} คน
+                  </p>
+                </div>
+                <span className="flex items-center gap-1 text-sm font-medium text-primary">
+                  เปิดห้อง
+                  <ChevronRight className="size-4" />
+                </span>
+              </CardContent>
+            </Card>
           ))}
         </div>
-      </div>
+      )}
 
-      <div>
-        {activeTab === 'overview' && <OverviewTab subject={subject} />}
-        {activeTab === 'students' && <StudentsTab subject={subject} />}
-        {activeTab === 'attendance' && <AttendanceTab subject={subject} />}
-        {activeTab === 'topics' && <TopicsTab subject={subject} />}
-        {activeTab === 'assignments' && <AssignmentsTab subject={subject} />}
-        {activeTab === 'grades' && <GradesTab subject={subject} />}
-      </div>
+      <EditSubjectDialog open={editOpen} onOpenChange={setEditOpen} subject={subject} />
     </div>
   )
 }

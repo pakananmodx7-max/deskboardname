@@ -3,16 +3,26 @@ import { useEffect, useState } from 'react'
 
 import { Card, CardContent } from '@/components/ui/card'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { getSubjectStudents } from '@/services/subject-service'
+import { getStudentsByClassroom } from '@/services/student-service'
 import { getTopics } from '@/services/topic-service'
 import type { Subject } from '@/types/subject'
 import type { Topic } from '@/types/topic'
 
 interface OverviewTabProps {
   subject: Subject
+  classroomId: string
 }
 
-export function OverviewTab({ subject }: OverviewTabProps) {
+/**
+ * The student count here is scoped to the workspace's selected classroom
+ * (via getStudentsByClassroom), matching that classroom's own Students
+ * tab exactly. Topics stay subject-wide and unfiltered — topics are
+ * subject-level by design, visible identically across every linked
+ * classroom (see docs/DATABASE.md's topics section), so this overview
+ * intentionally shows the same topic list regardless of which classroom
+ * is selected.
+ */
+export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
   const [studentCount, setStudentCount] = useState<number | null>(null)
   const [topics, setTopics] = useState<Topic[]>([])
   const [loading, setLoading] = useState(true)
@@ -23,7 +33,7 @@ export function OverviewTab({ subject }: OverviewTabProps) {
     setLoading(true)
     setError(null)
 
-    Promise.all([getSubjectStudents(subject.id), getTopics(subject.id)])
+    Promise.all([getStudentsByClassroom(classroomId), getTopics(subject.id)])
       .then(([students, topicRows]) => {
         if (!active) return
         setStudentCount(students.length)
@@ -39,7 +49,7 @@ export function OverviewTab({ subject }: OverviewTabProps) {
     return () => {
       active = false
     }
-  }, [subject.id])
+  }, [subject.id, classroomId])
 
   return (
     <div className="space-y-4">
@@ -94,7 +104,7 @@ export function OverviewTab({ subject }: OverviewTabProps) {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        เช็คชื่อ งาน และคะแนน ยังใช้งานได้เฉพาะในโหมดสาธิต — ยังไม่เชื่อมต่อกับฐานข้อมูลจริงในเฟสนี้
+        งาน และคะแนน ยังใช้งานได้เฉพาะในโหมดสาธิต — ยังไม่เชื่อมต่อกับฐานข้อมูลจริงในเฟสนี้
       </p>
     </div>
   )

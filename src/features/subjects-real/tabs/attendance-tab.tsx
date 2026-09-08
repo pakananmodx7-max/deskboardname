@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
 import { AttendanceRosterCard } from '@/features/attendance/attendance-roster-card'
 import { toFriendlyErrorMessage } from '@/lib/errors'
@@ -14,14 +13,14 @@ import {
   parsePeriodNumber,
   saveAttendance,
 } from '@/services/attendance-service'
-import { getSubjectClassrooms } from '@/services/subject-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import type { AttendanceRecord, AttendanceStatus } from '@/types/attendance'
-import type { Subject, SubjectClassroom } from '@/types/subject'
 import type { ClassroomStudent } from '@/types/student'
+import type { Subject } from '@/types/subject'
 
 interface AttendanceTabProps {
   subject: Subject
+  classroomId: string
 }
 
 function todayIso(): string {
@@ -32,23 +31,18 @@ function todayIso(): string {
  * Real, Supabase-backed subject attendance — reuses the exact same
  * AttendanceRosterCard (summary + table + status buttons + notes) as the
  * standalone classroom Attendance page, rather than building a second
- * attendance UI. What's different here, structurally: a subject can be
- * linked to more than one classroom (subject_classrooms), so the teacher
- * picks WHICH linked classroom this session is for — restricted to
- * getSubjectClassrooms(subject.id), never the teacher's full classroom
- * list — plus an optional คาบ (period) number so the same subject can be
- * checked more than once on the same day (see
+ * attendance UI. Which classroom this session is for is now decided one
+ * level up, by the subject workspace's own classroom switcher (see
+ * subject-classroom-workspace-page-real.tsx) — this tab just receives
+ * `classroomId` and never shows another linked classroom's students,
+ * plus an optional คาบ (period) number so the same subject+classroom can
+ * be checked more than once on the same day (see
  * supabase/migrations/0005_subject_attendance.sql). subject.id is always
  * sent as p_subject_id, so this reads/writes into a subject-scoped
  * session, never the standalone page's homeroom rows.
  */
-export function AttendanceTab({ subject }: AttendanceTabProps) {
+export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
   const { toast } = useToast()
-
-  const [classrooms, setClassrooms] = useState<SubjectClassroom[]>([])
-  const [classroomsLoading, setClassroomsLoading] = useState(true)
-  const [classroomsError, setClassroomsError] = useState<string | null>(null)
-  const [selectedClassroomId, setSelectedClassroomId] = useState<string | null>(null)
 
   const [date, setDate] = useState(todayIso)
   const [periodInput, setPeriodInput] = useState('')
@@ -64,50 +58,18 @@ export function AttendanceTab({ subject }: AttendanceTabProps) {
   // silently sending garbage — see parsePeriodNumber.
   const { value: periodNumber, invalid: periodInvalid } = parsePeriodNumber(periodInput)
 
+  // Reloads the roster + saved attendance whenever the selected classroom,
+  // date, or period changes. Real students only, from classroom_students
+  // for the selected classroom — never the 38 demo students, and never a
+  // stored/duplicated "subject roster" row.
   useEffect(() => {
-    let cancelled = false
-    setClassroomsLoading(true)
-    setClassroomsError(null)
-    getSubjectClassrooms(subject.id)
-      .then((rows) => {
-        if (cancelled) return
-        setClassrooms(rows)
-        setSelectedClassroomId((prev) =>
-          prev && rows.some((c) => c.classroomId === prev) ? prev : (rows[0]?.classroomId ?? null),
-        )
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setClassroomsError(toFriendlyErrorMessage(err))
-      })
-      .finally(() => {
-        if (!cancelled) setClassroomsLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [subject.id])
-
-  // Reloads the roster + saved attendance whenever the selected linked
-  // classroom, date, or period changes. Real students only, from
-  // classroom_students for the selected classroom — never the 38 demo
-  // students, and never a stored/duplicated "subject roster" row.
-  useEffect(() => {
-    if (!selectedClassroomId || periodInvalid) {
-      if (!selectedClassroomId) {
-        setStudents([])
-        setRecords({})
-      }
-      return
-    }
+    if (periodInvalid) return
 
     let cancelled = false
     setRosterLoading(true)
     setRosterError(null)
 
-    Promise.all([
-      getStudentsByClassroom(selectedClassroomId),
-      getAttendance(selectedClassroomId, date, subject.id, periodNumber),
-    ])
+    Promise.all([getStudentsByClassroom(classroomId), getAttendance(classroomId, date, subject.id, periodNumber)])
       .then(([classroomStudents, attendance]) => {
         if (cancelled) return
         setStudents(classroomStudents)
@@ -128,7 +90,7 @@ export function AttendanceTab({ subject }: AttendanceTabProps) {
     // depending on periodInput (+ the guard above) is equivalent and avoids
     // re-deriving inside the dependency array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClassroomId, date, periodInput, subject.id])
+  }, [classroomId, date, periodInput, subject.id])
 
   function setStatus(studentId: string, status: AttendanceStatus) {
     setRecords((prev) => ({
@@ -145,11 +107,11 @@ export function AttendanceTab({ subject }: AttendanceTabProps) {
   }
 
   async function handleSave() {
-    if (!selectedClassroomId || periodInvalid) return
+    if (periodInvalid) return
     setSaving(true)
     try {
       const recordsToSave = roster.map((student) => records[student.id] ?? { studentId: student.id, status: 'present', note: null })
-      await saveAttendance(selectedClassroomId, date, recordsToSave, subject.id, periodNumber)
+      await saveAttendance(classroomId, date, recordsToSave, subject.id, periodNumber)
       toast('บันทึกการเช็คชื่อเรียบร้อยแล้ว')
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกการเช็คชื่อได้'))
@@ -164,20 +126,6 @@ export function AttendanceTab({ subject }: AttendanceTabProps) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          {classrooms.length > 0 && (
-            <NativeSelect
-              value={selectedClassroomId ?? ''}
-              onChange={(e) => setSelectedClassroomId(e.target.value)}
-              className="w-auto min-w-32"
-              aria-label="เลือกห้องเรียน"
-            >
-              {classrooms.map((classroom) => (
-                <option key={classroom.id} value={classroom.classroomId}>
-                  {classroom.classroomName}
-                </option>
-              ))}
-            </NativeSelect>
-          )}
           <Input
             type="date"
             value={date}
@@ -203,22 +151,15 @@ export function AttendanceTab({ subject }: AttendanceTabProps) {
       </div>
 
       {periodInvalid && <p className="text-sm text-destructive">คาบเรียนต้องเป็นจำนวนเต็มบวก</p>}
-      {classroomsError && <p className="text-sm text-destructive">{classroomsError}</p>}
       {rosterError && <p className="text-sm text-destructive">{rosterError}</p>}
 
-      {classroomsLoading ? (
-        <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
-      ) : classrooms.length === 0 ? (
-        <p className="text-sm text-muted-foreground">ยังไม่มีห้องเรียนที่เชื่อมกับรายวิชานี้</p>
-      ) : (
-        <AttendanceRosterCard
-          roster={roster}
-          records={records}
-          loading={rosterLoading}
-          onSetStatus={setStatus}
-          onSetNote={setNote}
-        />
-      )}
+      <AttendanceRosterCard
+        roster={roster}
+        records={records}
+        loading={rosterLoading}
+        onSetStatus={setStatus}
+        onSetNote={setNote}
+      />
     </div>
   )
 }

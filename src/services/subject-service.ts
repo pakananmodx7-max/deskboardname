@@ -1,9 +1,10 @@
 import { getSupabaseClient } from '@/lib/supabase'
-import { mapStudent, type StudentRow } from '@/services/student-service'
+import { getStudentsByClassroom, mapStudent, type StudentRow } from '@/services/student-service'
 import type {
   CreateSubjectInput,
   Subject,
   SubjectClassroom,
+  SubjectClassroomWithCount,
   SubjectStudentView,
   UpdateSubjectInput,
 } from '@/types/subject'
@@ -169,6 +170,45 @@ export async function getSubjectClassrooms(subjectId: string): Promise<SubjectCl
 
   if (error) throw error
   return (data as unknown as SubjectClassroomRow[]).map(mapSubjectClassroom)
+}
+
+/**
+ * Same as getSubjectClassrooms, plus each link's current member count —
+ * used by the subject root page's "choose which classroom" screen (one
+ * card per linked classroom, e.g. "ม.5/1 · 31 คน") and by the classroom
+ * link/unlink editor. Counts are read via getStudentsByClassroom
+ * (student-service.ts) per linked classroom rather than a stored/derived
+ * subject-level number, so they're always exactly what that classroom's
+ * own Students tab would show — no separate count to fall out of sync.
+ */
+export async function getSubjectClassroomsWithCounts(subjectId: string): Promise<SubjectClassroomWithCount[]> {
+  const links = await getSubjectClassrooms(subjectId)
+  const counts = await Promise.all(links.map((link) => getStudentsByClassroom(link.classroomId)))
+  return links.map((link, i) => ({ ...link, studentCount: counts[i].length }))
+}
+
+/**
+ * Whether this subject has ever recorded attendance for this specific
+ * classroom — the safeguard check before letting a teacher unlink a
+ * classroom from a subject (see EditSubjectDialog). Unlinking never
+ * deletes attendance_sessions/attendance_records rows (they reference
+ * subject_id/classroom_id directly, not the subject_classrooms link row
+ * — see supabase/migrations/0005_subject_attendance.sql), so no academic
+ * history is ever destroyed by an unlink either way; this check exists so
+ * the teacher is warned before losing the ability to take attendance for
+ * that classroom under this subject again, not to prevent data loss that
+ * can't actually happen.
+ */
+export async function hasSubjectClassroomAttendance(subjectId: string, classroomId: string): Promise<boolean> {
+  const supabase = getSupabaseClient()
+  const { count, error } = await supabase
+    .from('attendance_sessions')
+    .select('id', { count: 'exact', head: true })
+    .eq('subject_id', subjectId)
+    .eq('classroom_id', classroomId)
+
+  if (error) throw error
+  return (count ?? 0) > 0
 }
 
 /**
