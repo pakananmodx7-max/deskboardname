@@ -15,13 +15,16 @@ export interface AttendanceRecord {
   note: string | null
 }
 
-/** A homeroom roll call for one classroom on one date. subjectId is always
- * null in this phase — see supabase/migrations/0004_attendance.sql for why
- * the column exists and is nullable. */
+/** A roll call for one classroom on one date — either classroom-level
+ * homeroom (subjectId/periodNumber both null) or scoped to a subject and
+ * optionally a คาบ (period). See
+ * supabase/migrations/0004_attendance.sql and 0005_subject_attendance.sql
+ * for why subjectId/periodNumber are nullable. */
 export interface AttendanceSession {
   id: string
   classroomId: string
   subjectId: string | null
+  periodNumber: number | null
   attendanceDate: string
   createdBy: string | null
   createdAt: string

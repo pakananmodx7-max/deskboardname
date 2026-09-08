@@ -2,20 +2,13 @@ import { Save } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
-import {
-  ATTENDANCE_STATUS_BUTTON_STYLE,
-  ATTENDANCE_STATUS_LABEL,
-  ATTENDANCE_STATUS_ORDER,
-  ATTENDANCE_SUMMARY_DOT_STYLE,
-} from '@/features/attendance/attendance-status'
+import { AttendanceRosterCard } from '@/features/attendance/attendance-roster-card'
 import { ClassroomSelector } from '@/features/classroom-management/classroom-selector'
 import { NoClassroomsEmptyState } from '@/features/classroom-management/no-classrooms-empty-state'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { cn } from '@/lib/utils'
-import { buildDefaultRecords, getAttendance, getAttendanceSummary, saveAttendance } from '@/services/attendance-service'
+import { buildDefaultRecords, deriveAttendanceRoster, getAttendance, saveAttendance } from '@/services/attendance-service'
 import { getClassrooms } from '@/services/classroom-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import type { AttendanceRecord, AttendanceStatus } from '@/types/attendance'
@@ -28,11 +21,14 @@ function todayIso(): string {
 
 /**
  * Real, Supabase-backed equivalent of attendance-page-demo.tsx — same
- * table layout, same status buttons, same live summary card. It adds a
+ * table layout, same status buttons, same live summary card (all shared
+ * with the subject เช็คชื่อ tab via AttendanceRosterCard). It adds a
  * classroom selector and a date picker (real attendance is always scoped
  * to "which classroom, which day", unlike the demo page's single fixed
  * classroom + implicit "today"), plus a compact per-student note field
- * (requirement #8) and load/save against attendance-service.ts.
+ * and load/save against attendance-service.ts. subjectId/periodNumber are
+ * left at their defaults (null) everywhere here — this page only ever
+ * writes/reads homeroom (classroom-level) sessions.
  */
 export function AttendancePageReal() {
   const { toast } = useToast()
@@ -134,20 +130,7 @@ export function AttendancePageReal() {
   }
 
   const selectedClassroom = classrooms.find((c) => c.id === selectedClassroomId) ?? null
-
-  // The roster shown/saved is every currently-active member of the
-  // classroom, PLUS any member who has since been archived (status =
-  // 'inactive') but already has a saved record for this exact date — so
-  // reopening a past day never silently drops a student's attendance
-  // history just because they were archived afterward. An archived
-  // student with no record on this date simply never appears (no
-  // synthetic "มา" default is invented for them).
-  const roster = students.filter((s) => s.status === 'active' || records[s.id] !== undefined)
-  const rosterSummary: Record<string, AttendanceRecord> = {}
-  for (const student of roster) {
-    if (records[student.id]) rosterSummary[student.id] = records[student.id]
-  }
-  const summary = getAttendanceSummary(rosterSummary)
+  const roster = deriveAttendanceRoster(students, records)
 
   return (
     <div className="space-y-6">
@@ -189,100 +172,13 @@ export function AttendancePageReal() {
       ) : classrooms.length === 0 ? (
         <NoClassroomsEmptyState onCreated={handleClassroomCreated} />
       ) : (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">สรุปการเข้าเรียน</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-              {ATTENDANCE_STATUS_ORDER.map((status) => (
-                <div key={status} className="flex items-center gap-2">
-                  <span className={cn('size-2.5 rounded-full', ATTENDANCE_SUMMARY_DOT_STYLE[status])} />
-                  <span className="text-muted-foreground">{ATTENDANCE_STATUS_LABEL[status]}</span>
-                  <span className="font-semibold">{summary[status]}</span>
-                </div>
-              ))}
-              <div className="ml-auto flex items-center gap-2 border-l border-border pl-6">
-                <span className="text-muted-foreground">รวมทั้งหมด</span>
-                <span className="font-semibold">{summary.total} คน</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-xs text-muted-foreground">
-                      <th className="px-5 py-3 font-medium">เลขที่</th>
-                      <th className="px-5 py-3 font-medium">ชื่อ-นามสกุล</th>
-                      <th className="px-5 py-3 font-medium">สถานะ</th>
-                      <th className="px-5 py-3 font-medium">หมายเหตุ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rosterLoading ? (
-                      <tr>
-                        <td colSpan={4} className="px-5 py-6 text-center text-muted-foreground">
-                          กำลังโหลด...
-                        </td>
-                      </tr>
-                    ) : roster.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="px-5 py-6 text-center text-muted-foreground">
-                          ยังไม่มีนักเรียนในห้องเรียนนี้
-                        </td>
-                      </tr>
-                    ) : (
-                      roster.map((student) => {
-                        const current = records[student.id]?.status ?? 'present'
-                        return (
-                          <tr key={student.id} className="border-b border-border last:border-0">
-                            <td className="px-5 py-3 text-muted-foreground">{student.number}</td>
-                            <td className="px-5 py-3 font-medium">
-                              {student.firstName} {student.lastName}
-                              {student.nickname && (
-                                <span className="ml-1.5 text-xs text-muted-foreground">({student.nickname})</span>
-                              )}
-                            </td>
-                            <td className="px-5 py-3">
-                              <div className="flex flex-wrap gap-1.5">
-                                {ATTENDANCE_STATUS_ORDER.map((status) => (
-                                  <button
-                                    key={status}
-                                    type="button"
-                                    data-active={current === status}
-                                    onClick={() => setStatus(student.id, status)}
-                                    className={cn(
-                                      'rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent',
-                                      ATTENDANCE_STATUS_BUTTON_STYLE[status],
-                                    )}
-                                  >
-                                    {ATTENDANCE_STATUS_LABEL[status]}
-                                  </button>
-                                ))}
-                              </div>
-                            </td>
-                            <td className="px-5 py-3">
-                              <Input
-                                value={records[student.id]?.note ?? ''}
-                                onChange={(e) => setNote(student.id, e.target.value)}
-                                placeholder="เช่น ป่วย, รถติด"
-                                className="h-8 w-36 text-xs"
-                                aria-label={`หมายเหตุของ ${student.firstName} ${student.lastName}`}
-                              />
-                            </td>
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </>
+        <AttendanceRosterCard
+          roster={roster}
+          records={records}
+          loading={rosterLoading}
+          onSetStatus={setStatus}
+          onSetNote={setNote}
+        />
       )}
     </div>
   )

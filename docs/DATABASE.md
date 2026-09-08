@@ -829,3 +829,135 @@ UI-level "does switching the dropdown actually refetch" behavior is
 ordinary React effect re-run behavior, verified by code review of the
 `useEffect` dependency array (`[selectedClassroomId, date]`) rather than a
 separate database test.
+
+# Phase 6: Subject Attendance
+
+Migration: `supabase/migrations/0005_subject_attendance.sql`. Has **not**
+been applied to a live database as of writing — do not run it
+automatically. Builds on 0001, 0002, and 0004 (all must already be
+applied). Scope: wires up the `subject_id` column 0004 already reserved so
+a subject's own เช็คชื่อ tab can record attendance for one of its linked
+classrooms, on a date, optionally scoped to a คาบ (period) — this is the
+smallest safe extension of 0004's design, not a new attendance system. No
+table is dropped or recreated; the classroom-only (homeroom) attendance
+flow from Phase 5 is untouched end to end.
+
+## Schema changes
+
+- `attendance_sessions.period_number` — new nullable `integer` column,
+  `check (period_number is null or period_number > 0)`. Nullable for the
+  same reason `subject_id` is (Phase 5): homeroom attendance never has a
+  period, and a subject taught once a day to a classroom has no
+  meaningful period number either.
+- The old `attendance_sessions_classroom_subject_date_uidx` (Phase 5,
+  never actually exercised — every write left `subject_id` null) is
+  dropped and replaced by two period-aware partial unique indexes:
+  `(classroom_id, subject_id, attendance_date)` where `subject_id is not
+  null and period_number is null`, and `(classroom_id, subject_id,
+  attendance_date, period_number)` where both are not null. Together with
+  Phase 5's original `(classroom_id, attendance_date) where subject_id is
+  null` index (untouched), exactly one of the three can ever apply to a
+  given row, so "one session per (classroom, date) at whatever
+  specificity you're writing at" holds for all three shapes at once.
+
+## RLS changes
+
+`attendance_sessions_insert_own`/`_update_own` (Phase 5) are dropped and
+recreated with one added clause: when `subject_id` is not null, the caller
+must additionally own that subject AND that subject must be linked to the
+session's `classroom_id` via `subject_classrooms`. Without this, owning
+the target classroom alone (Phase 5's only check) would let a teacher
+attach *any* subject_id they merely know the UUID of — including another
+teacher's subject — to a session inside their own classroom.
+`attendance_records` policies are untouched: their existing
+classroom-membership check already applies correctly regardless of
+whether the parent session is homeroom or subject-scoped.
+
+## `save_attendance_session` — extended, not just replaced
+
+**This required an explicit `drop function` before the `create or replace`,
+which was not obvious going in and is worth documenting precisely**:
+Postgres identifies a function by name *and* its declared argument types.
+Appending `p_subject_id`/`p_period_number` (even as defaulted trailing
+parameters) changes the signature, and `create or replace function` in
+that situation does **not** swap the old function out — it creates a
+second, separate overload sitting alongside the original 3-argument one.
+
+This was caught empirically while verifying this migration: after
+`create or replace`-ing the extended function without first dropping the
+old one, the *existing* 3-argument call from `attendance-service.ts`'s
+standalone classroom Attendance page — exactly the "keep this working
+unchanged" requirement for this phase — started failing with `function
+save_attendance_session(uuid, date, jsonb) is not unique`, because
+Postgres could no longer tell whether a 3-argument call meant the old
+function or the new 5-argument one invoked with both trailing defaults
+omitted. The fix is the explicit `drop function if exists
+public.save_attendance_session(uuid, date, jsonb);` immediately before
+the `create or replace` in 0005 — after that, only the 5-argument
+signature exists, and every existing 3-argument call resolves to it
+unambiguously with `p_subject_id`/`p_period_number` both defaulting to
+null (exactly what those calls already did implicitly).
+
+Two small additions to the function body itself: (1) when `p_subject_id`
+is provided, it's validated against ownership + `subject_classrooms`
+linkage up front, before any write, mirroring the RLS check above but
+with a clearer Thai error message than a bare RLS violation; (2) the
+session upsert branches into three `if`/`elsif` cases (homeroom /
+subject+no-period / subject+period), each targeting the one partial
+unique index that can actually apply — a single `INSERT ... ON CONFLICT`
+can only name one conflict target, so three mutually-exclusive index
+shapes need three insert branches, not one. Record validation
+(status check, classroom-membership check) is unchanged and still keys
+off `p_classroom_id` regardless of subject scoping, since a subject's
+roster is exactly its linked classrooms' rosters.
+
+## Service and UI
+
+`attendance-service.ts`'s `getAttendance`/`saveAttendance` both gained
+optional `subjectId`/`periodNumber` parameters defaulting to `null` —
+every existing call site (the standalone Attendance page) is
+byte-for-byte unchanged and keeps reading/writing homeroom rows only. Two
+new pure helpers were added alongside the existing ones:
+`deriveAttendanceRoster` (the "active members, plus any archived member
+who already has a saved record" roster rule from Phase 5, extracted so
+both the classroom page and every subject's เช็คชื่อ tab share the exact
+same rule instead of two copies) and `parsePeriodNumber` (client-side
+mirror of the RPC's `period_number > 0` rule, so an invalid คาบ value
+never reaches Supabase). The summary card + roster table markup itself
+was extracted into `AttendanceRosterCard`
+(`src/features/attendance/attendance-roster-card.tsx`) and is now used by
+both the standalone page and the subject tab — one UI, not two.
+
+`subjects-real/tabs/attendance-tab.tsx` restricts its classroom picker to
+`getSubjectClassrooms(subject.id)` (subject-service.ts, Phase 3) — never
+the teacher's full classroom list — so only classrooms actually linked to
+this subject can be selected, and always sends `subject.id` as the
+RPC's `p_subject_id`. Demo mode is untouched: the demo subject Attendance
+tab (`demo-subjects/tabs/attendance-tab.tsx`) still operates entirely on
+`DemoSubjectAttendance` in `demo-context.tsx`, unrelated to any of this.
+
+## Security review (Phase 6)
+
+Verified empirically against a throwaway local Postgres 16 instance (same
+auth shim as prior phases), with two teachers: teacher A owns two
+classrooms (one linked to their subject, one deliberately NOT linked) and
+a subject; teacher B owns a separate classroom, subject, and student.
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | New subject-scoped session save (no period) | PASS — one session with `subject_id` set, `period_number` null; 3 records saved as sent |
+| 2 | Reopen the same classroom/date/subject/no-period combination | PASS — still exactly 1 session (upsert, not duplicate), 3 records unchanged |
+| 3 | Multiple periods same subject/classroom/date (คาบ 1 and คาบ 5) | PASS — 2 distinct new sessions created alongside the no-period one (3 total) |
+| 4 | Re-saving คาบ 1 again | PASS — still 3 sessions total (no new one for คาบ 1); the คาบ 1 record was updated in place, not duplicated |
+| 5 | Unlinked classroom — teacher's own classroom, but NOT linked to the subject | PASS — rejected `42501` ("ห้องเรียนนี้ไม่ได้เชื่อมกับรายวิชานี้"), zero session created |
+| 6 | Cross-owner subject spoof — own (linked) classroom, but another teacher's subject id | PASS — rejected `42501` before any write |
+| 7 | Cross-owner classroom spoof — own subject, but another teacher's classroom id | PASS — rejected `42501` before any write |
+| 8 | Invalid period number (`0`) | PASS — rejected `22023` ("คาบเรียนไม่ถูกต้อง"), zero session created |
+| 9 | Standalone classroom (homeroom) attendance via the original 3-argument call | PASS **after the drop-function fix above** — resolves unambiguously, creates the expected 4th (homeroom) session, fully unaffected by every subject-scoped row already present for the same classroom+date |
+| 10 | Cross-owner read denial — teacher B queries teacher A's subject-attendance sessions | PASS — 0 rows visible |
+| 11 | Anonymous read denial | PASS — 0 rows visible |
+
+No security-critical FAIL. Scenario 9 surfaced a real backward-compatibility
+bug during verification (the function-overload ambiguity above) — it was
+fixed in the migration before this table was finalized, not worked around
+in application code.

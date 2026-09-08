@@ -3,6 +3,7 @@ import { Navigate, useParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { DemoOnlyNotice } from '@/features/subjects-real/demo-only-notice'
+import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
 import { OverviewTab } from '@/features/subjects-real/tabs/overview-tab'
 import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
 import { TopicsTab } from '@/features/subjects-real/tabs/topics-tab'
@@ -106,7 +107,7 @@ export function SubjectDetailPageReal() {
       <div>
         {activeTab === 'overview' && <OverviewTab subject={subject} />}
         {activeTab === 'students' && <StudentsTab subject={subject} />}
-        {activeTab === 'attendance' && <DemoOnlyNotice featureLabel="เช็คชื่อ" />}
+        {activeTab === 'attendance' && <AttendanceTab subject={subject} />}
         {activeTab === 'topics' && <TopicsTab subject={subject} />}
         {activeTab === 'assignments' && <DemoOnlyNotice featureLabel="งาน" />}
         {activeTab === 'grades' && <DemoOnlyNotice featureLabel="คะแนน" />}
