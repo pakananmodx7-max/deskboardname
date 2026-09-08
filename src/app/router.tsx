@@ -8,6 +8,7 @@ import { ForgotPasswordPage } from '@/pages/auth/forgot-password-page'
 import { LoginPage } from '@/pages/auth/login-page'
 import { ResetPasswordPage } from '@/pages/auth/reset-password-page'
 import { SignupPage } from '@/pages/auth/signup-page'
+import { RootPage } from '@/pages/root/root-page'
 import { StudentLinkAccountPage } from '@/pages/student/link-account-page'
 import { StudentLoginPage } from '@/pages/student/login-page'
 import { StudentPendingPage } from '@/pages/student/pending-page'
@@ -32,7 +33,7 @@ import { SubjectsPage } from '@/pages/teacher/subjects/subjects-page'
 const router = createBrowserRouter([
   {
     path: '/',
-    element: <Navigate to="/teacher/dashboard" replace />,
+    element: <RootPage />,
   },
   { path: 'login', element: <LoginPage /> },
   { path: 'signup', element: <SignupPage /> },

@@ -40,12 +40,20 @@ export function LoginPage() {
       title="เข้าสู่ระบบ"
       description="สำหรับคุณครู"
       footer={
-        <>
-          ยังไม่มีบัญชี?{' '}
-          <Link to="/signup" className="font-medium text-primary hover:underline">
-            สมัครใช้งาน
-          </Link>
-        </>
+        <div className="space-y-1">
+          <p>
+            ยังไม่มีบัญชี?{' '}
+            <Link to="/signup" className="font-medium text-primary hover:underline">
+              สมัครใช้งาน
+            </Link>
+          </p>
+          <p>
+            เป็นนักเรียน?{' '}
+            <Link to="/student/login" className="font-medium text-primary hover:underline">
+              เข้าสู่ระบบสำหรับนักเรียน
+            </Link>
+          </p>
+        </div>
       }
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
