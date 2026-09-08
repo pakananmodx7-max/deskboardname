@@ -5,23 +5,40 @@ import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { RowActionsMenu } from '@/components/ui/row-actions-menu'
+import { useToast } from '@/components/ui/toast'
 import { CreateSubjectDialog } from '@/features/subjects-real/create-subject-dialog'
+import { EditSubjectDialog } from '@/features/subjects-real/edit-subject-dialog'
+import { summarizeSubjectClassrooms } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { getSubjectClassrooms, getSubjectStudents, getSubjects } from '@/services/subject-service'
-import type { Subject } from '@/types/subject'
+import { archiveSubject, getSubjectClassroomsWithCounts, getSubjects } from '@/services/subject-service'
+import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
 interface SubjectSummary {
   subject: Subject
-  classroomNames: string
-  studentCount: number
+  links: SubjectClassroomWithCount[]
 }
 
+/**
+ * List page's "..." menu is the only entry point to EditSubjectDialog for
+ * an already-created subject — that dialog already supports checking/
+ * unchecking linked classrooms and already persists through the real
+ * subject-service (updateSubject/linkClassroomToSubject/
+ * unlinkClassroomFromSubject), see edit-subject-dialog.tsx. This page
+ * only had to wire a visible way to open it; nothing about the dialog
+ * itself changed here.
+ */
 export function SubjectsPageReal() {
+  const { toast } = useToast()
+  const navigate = useNavigate()
+
   const [summaries, setSummaries] = useState<SubjectSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
-  const navigate = useNavigate()
+  const [editingSubject, setEditingSubject] = useState<Subject | null>(null)
+  const [archivingSubject, setArchivingSubject] = useState<Subject | null>(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -29,17 +46,10 @@ export function SubjectsPageReal() {
     return getSubjects()
       .then(async (subjects) => {
         const rows = await Promise.all(
-          subjects.map(async (subject) => {
-            const [links, students] = await Promise.all([
-              getSubjectClassrooms(subject.id),
-              getSubjectStudents(subject.id),
-            ])
-            return {
-              subject,
-              classroomNames: links.map((l) => l.classroomName).filter(Boolean).join(', '),
-              studentCount: students.length,
-            }
-          }),
+          subjects.map(async (subject) => ({
+            subject,
+            links: await getSubjectClassroomsWithCounts(subject.id),
+          })),
         )
         setSummaries(rows)
       })
@@ -50,6 +60,18 @@ export function SubjectsPageReal() {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  async function handleArchive() {
+    if (!archivingSubject) return
+    try {
+      await archiveSubject(archivingSubject.id)
+      toast(`เก็บถาวรรายวิชา "${archivingSubject.name}" แล้ว`)
+      setArchivingSubject(null)
+      refresh()
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถเก็บถาวรรายวิชาได้'))
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -78,33 +100,85 @@ export function SubjectsPageReal() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {summaries.map(({ subject, classroomNames, studentCount }) => (
-            <Card
-              key={subject.id}
-              className="cursor-pointer transition-shadow hover:shadow-md"
-              onClick={() => navigate(`/teacher/subjects/${subject.id}`)}
-            >
-              <CardHeader>
-                <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="text-base">{subject.name}</CardTitle>
-                  {subject.subjectCode && <Badge variant="outline">{subject.subjectCode}</Badge>}
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>{classroomNames || '-'}</p>
-                <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1.5">
-                    <Users className="size-3.5" />
-                    {studentCount} students
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          {summaries.map(({ subject, links }) => {
+            const summary = summarizeSubjectClassrooms(links)
+            const classroomNames = links
+              .map((link) => link.classroomName)
+              .filter(Boolean)
+              .join(' · ')
+
+            return (
+              <Card
+                key={subject.id}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+                onClick={() => navigate(`/teacher/subjects/${subject.id}`)}
+              >
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-2">
+                    <CardTitle className="text-base">{subject.name}</CardTitle>
+                    <div className="flex items-center gap-1">
+                      {subject.subjectCode && <Badge variant="outline">{subject.subjectCode}</Badge>}
+                      <RowActionsMenu
+                        actions={[
+                          {
+                            key: 'open',
+                            label: 'เปิดรายวิชา',
+                            onSelect: () => navigate(`/teacher/subjects/${subject.id}`),
+                          },
+                          {
+                            key: 'edit',
+                            label: 'แก้ไขรายวิชา',
+                            onSelect: () => setEditingSubject(subject),
+                          },
+                          {
+                            key: 'archive',
+                            label: 'เก็บถาวร',
+                            onSelect: () => setArchivingSubject(subject),
+                          },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-1 text-sm text-muted-foreground">
+                  <p>
+                    {summary.totalClassrooms} ห้องเรียน · {summary.totalStudents} คน
+                  </p>
+                  <p className="flex items-center gap-1.5">
+                    <Users className="size-3.5 shrink-0" />
+                    <span>{classroomNames || '-'}</span>
+                  </p>
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
 
       <CreateSubjectDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={() => refresh()} />
+
+      {editingSubject && (
+        <EditSubjectDialog
+          open={Boolean(editingSubject)}
+          onOpenChange={(open) => !open && setEditingSubject(null)}
+          subject={editingSubject}
+          onSaved={() => {
+            setEditingSubject(null)
+            refresh()
+          }}
+        />
+      )}
+
+      {archivingSubject && (
+        <ConfirmDialog
+          open={Boolean(archivingSubject)}
+          onOpenChange={(open) => !open && setArchivingSubject(null)}
+          title="เก็บถาวรรายวิชา"
+          description={`เก็บถาวร "${archivingSubject.name}"?\nรายวิชาจะยังคงอยู่ในระบบ แต่จะถูกเก็บถาวร`}
+          confirmLabel="เก็บถาวร"
+          onConfirm={handleArchive}
+        />
+      )}
     </div>
   )
 }
