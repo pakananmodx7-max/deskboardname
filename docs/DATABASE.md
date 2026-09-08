@@ -1170,3 +1170,152 @@ query. The demo seed data (`buildInitialSubjectAssignments`,
 ("ใบงานเรื่องแรง") independently in both of the science subject's linked
 classrooms, to make the classroom-isolation fix concretely demonstrable
 and regression-tested (`subjects.test.ts`, `subject-selectors.test.ts`).
+
+# Phase 9: Topics tab removed from the workspace, real Grades (derived, no new table), score upper-bound trigger (0007)
+
+## Topics tab removed from the Subject-Classroom workspace (UI only — no schema change)
+
+The หัวข้อ (Topics) tab and the "หัวข้อที่เกี่ยวข้อง" field on the
+create/edit Assignment dialog were removed from both
+`subject-classroom-workspace-page-real.tsx` and
+`-demo.tsx` to simplify the day-to-day workspace down to ภาพรวม /
+นักเรียน / เช็คชื่อ / งาน / คะแนน. This is a UI-only change:
+
+- The `topics` table, its RLS policies, `topic-service.ts`, and the
+  `TopicsTab` components (`subjects-real/tabs/topics-tab.tsx`,
+  `demo-subjects/tabs/topics-tab.tsx`) are all untouched and left in
+  place, unreferenced from the workspace — same "leave it for possible
+  future use, don't delete" treatment as the old flat Assignments page in
+  Phase 8. No migration was written or needed for this.
+- `assignments.topic_id` (0006) is untouched. The Assignment dialogs no
+  longer expose a topic picker, but an existing assignment's `topicId` is
+  preserved exactly as-is on edit (the dialogs simply omit `topicId` from
+  their update payload, and `updateAssignment`/demo's
+  `updateSubjectAssignment` only ever patch fields that are actually
+  present); a newly created assignment just has no topic (`null`).
+- Overview's own "หัวข้อ" stat card (a topic *count*, unrelated to the
+  removed tab) is untouched — still subject-wide by design (Phase 7).
+
+Covered by `subject-classroom-workspace-page.test.ts`, which exports each
+workspace page's `TABS` array specifically so the exact tab set — and
+that Topics is gone from both real and demo — is unit-testable without
+rendering (this project has no jsdom/@testing-library, see Phase 8's note).
+
+## Real Grades — a derived view, not a new table
+
+Grades were migrated from demo-only data to a real, Supabase-backed
+`คะแนน` tab (`subjects-real/tabs/grades-tab.tsx`), exactly matching the
+"Future relationship" note at the bottom of `0006_subject_assignments.sql`:
+**there is no `grades` table.** A grade is just `assignment_submissions.score`,
+read back through the lens of one subject+classroom's `assignments`.
+Everything else — the student × assignment matrix, each student's total,
+"possible" denominator, percentage, and the class average/highest/lowest
+— is computed live in `assignment-service.ts` (`computeGradeRows`,
+`computeClassGradeStats`) from data the Grades tab already fetched with
+`getAssignments`/`getSubmissions`/`getStudentsByClassroom`, and is never
+persisted anywhere. This mirrors how a subject's roster and attendance
+summaries are already derived rather than stored elsewhere in this schema.
+
+**Total/possible/percentage semantics** (matches the worked example given
+when this phase was scoped — a classroom with ใบงาน 1 (/10), Quiz 1 (/20),
+Project (/30) where one student has all three graded and another has
+Quiz 1 still ungraded):
+
+- `total` = sum of only this student's **graded** scores.
+- `possible` = sum of **every** assignment's `max_score` in this
+  classroom, whether or not it's graded yet for this student — the same
+  fixed denominator for every student. An ungraded assignment still
+  counts toward what's possible; it just hasn't been earned. This is why
+  a student with Quiz 1 still blank shows e.g. `36/60`, not `36/40` — the
+  30 total from the visibly blank cell has been actually earned; the 60
+  denominator is not the sum of only the two graded assignments (10+30)
+  but of all three assignments in the classroom (10+20+30).
+- `percentage` = `total / possible * 100`, or `null` only when the
+  classroom has no assignments at all (avoids a divide-by-zero — a
+  student with every assignment still ungraded gets `0%`, not `null`,
+  since `possible` is still positive).
+- `classAverage`/`highest`/`lowest` are the average/max/min of every
+  student's `percentage` — recomputed on every render from
+  `computeGradeRows`' output, never cached or written back.
+
+**Score entry and the submission-to-graded transition.** Entering a score
+writes straight to `assignment_submissions.score` via the same
+`setSubmissionScore` the assignment detail page already used — a score
+entered in the Grades tab shows up on the assignment detail page
+immediately (and vice versa), because both call the exact same service
+function against the exact same row; there is no second, competing grade
+record to keep in sync. `setSubmissionScore` was extended to take the
+submission's current status and, via the new pure `nextStatusAfterScore`
+helper, auto-promote an untouched `not_submitted` row to `submitted` the
+moment a real score is recorded — a score sitting next to a
+"not_submitted" status would be a confusing, self-contradictory state.
+An explicit `late`/`missing`/`submitted` call a teacher already made is
+never silently overwritten by this (only the `not_submitted` default
+transitions), and clearing a score back to blank never moves status
+backwards either — "ungraded yet" and "not submitted" are different
+questions. The same rule was mirrored into demo mode's
+`setSubmissionScore` (`demo-context.tsx`) so demo and real behave
+identically here.
+
+**Score validation** (`parseScoreInput`, `assignment-service.ts`):
+`0 <= score <= assignment.max_score`; a blank entry is always valid and
+means "not submitted" or "submitted but not graded yet" — never an
+error, and exactly how a teacher clears a previously entered score. An
+out-of-range or non-numeric entry is rejected with a toast and the input
+reverts to its last saved value (a `resetTick` counter forces the
+otherwise-uncontrolled score `<input>` to remount even when the saved
+value itself didn't change). Both the Grades tab and the assignment
+detail page use this same validator.
+
+**Classroom/assignment isolation** is inherited entirely from
+`getAssignments(subjectId, classroomId)`'s existing exact-match scoping
+(Phase 8) — the Grades tab never fetches or displays another linked
+classroom's assignments or submissions, and `computeGradeRows` only ever
+iterates the `assignments` array its caller already scoped this way (a
+stray submission keyed to a foreign assignment id is simply never looked
+at — see the "classroom isolation" test in `assignment-service.test.ts`).
+
+## Security review of 0006 RLS for the Grades feature — PASS, with one WARNING addressed by 0007
+
+Grades introduces no new query shape and no new table: it reads via the
+existing `getAssignments`/`getSubmissions` and writes via the existing
+`setSubmissionScore`, all governed by 0006's already-verified RLS
+policies (`assignments_select_own`, `assignment_submissions_select_own`/
+`_insert_own`/`_update_own` — see Phase 8's 14-scenario empirical
+verification table, unchanged by this phase). Concretely, for Grades:
+
+- A teacher can only ever see assignments/submissions for classrooms they
+  own (`assignments_select_own`, `assignment_submissions_select_own`).
+- A brand-new submission row can only be created for a student who is a
+  CURRENT member of that assignment's classroom
+  (`assignment_submissions_insert_own`) — a cross-classroom or foreign
+  student score write is rejected the same way it already was for the
+  assignment detail page (Phase 8, scenario 8).
+- Correcting an already-recorded score never re-checks membership
+  (`assignment_submissions_update_own`, ownership-only) — intentional,
+  same as Phase 8, so a score can still be fixed after a student changes
+  classrooms.
+- No new RLS was written or needed for this — **0006 already fully
+  covers Grades' read/write shape**, so per this phase's instructions, no
+  new RLS migration was created.
+
+**WARNING found and addressed:** `assignment_submissions.score` had
+`check (score is null or score >= 0)` (0006) but no upper bound against
+the assignment's own `max_score` — that bound was enforced ONLY in the
+UI (`parseScoreInput`). A `check()` constraint can't reference another
+table's column, so nothing in the database stopped a teacher's own valid
+session from writing an out-of-range score for their own data by calling
+the Supabase API directly, bypassing the form. This is not an
+authorization bypass (RLS still fully restricts the write to the
+submission's owning teacher; a teacher can only mis-grade their own
+students, not touch anyone else's data) but is a real data-integrity gap
+worth closing. **`supabase/migrations/0007_assignment_score_bound.sql`**
+adds a `before insert or update` trigger on `assignment_submissions` that
+looks up the row's assignment's `max_score` and rejects the write if
+`score > max_score` — written and reviewed, **NOT applied** (per this
+phase's instructions: create for review, don't apply automatically).
+
+**Overall verdict: PASS.** No cross-classroom, cross-subject, or foreign-
+student score write is possible under 0006 as it stands; the one
+WARNING was a same-teacher data-integrity gap, not an authorization
+issue, and a fix is staged in 0007 pending a manual apply.

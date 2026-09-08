@@ -3,7 +3,6 @@ import {
   BookOpen,
   Bot,
   CalendarCheck,
-  GraduationCap,
   LayoutDashboard,
   Plug,
   School,
@@ -19,12 +18,13 @@ export interface NavItem {
 }
 
 /**
- * No top-level "Assignments" item on purpose — an assignment always
- * belongs to a specific subject + classroom (never a standalone,
- * classroom-less concept), so it's managed from inside
- * /teacher/subjects/:subjectId/classrooms/:classroomId's งาน tab, not
- * from its own sidebar destination. See /teacher/assignments in
- * router.tsx for what happens to the old direct URL.
+ * No top-level "Assignments" or "Grades" item on purpose — both always
+ * belong to a specific subject + classroom (never a standalone,
+ * classroom-less concept), so they're managed from inside
+ * /teacher/subjects/:subjectId/classrooms/:classroomId's งาน and คะแนน
+ * tabs, not from their own sidebar destinations. See
+ * /teacher/assignments and /teacher/grades in router.tsx for what
+ * happens to the old direct URLs.
  */
 export const navItems: NavItem[] = [
   { label: 'Dashboard', to: '/teacher/dashboard', icon: LayoutDashboard },
@@ -32,7 +32,6 @@ export const navItems: NavItem[] = [
   { label: 'Students', to: '/teacher/students', icon: Users },
   { label: 'Subjects', to: '/teacher/subjects', icon: BookOpen },
   { label: 'Attendance', to: '/teacher/attendance', icon: CalendarCheck },
-  { label: 'Grades', to: '/teacher/grades', icon: GraduationCap },
   { label: 'Reports', to: '/teacher/reports', icon: BarChart3 },
   { label: 'AI Assistant', to: '/teacher/ai', icon: Bot },
   { label: 'Integrations', to: '/teacher/integrations', icon: Plug },

@@ -194,6 +194,24 @@ export async function setSubmissionStatus(
 }
 
 /**
+ * Entering a real score is itself evidence the work was actually turned
+ * in — this promotes an untouched 'not_submitted' row to 'submitted' the
+ * moment a score is recorded, so the status column never says
+ * "not_submitted" while a score sits right next to it. A submission the
+ * teacher already explicitly marked 'late' or 'missing' is never
+ * silently overwritten by this — only the 'not_submitted' default
+ * transitions. Clearing a score back to blank (score = null) never moves
+ * status backwards either; "ungraded yet" and "not submitted" are
+ * different questions, and clearing a grade doesn't mean the student
+ * un-submitted their work. Pure so it can be shared by the score-entry
+ * upsert (server-side) and every UI that edits scores locally (assignment
+ * detail page, Grades tab) without the two ever disagreeing on the rule.
+ */
+export function nextStatusAfterScore(currentStatus: SubmissionStatus, score: number | null): SubmissionStatus {
+  return score !== null && currentStatus === 'not_submitted' ? 'submitted' : currentStatus
+}
+
+/**
  * Independent per-student upserts rather than one atomic batch — unlike
  * attendance's save_attendance_session (which upserts a whole session's
  * worth of records together because the session row itself is created
@@ -210,11 +228,26 @@ export async function bulkSetSubmissionStatus(
   await Promise.all(studentIds.map((studentId) => setSubmissionStatus(assignmentId, studentId, status)))
 }
 
-export async function setSubmissionScore(assignmentId: string, studentId: string, score: number | null): Promise<void> {
+/**
+ * `currentStatus` is the caller's own last-known status for this
+ * submission (e.g. from the local state the Grades tab or assignment
+ * detail page already holds) — it's used only to compute the
+ * nextStatusAfterScore transition below, never trusted as an
+ * authorization check (RLS still governs whether the write is allowed at
+ * all). Always writes `status` alongside `score` in the same upsert so
+ * the two never fall out of sync in the database.
+ */
+export async function setSubmissionScore(
+  assignmentId: string,
+  studentId: string,
+  score: number | null,
+  currentStatus: SubmissionStatus,
+): Promise<void> {
   const supabase = getSupabaseClient()
+  const status = nextStatusAfterScore(currentStatus, score)
   const { error } = await supabase
     .from('assignment_submissions')
-    .upsert({ assignment_id: assignmentId, student_id: studentId, score }, { onConflict: 'assignment_id,student_id' })
+    .upsert({ assignment_id: assignmentId, student_id: studentId, score, status }, { onConflict: 'assignment_id,student_id' })
 
   if (error) throw error
 }
@@ -296,4 +329,130 @@ export function getSubmissionSummary(submissions: Record<string, AssignmentSubmi
   }
 
   return summary
+}
+
+// ==================================================
+// Grades — a derived view over assignments + assignment_submissions,
+// never a separate stored table (see 0006's "Future relationship" note).
+// Everything below is pure and operates on data the caller already
+// fetched with getAssignments/getSubmissions, scoped to one
+// subject+classroom — there is no query here that could reach across
+// classrooms or subjects.
+// ==================================================
+
+export interface ScoreValidationResult {
+  /** Parsed score, or null for a deliberately blank ("not graded yet" /
+   * "not submitted") entry. */
+  value: number | null
+  /** Thai error message if `raw` is out of range or not a number; null
+   * when the input is valid (including blank). */
+  error: string | null
+}
+
+/**
+ * Validates one score-entry cell's raw text against `0 <= score <=
+ * maxScore`. A blank/whitespace-only entry is always valid and means "no
+ * score yet" (not submitted, or submitted but not graded) — it is NOT an
+ * error, and is exactly how a teacher clears a previously entered score.
+ */
+export function parseScoreInput(raw: string, maxScore: number): ScoreValidationResult {
+  const trimmed = raw.trim()
+  if (trimmed === '') return { value: null, error: null }
+
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed)) return { value: null, error: 'กรุณากรอกตัวเลข' }
+  if (parsed < 0) return { value: null, error: 'คะแนนต้องไม่ติดลบ' }
+  if (parsed > maxScore) return { value: null, error: `คะแนนต้องไม่เกิน ${maxScore}` }
+  return { value: parsed, error: null }
+}
+
+/**
+ * The Grades roster — every currently-active classroom member, PLUS any
+ * member who has since been archived but already has a submission row
+ * for at least one of this classroom's assignments. Same rule, same
+ * rationale, as deriveAssignmentRoster above, generalized across every
+ * assignment shown in the Grades tab instead of just one.
+ */
+export function deriveGradeRoster<T extends { id: string; status: 'active' | 'inactive' }>(
+  students: T[],
+  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
+): T[] {
+  return students.filter(
+    (student) =>
+      student.status === 'active' ||
+      Object.values(submissionsByAssignment).some((submissions) => submissions[student.id] !== undefined),
+  )
+}
+
+export interface StudentGradeRow {
+  studentId: string
+  /** assignmentId -> score, or null if that assignment isn't graded yet for this student. */
+  scoresByAssignment: Record<string, number | null>
+  /** assignmentId -> that submission's status (defaults to 'not_submitted' if no row exists yet). */
+  statusByAssignment: Record<string, SubmissionStatus>
+  /** Sum of every graded score for this student. */
+  total: number
+  /** Sum of every assignment's max_score in this classroom — the same
+   * fixed denominator for every student, regardless of how many of their
+   * assignments are actually graded yet (an ungraded assignment still
+   * counts toward what's possible, it just hasn't been earned). */
+  possible: number
+  /** total/possible as 0-100, or null when this classroom has no
+   * assignments yet (possible === 0, avoids a divide-by-zero). */
+  percentage: number | null
+}
+
+/**
+ * Builds one row per student — the matrix the Grades tab renders
+ * (student × assignment → score) plus the derived total/possible/
+ * percentage columns. `assignments` and `submissionsByAssignment` must
+ * already be scoped to exactly one subject+classroom (getAssignments'
+ * own scoping guarantees this) — never pass in another classroom's data,
+ * or its scores would be silently blended into this one's totals.
+ */
+export function computeGradeRows(
+  studentIds: string[],
+  assignments: Assignment[],
+  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
+): StudentGradeRow[] {
+  const possible = assignments.reduce((sum, a) => sum + a.maxScore, 0)
+
+  return studentIds.map((studentId) => {
+    const scoresByAssignment: Record<string, number | null> = {}
+    const statusByAssignment: Record<string, SubmissionStatus> = {}
+    let total = 0
+
+    for (const assignment of assignments) {
+      const submission = submissionsByAssignment[assignment.id]?.[studentId]
+      const score = submission?.score ?? null
+      scoresByAssignment[assignment.id] = score
+      statusByAssignment[assignment.id] = submission?.status ?? 'not_submitted'
+      if (score !== null) total += score
+    }
+
+    const percentage = possible > 0 ? (total / possible) * 100 : null
+    return { studentId, scoresByAssignment, statusByAssignment, total, possible, percentage }
+  })
+}
+
+export interface ClassGradeStats {
+  /** Average of every student's percentage, or null if the classroom has
+   * no assignments yet. */
+  classAverage: number | null
+  highest: number | null
+  lowest: number | null
+}
+
+/** Class-wide stats derived from computeGradeRows' output — never
+ * persisted, always recomputed from the same rows the table renders, so
+ * there is nothing that can drift out of sync with the table. */
+export function computeClassGradeStats(rows: StudentGradeRow[]): ClassGradeStats {
+  const percentages = rows.map((r) => r.percentage).filter((p): p is number => p !== null)
+  if (percentages.length === 0) return { classAverage: null, highest: null, lowest: null }
+
+  return {
+    classAverage: percentages.reduce((a, b) => a + b, 0) / percentages.length,
+    highest: Math.max(...percentages),
+    lowest: Math.min(...percentages),
+  }
 }

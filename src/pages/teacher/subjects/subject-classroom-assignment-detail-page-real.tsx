@@ -14,6 +14,8 @@ import {
   getAssignmentById,
   getSubmissionSummary,
   getSubmissions,
+  nextStatusAfterScore,
+  parseScoreInput,
   setSubmissionNote,
   setSubmissionScore,
   setSubmissionStatus,
@@ -65,6 +67,11 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  /** Bumped whenever a score entry is rejected as out-of-range, forcing
+   * the (uncontrolled, defaultValue-based) score input to remount and
+   * revert to the last saved value even when that saved value itself
+   * didn't change. */
+  const [scoreResetTick, setScoreResetTick] = useState(0)
 
   const refresh = useCallback(() => {
     if (!assignmentId || !classroomId) return undefined
@@ -104,6 +111,10 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   }
 
   const currentAssignmentId = assignmentId as string
+  // Same reasoning as currentAssignmentId above: TS doesn't carry the
+  // `!assignment` narrowing above into a nested function declared later
+  // (handleScoreBlur), so it's re-asserted here once.
+  const currentAssignment = assignment as Assignment
 
   const roster = deriveAssignmentRoster(students, submissions)
   const rosterSubmissions: Record<string, AssignmentSubmission> = {}
@@ -156,16 +167,22 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   }
 
   async function handleScoreBlur(studentId: string, raw: string) {
-    const score = raw === '' ? null : Number(raw)
-    if (score !== null && Number.isNaN(score)) return
+    const { value: score, error: validationError } = parseScoreInput(raw, currentAssignment.maxScore)
+    if (validationError) {
+      toast(validationError)
+      setScoreResetTick((t) => t + 1)
+      return
+    }
+    const current = submissions[studentId] ?? defaultSubmission(studentId)
     try {
-      await setSubmissionScore(currentAssignmentId, studentId, score)
+      await setSubmissionScore(currentAssignmentId, studentId, score, current.status)
       setSubmissions((prev) => ({
         ...prev,
-        [studentId]: { ...(prev[studentId] ?? defaultSubmission(studentId)), score },
+        [studentId]: { ...current, score, status: nextStatusAfterScore(current.status, score) },
       }))
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกคะแนนได้'))
+      setScoreResetTick((t) => t + 1)
     }
   }
 
@@ -320,7 +337,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                               min={0}
                               max={assignment.maxScore}
                               defaultValue={submission.score ?? ''}
-                              key={`${student.id}-${submission.score}`}
+                              key={`${student.id}-${submission.score}-${scoreResetTick}`}
                               onBlur={(e) => handleScoreBlur(student.id, e.target.value)}
                               className="h-8 w-16 text-center"
                             />

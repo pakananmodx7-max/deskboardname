@@ -389,7 +389,11 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
         if (a.id !== assignmentId) return a
         const existing = a.submissions[studentId] ?? { status: 'not_submitted', score: null, note: '' }
         const clamped = score === null ? null : Math.max(0, Math.min(a.maxScore, score))
-        return { ...a, submissions: { ...a.submissions, [studentId]: { ...existing, score: clamped } } }
+        // Mirrors assignment-service.ts's nextStatusAfterScore: entering a
+        // real score promotes an untouched 'not_submitted' row to
+        // 'submitted', without overwriting an explicit 'late'/'missing' call.
+        const status = clamped !== null && existing.status === 'not_submitted' ? 'submitted' : existing.status
+        return { ...a, submissions: { ...a.submissions, [studentId]: { ...existing, score: clamped, status } } }
       }),
     }))
   }

@@ -25,13 +25,12 @@ interface AssignmentsTabProps {
  * which is scoped the same way against real data. */
 export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
   const { toast } = useToast()
-  const { topics, subjectAssignments, archiveSubjectAssignment } = useDemoClassroom()
+  const { subjectAssignments, archiveSubjectAssignment } = useDemoClassroom()
   const [createOpen, setCreateOpen] = useState(false)
   const [editingAssignment, setEditingAssignment] = useState<DemoSubjectAssignment | null>(null)
   const [archivingAssignment, setArchivingAssignment] = useState<DemoSubjectAssignment | null>(null)
   const navigate = useNavigate()
 
-  const subjectTopics = topics.filter((t) => t.subjectId === subject.id)
   const assignments = getAssignmentsForClassroom(subjectAssignments, subject.id, classroomId)
 
   function handleArchive() {
@@ -60,7 +59,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
           {assignments.map((assignment) => {
             const summary = computeAssignmentSummary(assignment)
             const percent = summary.total > 0 ? Math.round((summary.submitted / summary.total) * 100) : 0
-            const topic = subjectTopics.find((t) => t.id === assignment.topicId)
 
             return (
               <Card
@@ -89,7 +87,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
                       />
                     </div>
                   </div>
-                  {topic && <p className="text-xs text-muted-foreground">Topic: {topic.title}</p>}
                   <Progress value={percent} />
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>
@@ -110,7 +107,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
         onOpenChange={setCreateOpen}
         subjectId={subject.id}
         classroomId={classroomId}
-        topics={subjectTopics}
       />
 
       {editingAssignment && (
@@ -119,7 +115,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
           onOpenChange={(open) => !open && setEditingAssignment(null)}
           subjectId={subject.id}
           classroomId={classroomId}
-          topics={subjectTopics}
           assignment={editingAssignment}
         />
       )}

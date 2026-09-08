@@ -9,24 +9,26 @@ import { AttendanceTab } from '@/features/demo-subjects/tabs/attendance-tab'
 import { GradesTab } from '@/features/demo-subjects/tabs/grades-tab'
 import { OverviewTab } from '@/features/demo-subjects/tabs/overview-tab'
 import { StudentsTab } from '@/features/demo-subjects/tabs/students-tab'
-import { TopicsTab } from '@/features/demo-subjects/tabs/topics-tab'
 import { buildSubjectClassroomPath, isClassroomLinkedToSubject } from '@/features/subjects-shared/subject-classroom-nav'
 import { cn } from '@/lib/utils'
 
-type TabKey = 'overview' | 'students' | 'attendance' | 'topics' | 'assignments' | 'grades'
+type TabKey = 'overview' | 'students' | 'attendance' | 'assignments' | 'grades'
 
-const TABS: { key: TabKey; label: string }[] = [
+/** Exported so the exact tab set — and specifically that Topics is gone
+ * — is unit-testable without rendering. See
+ * subject-classroom-workspace-page.test.ts. */
+export const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
   { key: 'attendance', label: 'เช็คชื่อ' },
-  { key: 'topics', label: 'หัวข้อ' },
   { key: 'assignments', label: 'งาน' },
   { key: 'grades', label: 'คะแนน' },
 ]
 
 /** Demo mirror of subjects-real's classroom workspace page — identical
- * tab set and classroom-scoping rules, backed by demo state instead of
- * Supabase. See that file for the full design rationale. */
+ * tab set (no Topics tab — see subjects-real's workspace page for why)
+ * and classroom-scoping rules, backed by demo state instead of Supabase.
+ * See that file for the full design rationale. */
 export function SubjectClassroomWorkspacePageDemo() {
   const { subjectId, classroomId } = useParams<{ subjectId: string; classroomId: string }>()
   const { subjects, classrooms } = useDemoClassroom()
@@ -103,7 +105,6 @@ export function SubjectClassroomWorkspacePageDemo() {
         {activeTab === 'overview' && <OverviewTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'students' && <StudentsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'attendance' && <AttendanceTab subject={subject} classroomId={activeClassroomId} />}
-        {activeTab === 'topics' && <TopicsTab subject={subject} />}
         {activeTab === 'assignments' && <AssignmentsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'grades' && <GradesTab subject={subject} classroomId={activeClassroomId} />}
       </div>

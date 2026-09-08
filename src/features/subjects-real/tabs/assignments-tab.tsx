@@ -17,10 +17,8 @@ import {
   getSubmissionSummary,
   getSubmissions,
 } from '@/services/assignment-service'
-import { getTopics } from '@/services/topic-service'
 import type { Assignment } from '@/types/assignment'
 import type { Subject } from '@/types/subject'
-import type { Topic } from '@/types/topic'
 
 interface AssignmentsTabProps {
   subject: Subject
@@ -41,7 +39,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
 
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [summaries, setSummaries] = useState<Record<string, { submitted: number; total: number }>>({})
-  const [topics, setTopics] = useState<Topic[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -52,10 +49,9 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
   const refresh = useCallback(() => {
     setLoading(true)
     setError(null)
-    return Promise.all([getAssignments(subject.id, classroomId), getTopics(subject.id)])
-      .then(async ([rows, topicRows]) => {
+    return getAssignments(subject.id, classroomId)
+      .then(async (rows) => {
         setAssignments(rows)
-        setTopics(topicRows)
         const submissionRows = await Promise.all(rows.map((a) => getSubmissions(a.id)))
         const nextSummaries: Record<string, { submitted: number; total: number }> = {}
         rows.forEach((a, i) => {
@@ -111,7 +107,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
           {assignments.map((assignment) => {
             const summary = summaries[assignment.id] ?? { submitted: 0, total: 0 }
             const percent = summary.total > 0 ? Math.round((summary.submitted / summary.total) * 100) : 0
-            const topic = topics.find((t) => t.id === assignment.topicId)
 
             return (
               <Card
@@ -139,7 +134,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
                       />
                     </div>
                   </div>
-                  {topic && <p className="text-xs text-muted-foreground">หัวข้อ: {topic.title}</p>}
                   <Progress value={percent} />
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>
@@ -160,7 +154,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
         onOpenChange={setCreateOpen}
         subjectId={subject.id}
         classroomId={classroomId}
-        topics={topics}
         onSaved={refresh}
       />
 
@@ -170,7 +163,6 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
           onOpenChange={(open) => !open && setEditingAssignment(null)}
           subjectId={subject.id}
           classroomId={classroomId}
-          topics={topics}
           assignment={editingAssignment}
           onSaved={() => {
             setEditingAssignment(null)

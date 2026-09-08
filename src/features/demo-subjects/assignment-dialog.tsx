@@ -15,30 +15,21 @@ import { NativeSelect } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
 import { useDemoClassroom } from '@/demo/demo-context'
-import {
-  SUBJECT_ASSIGNMENT_TYPE_LABEL,
-  type DemoSubjectAssignment,
-  type DemoTopic,
-  type SubjectAssignmentType,
-} from '@/demo/types'
+import { SUBJECT_ASSIGNMENT_TYPE_LABEL, type DemoSubjectAssignment, type SubjectAssignmentType } from '@/demo/types'
 
 interface AssignmentDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   subjectId: string
   classroomId: string
-  topics: DemoTopic[]
   assignment?: DemoSubjectAssignment | null
 }
 
 const ASSIGNMENT_TYPES: SubjectAssignmentType[] = ['homework', 'worksheet', 'exercise', 'quiz', 'project']
 
-const NO_TOPIC = '__no_topic__'
-
 function emptyForm() {
   return {
     title: '',
-    topicId: NO_TOPIC,
     type: 'homework' as SubjectAssignmentType,
     maxScore: '10',
     dueDate: new Date().toISOString().slice(0, 10),
@@ -46,7 +37,11 @@ function emptyForm() {
   }
 }
 
-export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, topics, assignment }: AssignmentDialogProps) {
+/** No topic field here on purpose — the Topics tab was removed from the
+ * workspace to simplify the UI (see subject-classroom-workspace-page-demo.tsx).
+ * An existing assignment's topicId is preserved as-is on edit; a newly
+ * created assignment simply has no topic. */
+export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, assignment }: AssignmentDialogProps) {
   const { addSubjectAssignment, updateSubjectAssignment } = useDemoClassroom()
   const { toast } = useToast()
   const [form, setForm] = useState(emptyForm)
@@ -59,7 +54,6 @@ export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, t
         assignment
           ? {
               title: assignment.title,
-              topicId: assignment.topicId ?? NO_TOPIC,
               type: assignment.type,
               maxScore: String(assignment.maxScore),
               dueDate: assignment.dueDate,
@@ -83,12 +77,9 @@ export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, t
       return
     }
 
-    const topicId = form.topicId === NO_TOPIC ? null : form.topicId
-
     if (isEditing && assignment) {
       updateSubjectAssignment(assignment.id, {
         title: form.title.trim(),
-        topicId,
         type: form.type,
         maxScore,
         dueDate: form.dueDate,
@@ -98,7 +89,7 @@ export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, t
     } else {
       addSubjectAssignment(subjectId, classroomId, {
         title: form.title.trim(),
-        topicId,
+        topicId: null,
         type: form.type,
         maxScore,
         dueDate: form.dueDate,
@@ -128,23 +119,6 @@ export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, t
               onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
               required
             />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="assignment-topic">หัวข้อที่เกี่ยวข้อง</Label>
-            <NativeSelect
-              id="assignment-topic"
-              className="w-full"
-              value={form.topicId}
-              onChange={(e) => setForm((f) => ({ ...f, topicId: e.target.value }))}
-            >
-              <option value={NO_TOPIC}>ไม่ระบุหัวข้อ</option>
-              {topics.map((topic) => (
-                <option key={topic.id} value={topic.id}>
-                  {topic.title}
-                </option>
-              ))}
-            </NativeSelect>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

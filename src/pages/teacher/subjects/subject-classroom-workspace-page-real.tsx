@@ -3,45 +3,50 @@ import { Navigate, useNavigate, useParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { NativeSelect } from '@/components/ui/select'
-import { DemoOnlyNotice } from '@/features/subjects-real/demo-only-notice'
 import { AssignmentsTab } from '@/features/subjects-real/tabs/assignments-tab'
 import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
+import { GradesTab } from '@/features/subjects-real/tabs/grades-tab'
 import { OverviewTab } from '@/features/subjects-real/tabs/overview-tab'
 import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
-import { TopicsTab } from '@/features/subjects-real/tabs/topics-tab'
 import { buildSubjectClassroomPath, isClassroomLinkedToSubject } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { getSubjectById, getSubjectClassroomsWithCounts } from '@/services/subject-service'
 import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
-type TabKey = 'overview' | 'students' | 'attendance' | 'topics' | 'assignments' | 'grades'
+type TabKey = 'overview' | 'students' | 'attendance' | 'assignments' | 'grades'
 
-const TABS: { key: TabKey; label: string }[] = [
+/** Exported (rather than kept module-private) so the exact tab set — and
+ * specifically that Topics is gone — is unit-testable without rendering.
+ * See subject-classroom-workspace-page.test.ts. */
+export const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
   { key: 'attendance', label: 'เช็คชื่อ' },
-  { key: 'topics', label: 'หัวข้อ' },
   { key: 'assignments', label: 'งาน' },
   { key: 'grades', label: 'คะแนน' },
 ]
 
 /**
  * The subject + classroom workspace — "Subjects → open Subject → choose
- * Classroom → manage that classroom inside the subject." Everything
- * classroom-specific (Overview's student count, Students, Attendance,
- * Assignments) is scoped to exactly the `classroomId` route param; Topics
- * stays subject-level and unfiltered on purpose (see TopicsTab — topics
- * are shared across every linked classroom, never duplicated per
- * classroom).
+ * Classroom → manage that classroom inside the subject." Everything here
+ * (Overview's student count, Students, Attendance, Assignments, Grades)
+ * is scoped to exactly the `classroomId` route param.
  *
- * งาน (Assignments) is now real and classroom-scoped — see
- * supabase/migrations/0006_subject_assignments.sql and
- * assignment-service.ts. Grades stays DemoOnlyNotice: the real backend
- * for it hasn't been built, and is expected to be a derived view over
- * assignment_submissions.score (per subject+classroom) rather than a new
- * stored table, matching how a subject's roster is already derived
- * rather than stored (see 0006's "Future relationship" note).
+ * No Topics tab here on purpose — it was removed from this workspace to
+ * simplify the UI (topics/description/max score/due date/submission
+ * status/score cover what a teacher actually manages day to day). The
+ * `topics` table, RLS, topic-service.ts, and TopicsTab component are all
+ * left completely untouched for possible future use — this is a UI-only
+ * removal, not a schema or backend change. See
+ * subjects-real/tabs/topics-tab.tsx (now unreferenced) and
+ * docs/DATABASE.md's Phase 9 note.
+ *
+ * งาน (Assignments) and คะแนน (Grades) are both real and classroom-scoped.
+ * Grades is a derived view over assignments + assignment_submissions.score
+ * (see grades-tab.tsx and assignment-service.ts's computeGradeRows) —
+ * there is no separate grades table, matching 0006's "Future relationship"
+ * note.
  */
 export function SubjectClassroomWorkspacePageReal() {
   const { subjectId, classroomId } = useParams<{ subjectId: string; classroomId: string }>()
@@ -165,9 +170,8 @@ export function SubjectClassroomWorkspacePageReal() {
           />
         )}
         {activeTab === 'attendance' && <AttendanceTab subject={subject} classroomId={activeClassroomId} />}
-        {activeTab === 'topics' && <TopicsTab subject={subject} />}
         {activeTab === 'assignments' && <AssignmentsTab subject={subject} classroomId={activeClassroomId} />}
-        {activeTab === 'grades' && <DemoOnlyNotice featureLabel="คะแนน" />}
+        {activeTab === 'grades' && <GradesTab subject={subject} classroomId={activeClassroomId} />}
       </div>
     </div>
   )
