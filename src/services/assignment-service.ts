@@ -282,6 +282,24 @@ export function buildDefaultSubmissions(studentIds: string[]): Record<string, As
 }
 
 /**
+ * The exact merge the assignment detail page's refresh() uses after
+ * (re)loading from Supabase: every active classroom member defaults to
+ * 'not_submitted' with no score, then any row Supabase actually returned
+ * — a score, status, or note a teacher entered before this reload —
+ * overrides that default. Extracted as its own pure function so "a
+ * score a teacher entered survives navigating away and refreshing the
+ * page" is unit-testable without a live Supabase round trip: the fetched
+ * submission always wins over the synthetic default, never the other
+ * way around.
+ */
+export function mergeSubmissionsWithDefaults(
+  activeStudentIds: string[],
+  fetchedSubmissions: Record<string, AssignmentSubmission>,
+): Record<string, AssignmentSubmission> {
+  return { ...buildDefaultSubmissions(activeStudentIds), ...fetchedSubmissions }
+}
+
+/**
  * The roster shown for an assignment — every currently-active classroom
  * member, PLUS any member who has since been archived (status =
  * 'inactive') but already has a submission row for this exact
@@ -364,6 +382,157 @@ export function parseScoreInput(raw: string, maxScore: number): ScoreValidationR
   if (parsed < 0) return { value: null, error: 'คะแนนต้องไม่ติดลบ' }
   if (parsed > maxScore) return { value: null, error: `คะแนนต้องไม่เกิน ${maxScore}` }
   return { value: parsed, error: null }
+}
+
+export interface MaxScoreChangeViolation {
+  studentId: string
+  score: number
+}
+
+export interface MaxScoreValidationResult {
+  ok: boolean
+  error: string | null
+  violations: MaxScoreChangeViolation[]
+}
+
+/**
+ * Validates a proposed new assignment max_score against every
+ * currently-recorded submission score. Lowering max_score must never
+ * silently truncate an existing score that's now out of range — this
+ * blocks the change and reports exactly which students are affected (so
+ * the UI can name them), rather than the 0007 database trigger rejecting
+ * individual future score writes one at a time with no upfront warning.
+ * This is a client-side pre-check in front of that trigger, not a
+ * replacement for it — the trigger is still what actually enforces the
+ * bound at the database level.
+ */
+export function validateMaxScoreChange(
+  newMaxScore: number,
+  submissions: Record<string, AssignmentSubmission>,
+): MaxScoreValidationResult {
+  if (!Number.isFinite(newMaxScore) || newMaxScore <= 0) {
+    return { ok: false, error: 'คะแนนเต็มต้องมากกว่า 0', violations: [] }
+  }
+
+  const violations: MaxScoreChangeViolation[] = []
+  for (const submission of Object.values(submissions)) {
+    if (submission.score !== null && submission.score > newMaxScore) {
+      violations.push({ studentId: submission.studentId, score: submission.score })
+    }
+  }
+
+  if (violations.length > 0) {
+    return {
+      ok: false,
+      error: `มีนักเรียน ${violations.length} คนที่คะแนนเกินคะแนนเต็มใหม่ (${newMaxScore})`,
+      violations,
+    }
+  }
+
+  return { ok: true, error: null, violations: [] }
+}
+
+/**
+ * Splits raw clipboard text into an ordered list of raw score strings.
+ * Normal case (copying a column of cells from Excel/Sheets): one value
+ * per line, newline-separated — CRLF, bare LF, and bare CR are all
+ * normalized to `\n` first. Fallback case (copying a single horizontal
+ * row instead of a column): when the clipboard holds exactly one line
+ * and that line contains tabs, the tabs are treated as the row separator
+ * instead. A multi-line paste where an individual line happens to
+ * contain tabs (e.g. a wider multi-column copy) only ever takes that
+ * line's first cell — this feature is single-column score entry, not a
+ * general grid paste.
+ *
+ * Only TRAILING blank lines are dropped (the common case of a stray
+ * newline at the end of a copy) — a blank line in the MIDDLE of the
+ * paste is kept as an empty ('') entry rather than removed, so it still
+ * lines up with, and is skipped for, the correct student row instead of
+ * shifting every row below it up by one and silently overwriting the
+ * wrong students.
+ */
+export function parsePastedScores(rawClipboardText: string): string[] {
+  const normalized = rawClipboardText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = normalized.split('\n').map((line) => line.trim())
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+
+  if (lines.length === 1 && lines[0].includes('\t')) {
+    const cells = lines[0].split('\t').map((cell) => cell.trim())
+    while (cells.length > 0 && cells[cells.length - 1] === '') cells.pop()
+    return cells
+  }
+  return lines.map((line) => line.split('\t')[0].trim())
+}
+
+export interface PasteScorePlanRow {
+  studentId: string
+  raw: string
+  value: number | null
+  error: string | null
+}
+
+/**
+ * Plans a multi-row score paste starting at `startIndex` within
+ * `rosterIds` (the roster's own display order — e.g. the row that was
+ * focused when the paste happened). Naturally bounded to
+ * `rosterIds.length` via the slice below, so pasting more rows than
+ * there are remaining students is truncated rather than overflowing past
+ * the last row. Every row is validated independently with the same rule
+ * as a single-cell edit (parseScoreInput), so a caller can apply only
+ * the valid rows and report the rest without corrupting anything already
+ * saved for students outside the pasted range or on an invalid row.
+ */
+export function planScorePaste(
+  rawClipboardText: string,
+  startIndex: number,
+  rosterIds: string[],
+  maxScore: number,
+): PasteScorePlanRow[] {
+  const values = parsePastedScores(rawClipboardText)
+  const targetIds = rosterIds.slice(startIndex, startIndex + values.length)
+  return targetIds.map((studentId, i) => {
+    const raw = values[i]
+    const { value, error } = parseScoreInput(raw, maxScore)
+    return { studentId, raw, value, error }
+  })
+}
+
+/**
+ * Whether applying "ใส่คะแนนหลายคน" (bulk fill) to the given selected
+ * students would overwrite at least one already-graded score — the
+ * assignment detail page uses this to decide whether a confirm-before-
+ * overwrite step is needed. A student with no score yet (null) is never
+ * a reason to confirm; only an existing, actual score is.
+ */
+export function bulkFillWouldOverwrite(
+  selectedIds: string[],
+  submissions: Record<string, AssignmentSubmission>,
+): boolean {
+  return selectedIds.some((id) => submissions[id]?.score !== null && submissions[id]?.score !== undefined)
+}
+
+export type ScoreNavKey = 'Enter' | 'ArrowDown' | 'ArrowUp'
+
+/**
+ * Given a keypress on a score cell and its row index, returns the row
+ * index the score input focus should move to next. Enter advances to
+ * the next row, except on the LAST row — there it returns the same
+ * index, so "save and keep focus there" instead of nowhere. ArrowDown/
+ * ArrowUp clamp to the roster's bounds (never past the first/last row)
+ * rather than wrapping or throwing, so a caller can tell "did this
+ * actually move" by comparing the result to the row it started from —
+ * and leave the native number-input spinner behavior alone at a
+ * boundary where there's nowhere further to go.
+ */
+export function nextScoreFocusIndex(key: ScoreNavKey, rowIndex: number, rosterLength: number): number {
+  if (rosterLength <= 0) return rowIndex
+  if (key === 'Enter') {
+    return rowIndex + 1 < rosterLength ? rowIndex + 1 : rowIndex
+  }
+  if (key === 'ArrowDown') {
+    return Math.min(rowIndex + 1, rosterLength - 1)
+  }
+  return Math.max(rowIndex - 1, 0)
 }
 
 /**

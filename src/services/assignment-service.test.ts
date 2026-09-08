@@ -2,13 +2,19 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildDefaultSubmissions,
+  bulkFillWouldOverwrite,
   computeClassGradeStats,
   computeGradeRows,
   deriveAssignmentRoster,
   deriveGradeRoster,
   getSubmissionSummary,
+  mergeSubmissionsWithDefaults,
+  nextScoreFocusIndex,
   nextStatusAfterScore,
+  parsePastedScores,
   parseScoreInput,
+  planScorePaste,
+  validateMaxScoreChange,
 } from '@/services/assignment-service'
 import type { Assignment, AssignmentSubmission } from '@/types/assignment'
 
@@ -268,5 +274,193 @@ describe('deriveGradeRoster', () => {
     const submissionsByAssignment = { a1: {}, a2: { s2: submission('s2', 5) } }
     const roster = deriveGradeRoster([active('s1'), inactive('s2')], submissionsByAssignment)
     expect(roster.map((s) => s.id)).toEqual(['s1', 's2'])
+  })
+})
+
+describe('validateMaxScoreChange — editable max score on the assignment detail page', () => {
+  it('accepts a valid new max score when no existing submission exceeds it', () => {
+    const submissions: Record<string, AssignmentSubmission> = {
+      s1: submission('s1', 8),
+      s2: submission('s2', 10),
+    }
+    expect(validateMaxScoreChange(20, submissions)).toEqual({ ok: true, error: null, violations: [] })
+  })
+
+  it('rejects a max score that is not > 0', () => {
+    expect(validateMaxScoreChange(0, {}).ok).toBe(false)
+    expect(validateMaxScoreChange(-5, {}).ok).toBe(false)
+  })
+
+  it('blocks lowering the max score below an existing score, naming the violating student(s)', () => {
+    const submissions: Record<string, AssignmentSubmission> = {
+      s1: submission('s1', 18),
+      s2: submission('s2', 12),
+    }
+    // Lowering to 15 would leave s1's score of 18 out of range.
+    const result = validateMaxScoreChange(15, submissions)
+    expect(result.ok).toBe(false)
+    expect(result.violations).toEqual([{ studentId: 's1', score: 18 }])
+  })
+
+  it('does not block on students with no score yet (null never violates)', () => {
+    const submissions: Record<string, AssignmentSubmission> = {
+      s1: { studentId: 's1', status: 'not_submitted', score: null, note: null },
+    }
+    expect(validateMaxScoreChange(5, submissions).ok).toBe(true)
+  })
+
+  it('a score exactly equal to the new max score is not a violation', () => {
+    const submissions: Record<string, AssignmentSubmission> = { s1: submission('s1', 20) }
+    expect(validateMaxScoreChange(20, submissions).ok).toBe(true)
+  })
+})
+
+describe('parsePastedScores — clipboard parsing for multi-row score paste', () => {
+  it('splits newline-separated values (LF)', () => {
+    expect(parsePastedScores('18\n17\n20\n15\n19')).toEqual(['18', '17', '20', '15', '19'])
+  })
+
+  it('splits CRLF-separated values (Windows clipboard)', () => {
+    expect(parsePastedScores('18\r\n17\r\n20')).toEqual(['18', '17', '20'])
+  })
+
+  it('splits bare-CR-separated values', () => {
+    expect(parsePastedScores('18\r17\r20')).toEqual(['18', '17', '20'])
+  })
+
+  it('drops blank lines (e.g. a trailing newline from the copy)', () => {
+    expect(parsePastedScores('18\n17\n\n')).toEqual(['18', '17'])
+  })
+
+  it('falls back to tab-separated when the clipboard is exactly one line with tabs (a single horizontal row)', () => {
+    expect(parsePastedScores('18\t17\t20\t15\t19')).toEqual(['18', '17', '20', '15', '19'])
+  })
+
+  it('a multi-line paste where a line itself has tabs only takes each line’s first cell', () => {
+    expect(parsePastedScores('18\tA\n17\tB')).toEqual(['18', '17'])
+  })
+})
+
+describe('planScorePaste — multi-row paste starting at the focused row', () => {
+  const rosterIds = ['s1', 's2', 's3', 's4', 's5']
+
+  it('assigns pasted values to students in roster order starting at the focused row', () => {
+    const plan = planScorePaste('18\n17\n20\n15\n19', 0, rosterIds, 20)
+    expect(plan.map((p) => [p.studentId, p.value])).toEqual([
+      ['s1', 18],
+      ['s2', 17],
+      ['s3', 20],
+      ['s4', 15],
+      ['s5', 19],
+    ])
+    expect(plan.every((p) => p.error === null)).toBe(true)
+  })
+
+  it('starting mid-roster offsets the target students accordingly', () => {
+    const plan = planScorePaste('5\n6', 2, rosterIds, 20)
+    expect(plan.map((p) => p.studentId)).toEqual(['s3', 's4'])
+  })
+
+  it('never pastes beyond the last student row — extra pasted rows are simply dropped', () => {
+    // 5 pasted values starting at row index 3 (s4) — only s4 and s5 exist below it.
+    const plan = planScorePaste('1\n2\n3\n4\n5', 3, rosterIds, 20)
+    expect(plan.map((p) => p.studentId)).toEqual(['s4', 's5'])
+    expect(plan).toHaveLength(2)
+  })
+
+  it('rejects a pasted score greater than max_score, on just that row', () => {
+    const plan = planScorePaste('18\n25', 0, rosterIds, 20)
+    expect(plan[0].error).toBeNull()
+    expect(plan[1].error).toBeTruthy()
+    expect(plan[1].value).toBeNull()
+  })
+
+  it('rejects a negative pasted score, on just that row', () => {
+    const plan = planScorePaste('18\n-3', 0, rosterIds, 20)
+    expect(plan[0].error).toBeNull()
+    expect(plan[1].error).toBeTruthy()
+  })
+
+  it('a blank pasted row is valid (no error) and does not resolve to a score — callers can skip it', () => {
+    const plan = planScorePaste('18\n\n20', 0, rosterIds, 20)
+    expect(plan[1].error).toBeNull()
+    expect(plan[1].value).toBeNull()
+    expect(plan[1].raw).toBe('')
+  })
+})
+
+describe('nextScoreFocusIndex — Enter-to-next-row and Arrow key navigation', () => {
+  it('Enter moves focus to the next row', () => {
+    expect(nextScoreFocusIndex('Enter', 0, 5)).toBe(1)
+    expect(nextScoreFocusIndex('Enter', 3, 5)).toBe(4)
+  })
+
+  it('Enter on the last row stays put (save and keep focus there)', () => {
+    expect(nextScoreFocusIndex('Enter', 4, 5)).toBe(4)
+  })
+
+  it('ArrowDown moves to the next row, clamped at the last row', () => {
+    expect(nextScoreFocusIndex('ArrowDown', 1, 5)).toBe(2)
+    expect(nextScoreFocusIndex('ArrowDown', 4, 5)).toBe(4)
+  })
+
+  it('ArrowUp moves to the previous row, clamped at the first row', () => {
+    expect(nextScoreFocusIndex('ArrowUp', 2, 5)).toBe(1)
+    expect(nextScoreFocusIndex('ArrowUp', 0, 5)).toBe(0)
+  })
+
+  it('an empty roster never moves focus anywhere', () => {
+    expect(nextScoreFocusIndex('Enter', 0, 0)).toBe(0)
+  })
+})
+
+describe('bulkFillWouldOverwrite — "ใส่คะแนนหลายคน" confirm-before-overwrite check', () => {
+  it('is false when none of the selected students have a score yet', () => {
+    const submissions: Record<string, AssignmentSubmission> = {
+      s1: { studentId: 's1', status: 'not_submitted', score: null, note: null },
+      s2: { studentId: 's2', status: 'not_submitted', score: null, note: null },
+    }
+    expect(bulkFillWouldOverwrite(['s1', 's2'], submissions)).toBe(false)
+  })
+
+  it('is true when at least one selected student already has a score', () => {
+    const submissions: Record<string, AssignmentSubmission> = {
+      s1: { studentId: 's1', status: 'not_submitted', score: null, note: null },
+      s2: submission('s2', 9),
+    }
+    expect(bulkFillWouldOverwrite(['s1', 's2'], submissions)).toBe(true)
+  })
+
+  it('a score on a student who is NOT selected does not trigger the warning', () => {
+    const submissions: Record<string, AssignmentSubmission> = { s3: submission('s3', 9) }
+    expect(bulkFillWouldOverwrite(['s1', 's2'], submissions)).toBe(false)
+  })
+
+  it('applying "select 10 students, score = 10" example: bulk-fills exactly that value for every selected id', () => {
+    const selected = Array.from({ length: 10 }, (_, i) => `s${i + 1}`)
+    // No pre-existing scores for any of them — confirms the "no
+    // confirmation needed" branch used in the worked example.
+    expect(bulkFillWouldOverwrite(selected, {})).toBe(false)
+  })
+})
+
+describe('mergeSubmissionsWithDefaults — score persistence after refresh', () => {
+  it('a previously-saved score survives being merged back in over the not_submitted defaults', () => {
+    const merged = mergeSubmissionsWithDefaults(['s1', 's2'], { s1: submission('s1', 18) })
+    expect(merged.s1).toEqual(submission('s1', 18))
+    // s2 has no saved row yet — falls back to the synthetic default.
+    expect(merged.s2).toEqual({ studentId: 's2', status: 'not_submitted', score: null, note: null })
+  })
+
+  it('a fetched row always wins over the default, never the other way around', () => {
+    const merged = mergeSubmissionsWithDefaults(['s1'], {
+      s1: { studentId: 's1', status: 'late', score: 7, note: 'ส่งช้าหนึ่งวัน' },
+    })
+    expect(merged.s1).toEqual({ studentId: 's1', status: 'late', score: 7, note: 'ส่งช้าหนึ่งวัน' })
+  })
+
+  it('an empty fetch result (nothing saved yet) leaves every active student at the default', () => {
+    const merged = mergeSubmissionsWithDefaults(['s1', 's2'], {})
+    expect(merged).toEqual(buildDefaultSubmissions(['s1', 's2']))
   })
 })
