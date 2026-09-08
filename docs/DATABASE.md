@@ -1673,3 +1673,103 @@ grades, attendance, assignments) is exposed by either new RPC, and every
 Phase 10 protection (no self-approval, no auto-link, one link per
 student/account, teacher-owns-classroom required to approve) is
 unaffected.
+
+# Phase 12: Production incident — generic permission error on /student/link-account (0010)
+
+## Symptom
+
+In production, after 0009 had been applied, an authenticated account
+with `profiles.role = 'student'` entering a valid student code got
+`"คุณไม่มีสิทธิ์ดำเนินการนี้"` instead of either succeeding or one of this
+schema's own Thai rejection messages.
+
+## Diagnosis
+
+That exact string is not raised by any SQL in this schema — it is
+`src/lib/errors.ts`'s **generic fallback** for SQLSTATE `42501`, used
+only when the underlying Postgres error message does *not* contain Thai
+text (`looksLikeFriendlyMessage`). Every one of this schema's own
+`raise exception ... using errcode = '42501'` calls carries a Thai
+message and would therefore display verbatim, not the fallback. A raw,
+English-language `42501` can only mean a genuine Postgres-native
+`permission denied for function ...` — i.e. `EXECUTE` missing on
+whichever function was actually invoked.
+
+Empirically confirmed against a byte-for-byte local replay of
+0001–0009, applied in order, with a real `authenticated`/`anon` role
+split (not a superuser bypass):
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `role='student'`, EXECUTE correctly granted → `list_classrooms_for_student_code` | PASS — succeeds, minimal columns only |
+| 2 | `role='teacher'` caller | PASS — rejected with our own Thai role-guard message (42501, Thai text) |
+| 3 | No session (`auth.uid()` null) | PASS — rejected with our own Thai message (28000) |
+| 4 | Authenticated but no `profiles` row at all | PASS — rejected with our own Thai message (42501) |
+| 5 | Literal Postgres `anon` role | PASS — correctly has no EXECUTE at all (raw Postgres 42501, expected — anon must never reach this RPC) |
+| 6 | **Simulated "grant missing"**: revoke EXECUTE on `list_classrooms_for_student_code`, then call as a correctly-roled student | Reproduces the **exact** reported symptom: raw English `permission denied for function list_classrooms_for_student_code` |
+| 7 | **Simulated "stale frontend"**: correctly-roled student calls the OLD, 0009-retired `find_student_for_link(text)` directly | Reproduces the **identical** symptom: raw English `permission denied for function find_student_for_link` |
+
+**Conclusion: 0009's SQL, exactly as committed, is correct.** Checks 1–5
+rule out all three "logic" hypotheses:
+- **Wrong profile role at signup** — ruled out. `handle_new_user`
+  (0008) and `src/lib/auth-context.tsx`'s `signUp` both use the
+  matching key `intended_role`; a wrong role produces our own Thai
+  role-guard message (check 2/4), not the generic fallback.
+- **Wrong internal role guard in the RPC** — ruled out for the same
+  reason; the guard's own `raise exception` is reached and behaves
+  correctly whenever EXECUTE is actually granted.
+- **EXECUTE not granted** (check 6) and **frontend calling the
+  retired RPC** (check 7) are the only two hypotheses that reproduce the
+  reported symptom, and they are **indistinguishable from the error text
+  alone** — both are operational (deployment) failure modes, not a code
+  defect in 0009.
+
+## Fix (0010, defensive only — 0008 and 0009 are NOT modified)
+
+`supabase/migrations/0010_fix_student_link_rpc_permissions.sql`
+re-asserts the exact `REVOKE`/`GRANT` statements 0009 already contains
+for `list_classrooms_for_student_code`, `find_student_for_link_in_classroom`,
+and the retirement of `find_student_for_link(text)`. `GRANT`/`REVOKE` are
+idempotent in Postgres — re-running them is always safe and a no-op if
+0009 already landed cleanly. It also prints the current grant state via
+`RAISE NOTICE` for visibility when applied through `psql`. **This
+migration alone does not fix the symptom if the real cause is a stale
+frontend deployment (check 7)** — that requires re-deploying the
+frontend from at least commit `40bb590` (the commit that switched the
+client from the retired single-argument `find_student_for_link` to
+`list_classrooms_for_student_code` / `find_student_for_link_in_classroom`),
+not a database change.
+
+## Manual verification query (run directly against production to tell the two apart)
+
+```sql
+select
+  p.proname,
+  pg_get_function_identity_arguments(p.oid) as args,
+  has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_can_execute
+from pg_proc p
+where p.proname in (
+  'list_classrooms_for_student_code',
+  'find_student_for_link_in_classroom',
+  'find_student_for_link'
+)
+order by p.proname;
+```
+
+If `list_classrooms_for_student_code` / `find_student_for_link_in_classroom`
+already show `authenticated_can_execute = true`, the database is
+provably fine and 0010 will change nothing — the incident is a frontend
+deployment issue. If either shows `false`, 0010 is required.
+
+## Regression test (new — not a migration, not applied automatically)
+
+`supabase/tests/0009_student_link_rpc_permissions.sql` — a self-contained,
+re-runnable script (own fixtures, own cleanup) that exercises exactly
+the scenarios above (student succeeds with minimal data; teacher/
+anonymous/no-profile/`anon`-role callers stay rejected; `authenticated`'s
+exact grant state is asserted) against a disposable local Postgres
+instance. Verified twice: passes clean against 0001–0009, and — to prove
+it actually catches this class of regression rather than trivially
+passing — was re-run against a deliberately broken state (EXECUTE
+revoked) where it correctly failed with the exact production error, then
+passed again once 0010 was applied on top.
