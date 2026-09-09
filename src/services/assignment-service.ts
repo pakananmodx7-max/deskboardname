@@ -23,10 +23,13 @@ interface AssignmentRow {
 }
 
 interface AssignmentSubmissionRow {
+  id?: string
   student_id: string
   status: SubmissionStatus
   score: number | null
   note: string | null
+  submitted_at?: string | null
+  reviewed_at?: string | null
 }
 
 function mapAssignment(row: AssignmentRow): Assignment {
@@ -47,7 +50,15 @@ function mapAssignment(row: AssignmentRow): Assignment {
 }
 
 function mapSubmission(row: AssignmentSubmissionRow): AssignmentSubmission {
-  return { studentId: row.student_id, status: row.status, score: row.score, note: row.note }
+  return {
+    studentId: row.student_id,
+    status: row.status,
+    score: row.score,
+    note: row.note,
+    id: row.id,
+    submittedAt: row.submitted_at,
+    reviewedAt: row.reviewed_at,
+  }
 }
 
 async function requireTeacherId(): Promise<string> {
@@ -159,7 +170,7 @@ export async function getSubmissions(assignmentId: string): Promise<Record<strin
   const supabase = getSupabaseClient()
   const { data, error } = await supabase
     .from('assignment_submissions')
-    .select('student_id, status, score, note')
+    .select('id, student_id, status, score, note, submitted_at, reviewed_at')
     .eq('assignment_id', assignmentId)
 
   if (error) throw error
@@ -245,9 +256,15 @@ export async function setSubmissionScore(
 ): Promise<void> {
   const supabase = getSupabaseClient()
   const status = nextStatusAfterScore(currentStatus, score)
-  const { error } = await supabase
-    .from('assignment_submissions')
-    .upsert({ assignment_id: assignmentId, student_id: studentId, score, status }, { onConflict: 'assignment_id,student_id' })
+  // reviewed_at is bumped every time a teacher records a score —
+  // informational only, supports a future storage-retention policy (see
+  // 0016_assignment_submission_uploads.sql's header note). Never
+  // touched by a student write (blocked by that migration's
+  // enforce_submission_field_ownership trigger).
+  const { error } = await supabase.from('assignment_submissions').upsert(
+    { assignment_id: assignmentId, student_id: studentId, score, status, reviewed_at: new Date().toISOString() },
+    { onConflict: 'assignment_id,student_id' },
+  )
 
   if (error) throw error
 }

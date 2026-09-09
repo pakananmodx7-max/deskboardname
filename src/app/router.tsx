@@ -17,6 +17,7 @@ import { StudentLinkAccountPage } from '@/pages/student/link-account-page'
 import { StudentLoginPage } from '@/pages/student/login-page'
 import { StudentPendingPage } from '@/pages/student/pending-page'
 import { StudentSignupPage } from '@/pages/student/signup-page'
+import { StudentAssignmentDetailPage } from '@/pages/student/subjects/student-assignment-detail-page'
 import { StudentSubjectDetailPage } from '@/pages/student/subjects/student-subject-detail-page'
 import { StudentSubjectsPage } from '@/pages/student/subjects/student-subjects-page'
 import { AiPage } from '@/pages/teacher/ai/ai-page'
@@ -75,6 +76,7 @@ const router = createBrowserRouter([
       { path: 'dashboard', element: <StudentDashboardPage /> },
       { path: 'subjects', element: <StudentSubjectsPage /> },
       { path: 'subjects/:subjectId', element: <StudentSubjectDetailPage /> },
+      { path: 'subjects/:subjectId/assignments/:assignmentId', element: <StudentAssignmentDetailPage /> },
       // งานของฉัน is no longer a standalone sidebar destination — every
       // assignment is reached through its own subject's "งาน" tab now
       // (see the Subject Workspace, student-subject-detail-page.tsx).

@@ -54,4 +54,21 @@ export interface AssignmentSubmission {
   status: SubmissionStatus
   score: number | null
   note: string | null
+  /** Optional — omitted by call sites that only ever synthesize a
+   * default "no row yet" submission (e.g. the teacher roster's
+   * mergeSubmissionsWithDefaults), present whenever the row actually
+   * came from the database. `id` is required to attach/read
+   * assignment_submission_resources (see submission-service.ts) — a
+   * synthesized default has no real submission id yet. */
+  id?: string
+  /** When the student last (re)submitted — null until they submit at
+   * least once. Set by submission-service.ts's finalizeSubmission(),
+   * never editable by a teacher. */
+  submittedAt?: string | null
+  /** When a teacher last recorded a score — bumped every time
+   * setSubmissionScore() runs. Informational only (supports a future
+   * storage-retention policy, e.g. "clean up files N days after
+   * grading") — never editable by a student, enforced by
+   * 0016's enforce_submission_field_ownership trigger. */
+  reviewedAt?: string | null
 }

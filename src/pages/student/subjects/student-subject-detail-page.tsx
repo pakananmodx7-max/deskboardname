@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { StatCard } from '@/components/dashboard/stat-card'
 import { AssignmentResourcesDisclosure } from '@/features/student-portal/assignment-resources-disclosure'
 import { LessonResourcesList } from '@/features/student-portal/lesson-resources-list'
+import { buildStudentAssignmentDetailPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { getResourceCounts } from '@/services/assignment-resource-service'
@@ -331,7 +332,12 @@ export function StudentSubjectDetailPage() {
                   <div key={a.id} className="px-5 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{a.title}</p>
+                        <Link
+                          to={buildStudentAssignmentDetailPath(a.subjectId, a.id)}
+                          className="truncate text-sm font-medium hover:underline"
+                        >
+                          {a.title}
+                        </Link>
                         {a.description && <p className="mt-0.5 truncate text-xs text-muted-foreground">{a.description}</p>}
                         <p className="text-xs text-muted-foreground">
                           กำหนดส่ง {a.dueDate ? formatDate(a.dueDate) : 'ไม่มีกำหนดส่ง'}

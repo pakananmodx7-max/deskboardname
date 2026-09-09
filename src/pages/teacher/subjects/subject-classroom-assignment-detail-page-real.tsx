@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label'
 import { useToast } from '@/components/ui/toast'
 import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
 import { AssignmentResourcesSection } from '@/features/subjects-real/assignment-resources-section'
+import { SubmissionViewerDrawer } from '@/features/subjects-real/submission-viewer-drawer'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import {
@@ -48,6 +49,7 @@ import {
 import { getClassroomById } from '@/services/classroom-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { getSubjectById } from '@/services/subject-service'
+import { getSubmissionResourceCounts } from '@/services/submission-service'
 import type { Assignment, AssignmentSubmission, SubmissionStatus } from '@/types/assignment'
 import type { ClassroomStudent } from '@/types/student'
 
@@ -125,6 +127,13 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   const [rosterLoading, setRosterLoading] = useState(true)
   const [rosterError, setRosterError] = useState<string | null>(null)
 
+  /** submissionId -> resource count. Loaded independently of the roster
+   * itself (Section 10: "if submission file loading fails, teacher must
+   * still see student/status/score") — a failure here just means every
+   * "งานออนไลน์" cell falls back to "-", never blanks the roster. */
+  const [resourceCounts, setResourceCounts] = useState<Record<string, number>>({})
+  const [viewerStudentId, setViewerStudentId] = useState<string | null>(null)
+
   const [statusFilter, setStatusFilter] = useState<AssignmentDetailFilter>('all')
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -178,12 +187,21 @@ export function SubjectClassroomAssignmentDetailPageReal() {
     setRosterLoading(true)
     setRosterError(null)
     return Promise.all([getStudentsByClassroom(classroomId), getSubmissions(assignmentId)])
-      .then(([classroomStudents, submissionRows]) => {
+      .then(async ([classroomStudents, submissionRows]) => {
         setStudents(classroomStudents)
         const activeIds = classroomStudents.filter((s) => s.status === 'active').map((s) => s.id)
         const merged = mergeSubmissionsWithDefaults(activeIds, submissionRows)
         setSubmissions(merged)
         setNoteDrafts(Object.fromEntries(Object.entries(merged).map(([id, s]) => [id, s.note ?? ''])))
+
+        // Best-effort enrichment only — a resource-count lookup failure
+        // must never block the roster (student/status/score) from
+        // rendering, so it always falls back to an empty map.
+        const submissionIds = Object.values(merged)
+          .map((s) => s.id)
+          .filter((id): id is string => Boolean(id))
+        const counts = await getSubmissionResourceCounts(submissionIds).catch(() => ({}))
+        setResourceCounts(counts)
       })
       .catch((err: unknown) => setRosterError(toFriendlyErrorMessage(err)))
       .finally(() => setRosterLoading(false))
@@ -685,6 +703,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                   <th className="px-3 py-3 font-medium">เลขที่</th>
                   <th className="px-3 py-3 font-medium">นักเรียน</th>
                   <th className="px-3 py-3 font-medium">สถานะ</th>
+                  <th className="px-3 py-3 font-medium">งานออนไลน์</th>
                   <th className="px-3 py-3 font-medium">คะแนน</th>
                   <th className="px-3 py-3 font-medium">หมายเหตุ</th>
                 </tr>
@@ -692,19 +711,19 @@ export function SubjectClassroomAssignmentDetailPageReal() {
               <tbody>
                 {rosterLoading ? (
                   <tr>
-                    <td colSpan={6} className="px-5 py-6 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-5 py-6 text-center text-muted-foreground">
                       กำลังโหลด...
                     </td>
                   </tr>
                 ) : roster.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-5 py-6 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-5 py-6 text-center text-muted-foreground">
                       ยังไม่มีนักเรียนในห้องเรียนนี้
                     </td>
                   </tr>
                 ) : visibleRoster.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-5 py-6 text-center text-muted-foreground">
+                    <td colSpan={7} className="px-5 py-6 text-center text-muted-foreground">
                       ไม่พบนักเรียนตามเงื่อนไขที่เลือก
                     </td>
                   </tr>
@@ -748,6 +767,22 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                               </button>
                             ))}
                           </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          {submission.id ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setViewerStudentId(student.id)}
+                            >
+                              {(resourceCounts[submission.id] ?? 0) > 0
+                                ? `${resourceCounts[submission.id]} ไฟล์`
+                                : 'เปิดดู'}
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          )}
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex flex-col gap-0.5">
@@ -857,6 +892,14 @@ export function SubjectClassroomAssignmentDetailPageReal() {
         description={`เก็บถาวร "${currentAssignment.title}"?\nงานและคะแนนของนักเรียนจะยังคงอยู่ในระบบ`}
         confirmLabel="เก็บถาวร"
         onConfirm={handleArchive}
+      />
+
+      <SubmissionViewerDrawer
+        open={Boolean(viewerStudentId)}
+        onOpenChange={(open) => !open && setViewerStudentId(null)}
+        studentName={viewerStudentId ? studentLabel(roster.find((s) => s.id === viewerStudentId), viewerStudentId) : ''}
+        submission={viewerStudentId ? (submissions[viewerStudentId] ?? null) : null}
+        maxScore={currentAssignment.maxScore}
       />
     </div>
   )
