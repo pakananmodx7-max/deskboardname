@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { AssignmentResourcesDisclosure } from '@/features/student-portal/assignment-resources-disclosure'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { getResourceCounts } from '@/services/assignment-resource-service'
 import { filterMyAssignments, getMyAssignments, type AssignmentFilter } from '@/services/student-portal-service'
 import type { MyAssignment } from '@/types/student-portal'
 
@@ -44,6 +46,7 @@ function formatDueDate(dueDate: string | null): string {
  */
 export function StudentAssignmentsPage() {
   const [assignments, setAssignments] = useState<MyAssignment[]>([])
+  const [resourceCounts, setResourceCounts] = useState<Record<string, number>>({})
   const [filter, setFilter] = useState<AssignmentFilter>('all')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -53,8 +56,14 @@ export function StudentAssignmentsPage() {
     setLoading(true)
     setError(null)
     getMyAssignments()
-      .then((rows) => {
-        if (active) setAssignments(rows)
+      .then(async (rows) => {
+        if (!active) return
+        setAssignments(rows)
+        // One batched count query for every visible assignment — never a
+        // per-row resource fetch just to decide whether to show the
+        // "ใบงานและลิงก์" toggle (see AssignmentResourcesDisclosure).
+        const counts = await getResourceCounts(rows.map((a) => a.id)).catch(() => ({}))
+        if (active) setResourceCounts(counts)
       })
       .catch((err: unknown) => {
         if (active) setError(toFriendlyErrorMessage(err))
@@ -105,21 +114,24 @@ export function StudentAssignmentsPage() {
           ) : (
             <div className="divide-y divide-border">
               {filtered.map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{a.title}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {a.subjectName} · {a.classroomName} · กำหนดส่ง {formatDueDate(a.dueDate)}
-                    </p>
+                <div key={a.id} className="px-5 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{a.title}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {a.subjectName} · {a.classroomName} · กำหนดส่ง {formatDueDate(a.dueDate)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {a.score !== null ? `${a.score}/${a.maxScore}` : `-/${a.maxScore}`}
+                      </span>
+                      <Badge variant={SUBMISSION_STATUS_BADGE_VARIANT[a.status] ?? 'outline'}>
+                        {SUBMISSION_STATUS_LABEL[a.status] ?? a.status}
+                      </Badge>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {a.score !== null ? `${a.score}/${a.maxScore}` : `-/${a.maxScore}`}
-                    </span>
-                    <Badge variant={SUBMISSION_STATUS_BADGE_VARIANT[a.status] ?? 'outline'}>
-                      {SUBMISSION_STATUS_LABEL[a.status] ?? a.status}
-                    </Badge>
-                  </div>
+                  <AssignmentResourcesDisclosure assignmentId={a.id} resourceCount={resourceCounts[a.id] ?? 0} />
                 </div>
               ))}
             </div>

@@ -4,8 +4,10 @@ import { Navigate, useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { StatCard } from '@/components/dashboard/stat-card'
+import { AssignmentResourcesDisclosure } from '@/features/student-portal/assignment-resources-disclosure'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { getResourceCounts } from '@/services/assignment-resource-service'
 import {
   computeAttendanceRate,
   computeMyGrades,
@@ -60,6 +62,7 @@ export function StudentSubjectDetailPage() {
 
   const [subject, setSubject] = useState<MySubject | null | undefined>(undefined)
   const [assignments, setAssignments] = useState<MyAssignment[]>([])
+  const [resourceCounts, setResourceCounts] = useState<Record<string, number>>({})
   const [attendance, setAttendance] = useState<MyAttendanceRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -84,6 +87,9 @@ export function StudentSubjectDetailPage() {
         if (!active) return
         setAssignments(assignmentRows)
         setAttendance(attendanceRows)
+
+        const counts = await getResourceCounts(assignmentRows.map((a) => a.id)).catch(() => ({}))
+        if (active) setResourceCounts(counts)
       })
       .catch((err: unknown) => {
         if (active) setError(toFriendlyErrorMessage(err))
@@ -171,19 +177,22 @@ export function StudentSubjectDetailPage() {
             ) : (
               <div className="divide-y divide-border">
                 {assignments.map((a) => (
-                  <div key={a.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{a.title}</p>
-                      <p className="text-xs text-muted-foreground">
-                        กำหนดส่ง {a.dueDate ? formatDate(a.dueDate) : 'ไม่มีกำหนดส่ง'}
-                      </p>
+                  <div key={a.id} className="px-5 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{a.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          กำหนดส่ง {a.dueDate ? formatDate(a.dueDate) : 'ไม่มีกำหนดส่ง'}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {a.score !== null && <span className="text-xs text-muted-foreground">{a.score}/{a.maxScore}</span>}
+                        <Badge variant={a.status === 'submitted' ? 'success' : a.status === 'not_submitted' ? 'outline' : 'warning'}>
+                          {SUBMISSION_STATUS_LABEL[a.status] ?? a.status}
+                        </Badge>
+                      </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {a.score !== null && <span className="text-xs text-muted-foreground">{a.score}/{a.maxScore}</span>}
-                      <Badge variant={a.status === 'submitted' ? 'success' : a.status === 'not_submitted' ? 'outline' : 'warning'}>
-                        {SUBMISSION_STATUS_LABEL[a.status] ?? a.status}
-                      </Badge>
-                    </div>
+                    <AssignmentResourcesDisclosure assignmentId={a.id} resourceCount={resourceCounts[a.id] ?? 0} />
                   </div>
                 ))}
               </div>
