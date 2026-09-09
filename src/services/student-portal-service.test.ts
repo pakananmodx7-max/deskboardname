@@ -235,9 +235,13 @@ describe('validateAvatarFile', () => {
 // the moment its SELECT named the not-yet-existing avatar_path column.
 // ==================================================
 
-describe('isMissingOptionalColumnError — the exact Postgres "undefined_column" error (42703)', () => {
+describe('isMissingOptionalColumnError — Postgres "undefined_column" (42703) OR PostgREST\'s own schema-cache equivalent (PGRST204)', () => {
   it('is true for a real undefined_column error, e.g. selecting students.avatar_path before 0012 is applied', () => {
     expect(isMissingOptionalColumnError({ code: '42703', message: 'column students.avatar_path does not exist' })).toBe(true)
+  })
+
+  it('is true for PostgREST\'s own "column not in schema cache" error (PGRST204) — a separate failure mode from the raw Postgres error, raised by PostgREST itself before the query ever reaches Postgres', () => {
+    expect(isMissingOptionalColumnError({ code: 'PGRST204', message: "Could not find the 'avatar_path' column of 'students' in the schema cache" })).toBe(true)
   })
 
   it('is false for an unrelated error code', () => {
@@ -251,9 +255,13 @@ describe('isMissingOptionalColumnError — the exact Postgres "undefined_column"
   })
 })
 
-describe('isOptionalTableMissingError — the exact Postgres "undefined_table" error (42P01)', () => {
+describe('isOptionalTableMissingError — Postgres "undefined_table" (42P01) OR PostgREST\'s own schema-cache equivalent (PGRST205)', () => {
   it('is true for a real undefined_table error, e.g. querying student_calendar_entries/teacher_student_notifications before 0012 is applied', () => {
     expect(isOptionalTableMissingError({ code: '42P01', message: 'relation "student_calendar_entries" does not exist' })).toBe(true)
+  })
+
+  it('is true for PostgREST\'s own "table not in schema cache" error (PGRST205)', () => {
+    expect(isOptionalTableMissingError({ code: 'PGRST205', message: "Could not find the table 'public.student_calendar_entries' in the schema cache" })).toBe(true)
   })
 
   it('is false for an unrelated error code', () => {

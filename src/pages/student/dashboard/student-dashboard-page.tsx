@@ -35,21 +35,35 @@ function formatNotificationTime(iso: string): string {
 }
 
 /**
- * /student/dashboard — the student's daily home page. Every widget below
- * loads and fails INDEPENDENTLY (three separate pieces of state: core
- * academic data, calendar entries, and notifications via the shared
- * StudentNotificationsProvider) so one widget's error never blanks the
- * others — see Section K of the redesign spec. Real Supabase data only,
- * no demo fallback.
+ * /student/dashboard — the student's daily home page.
+ *
+ * PAGE ERROR ISOLATION: subjects, assignments (which also drives the
+ * "งานของฉัน" summary/to-do — there is no separate "grades" query at all;
+ * grades are always a pure computation over this same assignments fetch,
+ * see computeMyGrades, so isolating assignments already isolates grades
+ * as a side effect), attendance, calendar entries, and notifications each
+ * load and fail COMPLETELY INDEPENDENTLY — five separate pieces of state,
+ * five separate try/catch boundaries. A failure in any ONE of them shows
+ * a small inline error only in that section; every other section keeps
+ * rendering normally. This page never returns a single "the whole page is
+ * an error" early-return the way an earlier version of this page did
+ * (see the PRODUCTION BUG note in student-portal-service.ts) — that
+ * pattern is exactly what let one failing query blank the entire
+ * dashboard instead of surfacing which specific section actually failed.
+ * Real Supabase data only, no demo fallback.
  */
 export function StudentDashboardPage() {
-  // Core academic data: subjects/assignments/attendance — same shape as
-  // before the redesign, still used for the "งานของฉัน" summary + list.
   const [subjects, setSubjects] = useState<MySubject[]>([])
+  const [subjectsLoading, setSubjectsLoading] = useState(true)
+  const [subjectsError, setSubjectsError] = useState<string | null>(null)
+
   const [assignments, setAssignments] = useState<MyAssignment[]>([])
+  const [assignmentsLoading, setAssignmentsLoading] = useState(true)
+  const [assignmentsError, setAssignmentsError] = useState<string | null>(null)
+
   const [attendance, setAttendance] = useState<MyAttendanceRecord[]>([])
-  const [coreLoading, setCoreLoading] = useState(true)
-  const [coreError, setCoreError] = useState<string | null>(null)
+  const [attendanceLoading, setAttendanceLoading] = useState(true)
+  const [attendanceError, setAttendanceError] = useState<string | null>(null)
 
   // Calendar entries — independent widget, independent failure.
   const [calendarEntries, setCalendarEntries] = useState<MyCalendarEntry[]>([])
@@ -63,23 +77,56 @@ export function StudentDashboardPage() {
 
   useEffect(() => {
     let active = true
-    setCoreLoading(true)
-    setCoreError(null)
-
-    Promise.all([getMySubjects(), getMyAssignments(), getMyAttendance()])
-      .then(([subjectRows, assignmentRows, attendanceRows]) => {
-        if (!active) return
-        setSubjects(subjectRows)
-        setAssignments(assignmentRows)
-        setAttendance(attendanceRows)
+    setSubjectsLoading(true)
+    setSubjectsError(null)
+    getMySubjects()
+      .then((rows) => {
+        if (active) setSubjects(rows)
       })
       .catch((err: unknown) => {
-        if (active) setCoreError(toFriendlyErrorMessage(err))
+        if (active) setSubjectsError(toFriendlyErrorMessage(err))
       })
       .finally(() => {
-        if (active) setCoreLoading(false)
+        if (active) setSubjectsLoading(false)
       })
+    return () => {
+      active = false
+    }
+  }, [])
 
+  useEffect(() => {
+    let active = true
+    setAssignmentsLoading(true)
+    setAssignmentsError(null)
+    getMyAssignments()
+      .then((rows) => {
+        if (active) setAssignments(rows)
+      })
+      .catch((err: unknown) => {
+        if (active) setAssignmentsError(toFriendlyErrorMessage(err))
+      })
+      .finally(() => {
+        if (active) setAssignmentsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    setAttendanceLoading(true)
+    setAttendanceError(null)
+    getMyAttendance()
+      .then((rows) => {
+        if (active) setAttendance(rows)
+      })
+      .catch((err: unknown) => {
+        if (active) setAttendanceError(toFriendlyErrorMessage(err))
+      })
+      .finally(() => {
+        if (active) setAttendanceLoading(false)
+      })
     return () => {
       active = false
     }
@@ -106,14 +153,11 @@ export function StudentDashboardPage() {
     }
   }, [])
 
-  if (coreLoading) {
-    return <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
-  }
-
-  if (coreError) {
-    return <p className="text-sm text-destructive">{coreError}</p>
-  }
-
+  // Every metric below is derived ONLY from assignments — if assignments
+  // failed to load, these all stay at their empty defaults (0/[]) and the
+  // "งานที่ต้องทำ"/"รายวิชาของฉัน" sections show their own local error
+  // instead of a fabricated 0, per "only show metrics derivable
+  // truthfully from real data."
   const todo = summarizeMyTodo(assignments)
   const pendingAssignments = getPendingAssignments(assignments)
   const recentNotifications = notifications.slice(0, 5)
@@ -130,21 +174,25 @@ export function StudentDashboardPage() {
         <div className="space-y-6 lg:col-span-2">
           <div>
             <h2 className="mb-3 text-sm font-semibold text-muted-foreground">งานของฉัน</h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <StatCard
-                label="งานค้าง"
-                value={`${todo.outstanding} งาน`}
-                icon={ListTodo}
-                tone={todo.outstanding > 0 ? 'warning' : 'default'}
-              />
-              <StatCard
-                label="ใกล้กำหนด"
-                value={`${todo.dueSoon} งาน`}
-                icon={Clock}
-                tone={todo.dueSoon > 0 ? 'warning' : 'default'}
-              />
-              <StatCard label="ส่งแล้ว" value={`${todo.submitted} งาน`} icon={CheckCircle2} tone="success" />
-            </div>
+            {assignmentsError ? (
+              <p className="text-sm text-destructive">{assignmentsError}</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <StatCard
+                  label="งานค้าง"
+                  value={assignmentsLoading ? '-' : `${todo.outstanding} งาน`}
+                  icon={ListTodo}
+                  tone={todo.outstanding > 0 ? 'warning' : 'default'}
+                />
+                <StatCard
+                  label="ใกล้กำหนด"
+                  value={assignmentsLoading ? '-' : `${todo.dueSoon} งาน`}
+                  icon={Clock}
+                  tone={todo.dueSoon > 0 ? 'warning' : 'default'}
+                />
+                <StatCard label="ส่งแล้ว" value={assignmentsLoading ? '-' : `${todo.submitted} งาน`} icon={CheckCircle2} tone="success" />
+              </div>
+            )}
           </div>
 
           <Card>
@@ -152,7 +200,11 @@ export function StudentDashboardPage() {
               <CardTitle className="text-base">งานที่ต้องทำ</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              {pendingAssignments.length === 0 ? (
+              {assignmentsLoading ? (
+                <p className="px-5 py-6 text-center text-sm text-muted-foreground">กำลังโหลด...</p>
+              ) : assignmentsError ? (
+                <p className="px-5 py-6 text-center text-sm text-destructive">{assignmentsError}</p>
+              ) : pendingAssignments.length === 0 ? (
                 <p className="px-5 py-6 text-center text-sm text-muted-foreground">ไม่มีงานที่ต้องทำ</p>
               ) : (
                 <div className="divide-y divide-border">
@@ -182,19 +234,29 @@ export function StudentDashboardPage() {
               <CardTitle className="text-base">รายวิชาของฉัน</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              {subjects.length === 0 ? (
+              {subjectsLoading ? (
+                <p className="px-5 py-6 text-center text-sm text-muted-foreground">กำลังโหลด...</p>
+              ) : subjectsError ? (
+                <p className="px-5 py-6 text-center text-sm text-destructive">{subjectsError}</p>
+              ) : subjects.length === 0 ? (
                 <p className="px-5 py-6 text-center text-sm text-muted-foreground">ยังไม่มีรายวิชา</p>
               ) : (
                 <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2">
                   {subjects.map((subject) => {
-                    const pendingCount = pendingAssignments.filter((a) => a.subjectId === subject.id).length
+                    // Only shown once assignments actually loaded — a
+                    // failed assignments fetch must never imply "0
+                    // pending" for a subject that might genuinely have
+                    // pending work.
+                    const pendingCount = assignmentsError
+                      ? null
+                      : pendingAssignments.filter((a) => a.subjectId === subject.id).length
                     return (
                       <Link key={`${subject.id}:${subject.classroomId}`} to={`/student/subjects/${subject.id}`}>
                         <Card className="h-full transition-colors hover:border-primary hover:bg-accent/40">
                           <CardContent className="space-y-1.5 pt-5">
                             <p className="text-sm font-medium">{subject.name}</p>
                             <p className="text-xs text-muted-foreground">{subject.classroomName}</p>
-                            {pendingCount > 0 && (
+                            {pendingCount !== null && pendingCount > 0 && (
                               <Badge variant="warning" className="mt-1">
                                 งานค้าง {pendingCount}
                               </Badge>
@@ -220,7 +282,7 @@ export function StudentDashboardPage() {
             onEntriesChanged={setCalendarEntries}
           />
 
-          <AttendanceGlanceCard attendance={attendance} />
+          <AttendanceGlanceCard loading={attendanceLoading} error={attendanceError} attendance={attendance} />
         </div>
       </div>
 
@@ -268,8 +330,18 @@ export function StudentDashboardPage() {
 
 /** Small at-a-glance attendance card for the RIGHT column — keeps the
  * previous dashboard's attendance visibility without a fourth top-level
- * stat card competing with the new "งานของฉัน" row. */
-function AttendanceGlanceCard({ attendance }: { attendance: MyAttendanceRecord[] }) {
+ * stat card competing with the new "งานของฉัน" row. Independent
+ * loading/error state — an attendance failure never affects subjects or
+ * assignments and vice versa. */
+function AttendanceGlanceCard({
+  loading,
+  error,
+  attendance,
+}: {
+  loading: boolean
+  error: string | null
+  attendance: MyAttendanceRecord[]
+}) {
   const total = attendance.length
   const present = attendance.filter((r) => r.status === 'present').length
   const rate = total > 0 ? (present / total) * 100 : null
@@ -280,8 +352,16 @@ function AttendanceGlanceCard({ attendance }: { attendance: MyAttendanceRecord[]
         <CardTitle className="text-base">การเข้าเรียน</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-2xl font-semibold">{rate !== null ? `${rate.toFixed(0)}%` : '-'}</p>
-        <p className="mt-1 text-xs text-muted-foreground">มา {present} / {total} ครั้ง</p>
+        {loading ? (
+          <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
+        ) : error ? (
+          <p className="text-sm text-destructive">{error}</p>
+        ) : (
+          <>
+            <p className="text-2xl font-semibold">{rate !== null ? `${rate.toFixed(0)}%` : '-'}</p>
+            <p className="mt-1 text-xs text-muted-foreground">มา {present} / {total} ครั้ง</p>
+          </>
+        )}
       </CardContent>
     </Card>
   )

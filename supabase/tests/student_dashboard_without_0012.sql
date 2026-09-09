@@ -79,12 +79,16 @@ delete from public.assignment_submissions where assignment_id in (
 );
 delete from public.assignments where title like 'TESTDASH:%';
 delete from public.attendance_records where attendance_session_id in (
-  select id from public.attendance_sessions where classroom_id = '00000000-00DA-0001-0000-000000000001'
+  select id from public.attendance_sessions
+  where classroom_id in ('00000000-00DA-0001-0000-000000000001', '00000000-00DB-0001-0000-000000000001')
 );
-delete from public.attendance_sessions where classroom_id = '00000000-00DA-0001-0000-000000000001';
-delete from public.subject_classrooms where subject_id = '00000000-00DA-0003-0000-000000000001';
+delete from public.attendance_sessions
+  where classroom_id in ('00000000-00DA-0001-0000-000000000001', '00000000-00DB-0001-0000-000000000001');
+delete from public.subject_classrooms
+  where subject_id in ('00000000-00DA-0003-0000-000000000001', '00000000-00DB-0003-0000-000000000001');
 delete from public.subjects where name like 'TESTDASH:%';
-delete from public.classroom_students where classroom_id = '00000000-00DA-0001-0000-000000000001';
+delete from public.classroom_students
+  where classroom_id in ('00000000-00DA-0001-0000-000000000001', '00000000-00DB-0001-0000-000000000001');
 delete from public.students where first_name like 'TESTDASH:%';
 delete from public.classrooms where name like 'TESTDASH:%';
 delete from public.profiles where display_name like 'TESTDASH:%';
@@ -130,6 +134,40 @@ insert into public.attendance_sessions (id, classroom_id, attendance_date, creat
   ('00000000-00DA-0005-0000-000000000001', '00000000-00DA-0001-0000-000000000001', current_date, '00000000-00DA-0000-0000-000000000001');
 insert into public.attendance_records (attendance_session_id, student_id, status) values
   ('00000000-00DA-0005-0000-000000000001', '00000000-00DA-0002-0000-000000000001', 'present');
+
+-- Second, completely unrelated teacher/classroom/subject/student ("Student
+-- B") for the cross-student/cross-teacher isolation tests below — a
+-- different teacher, a different classroom, never linked to Student A's
+-- classroom in any way.
+insert into auth.users (id, email) values
+  ('00000000-00DB-0000-0000-000000000001', 'testdash_teacher_b@example.com'),
+  ('00000000-00DB-0000-0000-000000000002', 'testdash_student_b@example.com');
+
+insert into public.profiles (id, display_name, email, role) values
+  ('00000000-00DB-0000-0000-000000000001', 'TESTDASH: Teacher B', 'testdash_teacher_b@example.com', 'teacher'),
+  ('00000000-00DB-0000-0000-000000000002', 'TESTDASH: Student B Profile', 'testdash_student_b@example.com', 'student');
+
+insert into public.classrooms (id, teacher_id, name) values
+  ('00000000-00DB-0001-0000-000000000001', '00000000-00DB-0000-0000-000000000001', 'TESTDASH: Classroom B');
+
+insert into public.students (id, first_name, last_name, student_code, linked_profile_id) values
+  ('00000000-00DB-0002-0000-000000000001', 'TESTDASH: StudentB', 'Two', 'SD-002', '00000000-00DB-0000-0000-000000000002');
+
+insert into public.classroom_students (classroom_id, student_id) values
+  ('00000000-00DB-0001-0000-000000000001', '00000000-00DB-0002-0000-000000000001');
+
+insert into public.subjects (id, teacher_id, name) values
+  ('00000000-00DB-0003-0000-000000000001', '00000000-00DB-0000-0000-000000000001', 'TESTDASH: Subject B');
+insert into public.subject_classrooms (subject_id, classroom_id) values
+  ('00000000-00DB-0003-0000-000000000001', '00000000-00DB-0001-0000-000000000001');
+
+insert into public.assignments (id, subject_id, classroom_id, title, created_by) values
+  ('00000000-00DB-0004-0000-000000000001', '00000000-00DB-0003-0000-000000000001', '00000000-00DB-0001-0000-000000000001', 'TESTDASH: Assignment B', '00000000-00DB-0000-0000-000000000001');
+
+insert into public.attendance_sessions (id, classroom_id, attendance_date, created_by) values
+  ('00000000-00DB-0005-0000-000000000001', '00000000-00DB-0001-0000-000000000001', current_date, '00000000-00DB-0000-0000-000000000001');
+insert into public.attendance_records (attendance_session_id, student_id, status) values
+  ('00000000-00DB-0005-0000-000000000001', '00000000-00DB-0002-0000-000000000001', 'present');
 
 -- ==================================================
 -- TEST 1: the ORIGINAL broken query shape genuinely fails here, exactly
@@ -290,6 +328,141 @@ begin
   raise notice 'TEST 6 passed: cross-role isolation unaffected by 0012 absence';
 end $$;
 
+-- ==================================================
+-- TEST 7: Student A cannot read Student B's data — subjects, assignments,
+-- attendance, or classroom — at all, in the exact reported migration
+-- state (0011 + 0013, no 0012). Every query getMySubjects/getMyAssignments/
+-- getMyAttendance actually performs, re-run as Student A and checked
+-- against Student B's rows specifically.
+-- ==================================================
+select set_test_user('00000000-00DA-0000-0000-000000000002');
+
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from public.subjects where id = '00000000-00DB-0003-0000-000000000001';
+  if v_count <> 0 then raise exception 'TEST 7a FAILED: Student A can see Student B''s subject'; end if;
+
+  select count(*) into v_count from public.assignments where id = '00000000-00DB-0004-0000-000000000001';
+  if v_count <> 0 then raise exception 'TEST 7b FAILED: Student A can see Student B''s assignment'; end if;
+
+  select count(*) into v_count from public.classrooms where id = '00000000-00DB-0001-0000-000000000001';
+  if v_count <> 0 then raise exception 'TEST 7c FAILED: Student A can see Student B''s classroom'; end if;
+
+  select count(*) into v_count from public.attendance_sessions where id = '00000000-00DB-0005-0000-000000000001';
+  if v_count <> 0 then raise exception 'TEST 7d FAILED: Student A can see Student B''s attendance session'; end if;
+
+  select count(*) into v_count from public.attendance_records where attendance_session_id = '00000000-00DB-0005-0000-000000000001';
+  if v_count <> 0 then raise exception 'TEST 7e FAILED: Student A can see Student B''s attendance record'; end if;
+
+  select count(*) into v_count from public.students where id = '00000000-00DB-0002-0000-000000000001';
+  if v_count <> 0 then raise exception 'TEST 7f FAILED: Student A can see Student B''s own students row'; end if;
+
+  raise notice 'TEST 7 passed: Student A cannot read any of Student B''s subjects/assignments/classroom/attendance/students rows';
+end $$;
+
+-- ==================================================
+-- TEST 8: no roster enumeration — a student can see only their OWN
+-- classroom_students membership row, never a classmate's, even within
+-- their OWN classroom (there is no classmate fixture here on purpose:
+-- this proves Student A's classroom_students result set has exactly the
+-- one row that is their own, not "every row in that classroom").
+-- ==================================================
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from public.classroom_students where classroom_id = '00000000-00DA-0001-0000-000000000001';
+  if v_count <> 1 then
+    raise exception 'TEST 8 FAILED: expected exactly 1 (own) classroom_students row, got %', v_count;
+  end if;
+  raise notice 'TEST 8 passed: no roster enumeration — exactly the caller''s own membership row, never a classroom-wide roster';
+end $$;
+
+-- ==================================================
+-- TEST 9: no teacher data leakage — a student cannot read a teacher's
+-- profile via any broad grant (profiles_select_my_teachers, the one
+-- policy that WOULD let a student read a teacher's profile row, is
+-- itself part of 0012 and therefore absent here) or any other table
+-- scoped to teacher_id.
+-- ==================================================
+do $$
+declare
+  v_count int;
+begin
+  select count(*) into v_count from public.profiles where id = '00000000-00DA-0000-0000-000000000001';
+  if v_count <> 0 then
+    raise exception 'TEST 9 FAILED: student can read the teacher''s profile row (0012''s profiles_select_my_teachers must not be active)';
+  end if;
+  raise notice 'TEST 9 passed: no teacher profile leakage without 0012';
+end $$;
+
+-- ==================================================
+-- TEST 10: no write access — a student cannot INSERT/UPDATE/DELETE any
+-- of subjects/assignments/classrooms/attendance_records/
+-- assignment_submissions/classroom_students. 0011 adds SELECT-only
+-- policies; deny-by-default (RLS enabled, no matching permissive policy)
+-- covers everything else.
+-- ==================================================
+-- For each of these, Postgres may express "denied" either as a raised
+-- insufficient_privilege exception OR (when RLS itself is what's
+-- blocking it, with ordinary table-level grants otherwise present) as
+-- the statement simply matching 0 rows with no error at all — deny by
+-- default (RLS enabled, no matching permissive policy) covers it either
+-- way, so both outcomes are checked explicitly via GET DIAGNOSTICS
+-- rather than assuming only one shape is a "pass".
+do $$
+declare
+  v_rows int;
+begin
+  begin
+    insert into public.assignments (subject_id, classroom_id, title)
+    values ('00000000-00DA-0003-0000-000000000001', '00000000-00DA-0001-0000-000000000001', 'TESTDASH: student-inserted');
+    raise exception 'TEST 10a FAILED: student inserted an assignment';
+  exception when insufficient_privilege then
+    raise notice 'TEST 10a passed: student cannot INSERT an assignment (insufficient_privilege)';
+  end;
+
+  update public.attendance_records set status = 'absent' where attendance_session_id = '00000000-00DA-0005-0000-000000000001';
+  get diagnostics v_rows = row_count;
+  if v_rows <> 0 then
+    raise exception 'TEST 10b FAILED: student UPDATE on attendance_records affected % row(s)', v_rows;
+  end if;
+  raise notice 'TEST 10b passed: student UPDATE on attendance_records affected 0 rows';
+
+  delete from public.classroom_students where classroom_id = '00000000-00DA-0001-0000-000000000001';
+  get diagnostics v_rows = row_count;
+  if v_rows <> 0 then
+    raise exception 'TEST 10c FAILED: student DELETE on classroom_students affected % row(s)', v_rows;
+  end if;
+  raise notice 'TEST 10c passed: student DELETE on classroom_students affected 0 rows';
+exception
+  when insufficient_privilege then
+    raise notice 'TEST 10b/10c passed: denied with insufficient_privilege';
+end $$;
+
+-- Independently re-read both rows as the student to confirm they are
+-- genuinely unchanged/still present after the denied attempts above —
+-- the authoritative check, regardless of which shape the denial took.
+do $$
+declare
+  v_status text;
+  v_membership_count int;
+begin
+  select status into v_status from public.attendance_records where attendance_session_id = '00000000-00DA-0005-0000-000000000001';
+  if v_status <> 'present' then
+    raise exception 'TEST 10d FAILED: attendance record was actually modified by the student (status = %)', v_status;
+  end if;
+
+  select count(*) into v_membership_count from public.classroom_students where classroom_id = '00000000-00DA-0001-0000-000000000001';
+  if v_membership_count <> 1 then
+    raise exception 'TEST 10d FAILED: classroom_students row was actually deleted by the student';
+  end if;
+
+  raise notice 'TEST 10d passed: both rows genuinely unchanged after the denied UPDATE/DELETE attempts';
+end $$;
+
 reset role;
 
 -- ==================================================
@@ -302,12 +475,16 @@ delete from public.assignment_submissions where assignment_id in (
 );
 delete from public.assignments where title like 'TESTDASH:%';
 delete from public.attendance_records where attendance_session_id in (
-  select id from public.attendance_sessions where classroom_id = '00000000-00DA-0001-0000-000000000001'
+  select id from public.attendance_sessions
+  where classroom_id in ('00000000-00DA-0001-0000-000000000001', '00000000-00DB-0001-0000-000000000001')
 );
-delete from public.attendance_sessions where classroom_id = '00000000-00DA-0001-0000-000000000001';
-delete from public.subject_classrooms where subject_id = '00000000-00DA-0003-0000-000000000001';
+delete from public.attendance_sessions
+  where classroom_id in ('00000000-00DA-0001-0000-000000000001', '00000000-00DB-0001-0000-000000000001');
+delete from public.subject_classrooms
+  where subject_id in ('00000000-00DA-0003-0000-000000000001', '00000000-00DB-0003-0000-000000000001');
 delete from public.subjects where name like 'TESTDASH:%';
-delete from public.classroom_students where classroom_id = '00000000-00DA-0001-0000-000000000001';
+delete from public.classroom_students
+  where classroom_id in ('00000000-00DA-0001-0000-000000000001', '00000000-00DB-0001-0000-000000000001');
 delete from public.students where first_name like 'TESTDASH:%';
 delete from public.classrooms where name like 'TESTDASH:%';
 delete from public.profiles where display_name like 'TESTDASH:%';

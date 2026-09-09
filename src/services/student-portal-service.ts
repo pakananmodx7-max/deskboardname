@@ -39,21 +39,34 @@ import type {
 
 const UNDEFINED_COLUMN = '42703'
 const UNDEFINED_TABLE = '42P01'
+// PostgREST's OWN error codes (not raw Postgres SQLSTATEs) for "this
+// column/table isn't in my schema cache" — PostgREST can reject a
+// request with one of these BEFORE the query ever reaches Postgres, if
+// its cached schema hasn't picked up a just-applied migration yet (a
+// real, separate failure mode from the raw 42703/42P01 above, e.g. right
+// after a migration is applied through the SQL editor rather than
+// Supabase's own migration tooling, before a schema-cache reload fires).
+const POSTGREST_MISSING_COLUMN = 'PGRST204'
+const POSTGREST_MISSING_TABLE = 'PGRST205'
 
 /** True for the exact Postgres error raised when a SELECT names a column
  * that doesn't exist yet on this database — specifically
- * students.avatar_path before 0012 is applied. Pure so the fallback
- * trigger condition is unit-tested without a live Supabase call. */
+ * students.avatar_path before 0012 is applied — OR for PostgREST's own
+ * schema-cache equivalent (PGRST204). Pure so the fallback trigger
+ * condition is unit-tested without a live Supabase call. */
 export function isMissingOptionalColumnError(error: unknown): boolean {
-  return (error as { code?: string } | null)?.code === UNDEFINED_COLUMN
+  const code = (error as { code?: string } | null)?.code
+  return code === UNDEFINED_COLUMN || code === POSTGREST_MISSING_COLUMN
 }
 
 /** True for the exact Postgres error raised when a query names a table
  * that doesn't exist yet — student_calendar_entries or
- * teacher_student_notifications before 0012 is applied. Pure, same
+ * teacher_student_notifications before 0012 is applied — OR for
+ * PostgREST's own schema-cache equivalent (PGRST205). Pure, same
  * reasoning as isMissingOptionalColumnError above. */
 export function isOptionalTableMissingError(error: unknown): boolean {
-  return (error as { code?: string } | null)?.code === UNDEFINED_TABLE
+  const code = (error as { code?: string } | null)?.code
+  return code === UNDEFINED_TABLE || code === POSTGREST_MISSING_TABLE
 }
 
 interface StudentRow {
