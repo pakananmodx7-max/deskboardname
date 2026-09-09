@@ -6,6 +6,8 @@ import {
   countUnreadNotifications,
   filterMyAssignments,
   getPendingAssignments,
+  isMissingOptionalColumnError,
+  isOptionalTableMissingError,
   mergeCalendarItems,
   summarizeMyAttendance,
   summarizeMyTodo,
@@ -220,5 +222,46 @@ describe('validateAvatarFile', () => {
 
   it('rejects a file over 2MB', () => {
     expect(validateAvatarFile({ type: 'image/jpeg', size: 2 * 1024 * 1024 + 1 })).toMatch(/2MB/)
+  })
+})
+
+// ==================================================
+// PRODUCTION BUG regression — 0012 (student_calendar_entries,
+// teacher_student_notifications, students.avatar_path) is written but
+// NOT applied to production. getMyStudentProfile/getMyCalendarEntries/
+// getMyNotifications must degrade gracefully instead of throwing, since
+// getMyStudentProfile in particular gates StudentLayout — every single
+// /student/* route — and previously blanked the ENTIRE student portal
+// the moment its SELECT named the not-yet-existing avatar_path column.
+// ==================================================
+
+describe('isMissingOptionalColumnError — the exact Postgres "undefined_column" error (42703)', () => {
+  it('is true for a real undefined_column error, e.g. selecting students.avatar_path before 0012 is applied', () => {
+    expect(isMissingOptionalColumnError({ code: '42703', message: 'column students.avatar_path does not exist' })).toBe(true)
+  })
+
+  it('is false for an unrelated error code', () => {
+    expect(isMissingOptionalColumnError({ code: '42501', message: 'permission denied' })).toBe(false)
+  })
+
+  it('is false for null/undefined/a non-error value (never throws itself)', () => {
+    expect(isMissingOptionalColumnError(null)).toBe(false)
+    expect(isMissingOptionalColumnError(undefined)).toBe(false)
+    expect(isMissingOptionalColumnError('not an error object')).toBe(false)
+  })
+})
+
+describe('isOptionalTableMissingError — the exact Postgres "undefined_table" error (42P01)', () => {
+  it('is true for a real undefined_table error, e.g. querying student_calendar_entries/teacher_student_notifications before 0012 is applied', () => {
+    expect(isOptionalTableMissingError({ code: '42P01', message: 'relation "student_calendar_entries" does not exist' })).toBe(true)
+  })
+
+  it('is false for an unrelated error code', () => {
+    expect(isOptionalTableMissingError({ code: '42703', message: 'column does not exist' })).toBe(false)
+  })
+
+  it('is false for null/undefined/a non-error value', () => {
+    expect(isOptionalTableMissingError(null)).toBe(false)
+    expect(isOptionalTableMissingError(undefined)).toBe(false)
   })
 })

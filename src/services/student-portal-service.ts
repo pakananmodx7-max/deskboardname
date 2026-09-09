@@ -22,7 +22,39 @@ import type {
  * parameter to forge in the first place. This mirrors the exact
  * "identity must always derive from auth.uid(), never from the browser"
  * requirement the Student Portal was built to.
+ *
+ * OPTIONAL SCHEMA (0012) — student_calendar_entries,
+ * teacher_student_notifications, and students.avatar_path all come from
+ * 0012_student_calendar_notifications.sql, which is written but NOT YET
+ * APPLIED to production (Calendar/Notifications/Avatar were paused
+ * mid-build). Every function that touches one of those three MUST
+ * degrade gracefully — never throw — when the underlying column/table
+ * doesn't exist yet, via isMissingOptionalColumnError/
+ * isOptionalTableMissingError below, so the rest of the student portal
+ * (identity, subjects, assignments, attendance, grades — none of which
+ * depend on 0012 at all) keeps working normally regardless of whether
+ * 0012 has been applied. See docs/DATABASE.md's Phase 15/0012 sections
+ * for the full feature scope this gates.
  */
+
+const UNDEFINED_COLUMN = '42703'
+const UNDEFINED_TABLE = '42P01'
+
+/** True for the exact Postgres error raised when a SELECT names a column
+ * that doesn't exist yet on this database — specifically
+ * students.avatar_path before 0012 is applied. Pure so the fallback
+ * trigger condition is unit-tested without a live Supabase call. */
+export function isMissingOptionalColumnError(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === UNDEFINED_COLUMN
+}
+
+/** True for the exact Postgres error raised when a query names a table
+ * that doesn't exist yet — student_calendar_entries or
+ * teacher_student_notifications before 0012 is applied. Pure, same
+ * reasoning as isMissingOptionalColumnError above. */
+export function isOptionalTableMissingError(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === UNDEFINED_TABLE
+}
 
 interface StudentRow {
   id: string
@@ -93,18 +125,46 @@ interface AttendanceRecordRow {
  * StudentProtectedRoute/the pending-status flow is what routes an
  * unapproved account away from the portal before this is ever called,
  * but this function stays defensive on its own regardless.
+ *
+ * This is THE gate StudentLayout calls before rendering any /student/*
+ * page — so avatar_path (0012, possibly not applied yet) must never make
+ * this whole function fail. If the primary select is rejected because
+ * that column doesn't exist yet, it retries without it and returns
+ * avatarPath: null (the same value an approved student who simply hasn't
+ * uploaded an avatar yet would get once 0012 IS applied) — every other
+ * field is completely unaffected either way.
  */
 export async function getMyStudentProfile(): Promise<MyStudentProfile | null> {
   const supabase = getSupabaseClient()
-  const { data, error } = await supabase
+  const primary = await supabase
     .from('students')
     .select('id, student_code, number, first_name, last_name, nickname, avatar_path')
     .maybeSingle()
 
-  if (error) throw error
-  if (!data) return null
+  if (primary.error && isMissingOptionalColumnError(primary.error)) {
+    const fallback = await supabase
+      .from('students')
+      .select('id, student_code, number, first_name, last_name, nickname')
+      .maybeSingle()
+    if (fallback.error) throw fallback.error
+    if (!fallback.data) return null
 
-  const row = data as StudentRow
+    const row = fallback.data as Omit<StudentRow, 'avatar_path'>
+    return {
+      id: row.id,
+      studentCode: row.student_code,
+      number: row.number,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      nickname: row.nickname,
+      avatarPath: null,
+    }
+  }
+
+  if (primary.error) throw primary.error
+  if (!primary.data) return null
+
+  const row = primary.data as StudentRow
   return {
     id: row.id,
     studentCode: row.student_code,
@@ -464,6 +524,14 @@ function mapCalendarEntry(row: CalendarEntryRow): MyCalendarEntry {
   }
 }
 
+/**
+ * Returns an empty list, never throws, when student_calendar_entries
+ * doesn't exist yet (0012 not applied) — the calendar widget then reads
+ * as "no notes yet" (inert) rather than a scary error card, matching
+ * "optional/inactive until 0012 is deliberately enabled." A real error
+ * once 0012 IS applied (a genuine RLS/network failure) still throws
+ * normally, surfaced by the widget's own error state.
+ */
 export async function getMyCalendarEntries(): Promise<MyCalendarEntry[]> {
   const supabase = getSupabaseClient()
   const { data, error } = await supabase
@@ -471,7 +539,10 @@ export async function getMyCalendarEntries(): Promise<MyCalendarEntry[]> {
     .select('id, title, note, event_date, event_time, created_at, updated_at')
     .order('event_date', { ascending: true })
 
-  if (error) throw error
+  if (error) {
+    if (isOptionalTableMissingError(error)) return []
+    throw error
+  }
   return (data as CalendarEntryRow[]).map(mapCalendarEntry)
 }
 
@@ -595,7 +666,14 @@ export async function getMyNotifications(): Promise<MyNotification[]> {
     .from('teacher_student_notifications')
     .select('id, teacher_id, title, message, read_at, created_at')
     .order('created_at', { ascending: false })
-  if (error) throw error
+  if (error) {
+    // teacher_student_notifications doesn't exist yet (0012 not
+    // applied) — the bell/dashboard "ข้อความจากครู" widget then reads as
+    // "no messages yet" (inert) rather than a scary error, same
+    // reasoning as getMyCalendarEntries above.
+    if (isOptionalTableMissingError(error)) return []
+    throw error
+  }
 
   const rows = data as NotificationRow[]
   const teacherIds = [...new Set(rows.map((r) => r.teacher_id))]
