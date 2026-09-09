@@ -10,10 +10,17 @@ interface QuickAction {
   to: string
 }
 
+// เช็คชื่อ/เพิ่มคะแนน/เพิ่มงาน all point at /teacher/subjects, NOT the old
+// classroom-less /teacher/attendance, /teacher/grades, /teacher/assignments
+// routes (those now just redirect here anyway — see attendance-redirect-page,
+// grades-redirect-page, assignments-redirect-page) — attendance/grades/
+// assignments are only ever taken from a specific subject+classroom's
+// เช็คชื่อ/คะแนน/งาน tab, so this sends the teacher straight to the real
+// entry point instead of bouncing through a deprecated redirect page first.
 const actions: QuickAction[] = [
-  { label: 'เช็คชื่อ', icon: CalendarCheck, to: '/teacher/attendance' },
-  { label: 'เพิ่มคะแนน', icon: Plus, to: '/teacher/grades' },
-  { label: 'เพิ่มงาน', icon: FileUp, to: '/teacher/assignments' },
+  { label: 'เช็คชื่อ', icon: CalendarCheck, to: '/teacher/subjects' },
+  { label: 'เพิ่มคะแนน', icon: Plus, to: '/teacher/subjects' },
+  { label: 'เพิ่มงาน', icon: FileUp, to: '/teacher/subjects' },
   { label: 'สร้างรายงาน', icon: Sparkles, to: '/teacher/reports' },
   { label: 'Import นักเรียน', icon: Upload, to: '/teacher/students' },
 ]

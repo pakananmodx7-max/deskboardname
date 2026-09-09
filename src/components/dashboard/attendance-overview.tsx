@@ -22,7 +22,10 @@ export function AttendanceOverview({ attendance }: AttendanceOverviewProps) {
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">ภาพรวมการเข้าเรียนวันนี้</CardTitle>
-        <Button size="sm" onClick={() => navigate('/teacher/attendance')}>
+        {/* /teacher/subjects, not the old classroom-less /teacher/attendance
+            route — attendance is only ever taken from a specific
+            subject+classroom's เช็คชื่อ tab. */}
+        <Button size="sm" onClick={() => navigate('/teacher/subjects')}>
           เช็คชื่อ
         </Button>
       </CardHeader>

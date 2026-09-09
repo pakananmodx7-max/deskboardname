@@ -1874,3 +1874,101 @@ migration was skipped that should have run.
   correctly with the existing, already-tested `deriveAttendanceRoster`),
   and the legitimate "0 students" case kept distinct from the bug's "0
   students because a request failed" case.
+
+# Phase 14: Teacher navigation consolidation — one entry point per workflow
+
+## What changed (UI/routing only — no schema, no RLS, no migration)
+
+`/teacher/attendance` was the last standalone, classroom-less top-level
+page — `/teacher/assignments` and `/teacher/grades` were already
+redirect-only as of Phase 8/9. It now gets the identical treatment:
+
+- **`src/components/layout/nav-items.ts`** — "Attendance" removed from
+  the sidebar. Final sidebar (9 items): Dashboard, ห้องเรียน, Students,
+  Subjects, คำขอเชื่อมบัญชีนักเรียน, Reports, AI Assistant, Integrations,
+  Settings.
+- **`src/pages/teacher/attendance/attendance-redirect-page.tsx`** (new) —
+  same shape as `assignments-redirect-page.tsx`/`grades-redirect-page.tsx`:
+  catches anyone with the old `/teacher/attendance` URL bookmarked and
+  points them at `/teacher/subjects` → เช็คชื่อ tab. `attendance-page.tsx`
+  and its `-real`/`-demo` implementations are left in place, unreferenced
+  from the router — same treatment already given to the old
+  `assignments-page.tsx`/`grades-page.tsx`. Nothing about
+  `attendance_sessions`/`attendance_records`/`save_attendance_session`/
+  `attendance-service.ts` changes; the เช็คชื่อ tab already runs on the
+  exact same backend.
+- **`src/components/dashboard/quick-actions.tsx`** and
+  **`attendance-overview.tsx`** — their เช็คชื่อ/เพิ่มคะแนน/เพิ่มงาน
+  shortcuts now link straight to `/teacher/subjects` instead of the
+  deprecated `/teacher/attendance`/`/teacher/grades`/`/teacher/assignments`
+  routes, so a Dashboard click no longer bounces through a redirect page
+  first.
+
+## Duplication audit — findings
+
+- **Classroom roster (`classroom-students-tab.tsx`) vs. global Students
+  page**: both call the exact same `student-service.ts` mutations
+  (`updateStudent`, `archiveStudent`, `removeStudentFromClassroom`,
+  `moveStudentToClassroom`) — no duplicated mutation logic anywhere.
+  Intentional overlap: one is "all of this teacher's students," the
+  other is "this classroom's roster," and both need to edit/move/archive
+  from wherever the teacher happens to be looking at a student.
+- **Subject workspace's นักเรียน tab (`subjects-real/tabs/students-tab.tsx`)
+  vs. global Students**: read-only (view a student in a drawer, no
+  add/edit/move/archive at all) — reads via the same
+  `getStudentsByClassroom`, no separate roster table, no duplicated
+  mutation path. Legitimate, narrower "who's in this classroom, in the
+  context of this subject" view.
+- **Dashboard quick actions** — was the one real duplicate-*route*
+  problem (see above); fixed by repointing at `/teacher/subjects`
+  directly. The three labeled shortcuts (เช็คชื่อ/เพิ่มคะแนน/เพิ่มงาน) do
+  still land on the same Subjects hub — an intentional, accepted overlap
+  now that none of the three have their own classroom-less landing page
+  to go to; Subjects has no way to jump straight into a specific tab
+  from a URL param today, so this is as consolidated as it gets without
+  adding new functionality this task didn't ask for.
+- **Old demo routes**: none exist — every real/demo split happens
+  *inside* a single route's page component via `dataMode`
+  (`attendance-page.tsx`, `subjects-page.tsx`, etc.), never as a
+  separate `/demo/...` URL. Nothing to consolidate here.
+- **Legacy flat pages** (`assignments-page.tsx`, `grades-page.tsx`,
+  `attendance-page.tsx` + its demo/real children): all confirmed
+  unreferenced from `router.tsx` (grep-verified); left in place per
+  standing "don't delete, just stop linking to it" policy, since their
+  demo data plumbing is still reused by the classroom-scoped tabs that
+  replaced them.
+- **Reports page**: no links to any of the three deprecated routes.
+
+## Current data scope (verified against the schema/services, not just the UI)
+
+- **Attendance**: `attendance_sessions`/`attendance_records`, scoped to
+  **classroom + date**, with an *optional* subject_id + period_number —
+  `subject_id is null` is the classroom-level homeroom session (what the
+  now-removed standalone page wrote); a non-null `subject_id` is a
+  subject-period session (what the เช็คชื่อ tab writes). Same table,
+  same RPC (`save_attendance_session`), disambiguated by three partial
+  unique indexes (0004/0005) — never two different tables.
+- **Assignments**: `assignments`/`assignment_submissions`, scoped to
+  **subject + classroom** (`subject_classrooms`-linked) — an assignment
+  has no meaning outside a specific subject taught to a specific
+  classroom (0006).
+- **Grades**: not a stored table — a **derived view** computed live from
+  `assignments` + `assignment_submissions` for one subject + classroom
+  (0006/0007's Grades work), scoped identically to Assignments since
+  it's read from the same rows.
+- **Students**: `students` is the **global registry** (one row per
+  student, independent of any classroom); `classroom_students` is the
+  **membership** join (which classroom(s) a student currently belongs
+  to). The global Students page and every classroom/subject roster view
+  all read through this same pair of tables — there is only ever one
+  student record per person, never a per-classroom copy.
+
+## Is a migration required?
+
+**No.** This phase changed zero SQL — no table, no RLS policy, no RPC.
+Every fix was routing (`router.tsx`), sidebar (`nav-items.ts`), or a
+dashboard shortcut's target URL. `docs/DATABASE.md`'s own standing rule
+("do not merge tables merely because menus are consolidated") was
+followed by construction: Attendance/Assignments/Grades keep their
+existing, already-correct data scopes exactly as documented in Phases
+5/6/8/9 — only their *sidebar entry point* changed.

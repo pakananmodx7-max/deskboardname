@@ -2,7 +2,6 @@ import {
   BarChart3,
   BookOpen,
   Bot,
-  CalendarCheck,
   LayoutDashboard,
   Plug,
   School,
@@ -19,20 +18,19 @@ export interface NavItem {
 }
 
 /**
- * No top-level "Assignments" or "Grades" item on purpose — both always
- * belong to a specific subject + classroom (never a standalone,
- * classroom-less concept), so they're managed from inside
- * /teacher/subjects/:subjectId/classrooms/:classroomId's งาน and คะแนน
- * tabs, not from their own sidebar destinations. See
- * /teacher/assignments and /teacher/grades in router.tsx for what
- * happens to the old direct URLs.
+ * No top-level "Attendance", "Assignments", or "Grades" item on
+ * purpose — all three always belong to a specific subject + classroom
+ * (never a standalone, classroom-less concept), so they're managed from
+ * inside /teacher/subjects/:subjectId/classrooms/:classroomId's เช็คชื่อ,
+ * งาน, and คะแนน tabs, not from their own sidebar destinations. See
+ * /teacher/attendance, /teacher/assignments, and /teacher/grades in
+ * router.tsx for what happens to the old direct URLs.
  */
 export const navItems: NavItem[] = [
   { label: 'Dashboard', to: '/teacher/dashboard', icon: LayoutDashboard },
   { label: 'ห้องเรียน', to: '/teacher/classrooms', icon: School },
   { label: 'Students', to: '/teacher/students', icon: Users },
   { label: 'Subjects', to: '/teacher/subjects', icon: BookOpen },
-  { label: 'Attendance', to: '/teacher/attendance', icon: CalendarCheck },
   { label: 'คำขอเชื่อมบัญชีนักเรียน', to: '/teacher/student-link-requests', icon: UserCheck },
   { label: 'Reports', to: '/teacher/reports', icon: BarChart3 },
   { label: 'AI Assistant', to: '/teacher/ai', icon: Bot },

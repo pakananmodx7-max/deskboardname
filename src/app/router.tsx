@@ -15,7 +15,7 @@ import { StudentPendingPage } from '@/pages/student/pending-page'
 import { StudentSignupPage } from '@/pages/student/signup-page'
 import { AiPage } from '@/pages/teacher/ai/ai-page'
 import { AssignmentsRedirectPage } from '@/pages/teacher/assignments/assignments-redirect-page'
-import { AttendancePage } from '@/pages/teacher/attendance/attendance-page'
+import { AttendanceRedirectPage } from '@/pages/teacher/attendance/attendance-redirect-page'
 import { ClassroomDetailPage } from '@/pages/teacher/classrooms/classroom-detail-page'
 import { ClassroomsPage } from '@/pages/teacher/classrooms/classrooms-page'
 import { DashboardPage } from '@/pages/teacher/dashboard/dashboard-page'
@@ -80,7 +80,7 @@ const router = createBrowserRouter([
         path: 'subjects/:subjectId/classrooms/:classroomId/assignments/:assignmentId',
         element: <SubjectClassroomAssignmentDetailPage />,
       },
-      { path: 'attendance', element: <AttendancePage /> },
+      { path: 'attendance', element: <AttendanceRedirectPage /> },
       { path: 'assignments', element: <AssignmentsRedirectPage /> },
       { path: 'grades', element: <GradesRedirectPage /> },
       { path: 'student-link-requests', element: <StudentLinkRequestsPage /> },
