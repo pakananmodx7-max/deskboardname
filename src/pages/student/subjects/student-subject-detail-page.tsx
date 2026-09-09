@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
@@ -48,66 +48,135 @@ function formatDate(date: string): string {
 }
 
 /**
- * /student/subjects/:subjectId — everything here is scoped to exactly
- * this subject AND the caller's own data (RLS already guarantees the
- * latter; the classroom filter below narrows a subject linked to more
- * than one of the student's classrooms, which practically never
- * happens but is handled correctly regardless). No classroom roster, no
- * classmates, no other student's assignment/attendance/grade — only
- * ever this student's own rows.
+ * /student/subjects/:subjectId — the Subject Workspace, the ONE academic
+ * hub a student uses (there is no separate flat "งานของฉัน" page anymore
+ * — see student-nav-items.ts). Everything here is scoped to exactly this
+ * subject AND the caller's own data (RLS already guarantees the latter).
+ * No classroom roster, no classmates, no other student's assignment/
+ * attendance/grade — only ever this student's own rows.
+ *
+ * PAGE ERROR ISOLATION: identity (which subject this is), assignments
+ * (which also drives "งาน" and "คะแนน" — there is no separate grades
+ * query; a grade is always score/max_score read straight off the same
+ * assignment_submissions-derived MyAssignment row, via computeMyGrades),
+ * and attendance each load and fail INDEPENDENTLY, each with its own
+ * loading/error state. A failure in one never blanks the others: if
+ * attendance fails, ภาพรวม/งาน/คะแนน still render (the overview's
+ * attendance stat shows its own inline error instead of a fabricated
+ * "0%"); if assignments fails, ภาพรวม's other stats and การเข้าเรียน
+ * still render. A resource-count fetch failure (0013) never blocks
+ * assignment info either — resourceCounts always falls back to an empty
+ * map on error (see the .catch below), so "no resources" and "resource
+ * lookup failed" both simply render as "no toggle shown", never a
+ * blocked assignment row. A real zero is never confused with a failed
+ * query: every section below checks its own `xError` first and shows
+ * that, rather than silently treating a caught error as empty data.
  */
 export function StudentSubjectDetailPage() {
   const { subjectId } = useParams<{ subjectId: string }>()
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
 
   const [subject, setSubject] = useState<MySubject | null | undefined>(undefined)
+  const [subjectLoading, setSubjectLoading] = useState(true)
+  const [subjectError, setSubjectError] = useState<string | null>(null)
+
   const [assignments, setAssignments] = useState<MyAssignment[]>([])
   const [resourceCounts, setResourceCounts] = useState<Record<string, number>>({})
+  const [assignmentsLoading, setAssignmentsLoading] = useState(true)
+  const [assignmentsError, setAssignmentsError] = useState<string | null>(null)
+
   const [attendance, setAttendance] = useState<MyAttendanceRecord[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [attendanceLoading, setAttendanceLoading] = useState(true)
+  const [attendanceError, setAttendanceError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!subjectId) return
     let active = true
-    setLoading(true)
-    setError(null)
-
+    setSubjectLoading(true)
+    setSubjectError(null)
     getMySubjects()
-      .then(async (subjects) => {
-        if (!active) return
-        const found = subjects.find((s) => s.id === subjectId) ?? null
-        setSubject(found)
-        if (!found) return
-
-        const [assignmentRows, attendanceRows] = await Promise.all([
-          getMyAssignments(found.id, found.classroomId),
-          getMyAttendance(found.id, found.classroomId),
-        ])
-        if (!active) return
-        setAssignments(assignmentRows)
-        setAttendance(attendanceRows)
-
-        const counts = await getResourceCounts(assignmentRows.map((a) => a.id)).catch(() => ({}))
-        if (active) setResourceCounts(counts)
+      .then((subjects) => {
+        if (active) setSubject(subjects.find((s) => s.id === subjectId) ?? null)
       })
       .catch((err: unknown) => {
-        if (active) setError(toFriendlyErrorMessage(err))
+        if (active) setSubjectError(toFriendlyErrorMessage(err))
       })
       .finally(() => {
-        if (active) setLoading(false)
+        if (active) setSubjectLoading(false)
       })
-
     return () => {
       active = false
     }
   }, [subjectId])
 
+  const loadAssignments = useCallback(
+    (classroomId: string) => {
+      if (!subjectId) return undefined
+      let active = true
+      setAssignmentsLoading(true)
+      setAssignmentsError(null)
+      getMyAssignments(subjectId, classroomId)
+        .then(async (rows) => {
+          if (!active) return
+          setAssignments(rows)
+          // Best-effort enrichment only — a resource-count lookup failure
+          // must never block the assignment rows themselves from
+          // rendering, so it always falls back to an empty map rather
+          // than propagating into assignmentsError.
+          const counts = await getResourceCounts(rows.map((a) => a.id)).catch(() => ({}))
+          if (active) setResourceCounts(counts)
+        })
+        .catch((err: unknown) => {
+          if (active) setAssignmentsError(toFriendlyErrorMessage(err))
+        })
+        .finally(() => {
+          if (active) setAssignmentsLoading(false)
+        })
+      return () => {
+        active = false
+      }
+    },
+    [subjectId],
+  )
+
+  const loadAttendance = useCallback(
+    (classroomId: string) => {
+      if (!subjectId) return undefined
+      let active = true
+      setAttendanceLoading(true)
+      setAttendanceError(null)
+      getMyAttendance(subjectId, classroomId)
+        .then((rows) => {
+          if (active) setAttendance(rows)
+        })
+        .catch((err: unknown) => {
+          if (active) setAttendanceError(toFriendlyErrorMessage(err))
+        })
+        .finally(() => {
+          if (active) setAttendanceLoading(false)
+        })
+      return () => {
+        active = false
+      }
+    },
+    [subjectId],
+  )
+
+  useEffect(() => {
+    if (!subject) return
+    const cleanupAssignments = loadAssignments(subject.classroomId)
+    const cleanupAttendance = loadAttendance(subject.classroomId)
+    return () => {
+      cleanupAssignments?.()
+      cleanupAttendance?.()
+    }
+  }, [subject, loadAssignments, loadAttendance])
+
   if (!subjectId) return <Navigate to="/student/subjects" replace />
-  if (subject === undefined || loading) {
+  if (subject === undefined || subjectLoading) {
     return <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
   }
-  if (error) return <p className="text-sm text-destructive">{error}</p>
+  if (subjectError) return <p className="text-sm text-destructive">{subjectError}</p>
   if (subject === null) return <Navigate to="/student/subjects" replace />
 
   const attendanceSummary = summarizeMyAttendance(attendance)
@@ -125,6 +194,10 @@ export function StudentSubjectDetailPage() {
             {subject.classroomName}
             {subject.subjectCode ? ` · ${subject.subjectCode}` : ''}
           </p>
+          {/* No teacher name here: a student has no RLS-granted read
+              access to a teacher's profile row without 0012's
+              profiles_select_my_teachers policy (not applied). Never
+              fabricated — simply omitted until that's securely available. */}
         </div>
 
         <div className="flex gap-1 overflow-x-auto">
@@ -148,31 +221,47 @@ export function StudentSubjectDetailPage() {
 
       {activeTab === 'overview' && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="งานที่ยังไม่ส่ง" value={`${pendingCount} งาน`} icon={ClipboardList} />
+          <StatCard
+            label="งานที่ยังไม่ส่ง"
+            value={assignmentsLoading ? '-' : assignmentsError ? 'ผิดพลาด' : `${pendingCount} งาน`}
+            icon={ClipboardList}
+          />
           <StatCard
             label="การเข้าเรียน"
-            value={attendanceRate !== null ? `${attendanceRate.toFixed(0)}%` : '-'}
-            helperText={`มา ${attendanceSummary.present} / ${attendanceSummary.total} ครั้ง`}
+            value={attendanceLoading ? '-' : attendanceError ? 'ผิดพลาด' : attendanceRate !== null ? `${attendanceRate.toFixed(0)}%` : '-'}
+            helperText={attendanceError ?? (attendanceLoading ? undefined : `มา ${attendanceSummary.present} / ${attendanceSummary.total} ครั้ง`)}
             icon={CalendarCheck}
           />
           <StatCard
             label="คะแนนรวม"
             value={
-              subjectGrade !== undefined && subjectGrade.percentage !== null
-                ? `${subjectGrade.percentage.toFixed(0)}%`
-                : '-'
+              assignmentsLoading
+                ? '-'
+                : assignmentsError
+                  ? 'ผิดพลาด'
+                  : subjectGrade !== undefined && subjectGrade.percentage !== null
+                    ? `${subjectGrade.percentage.toFixed(0)}%`
+                    : '-'
             }
-            helperText={subjectGrade ? `${subjectGrade.earned} / ${subjectGrade.possible} คะแนน` : undefined}
+            helperText={subjectGrade && !assignmentsError ? `${subjectGrade.earned} / ${subjectGrade.possible} คะแนน` : undefined}
             icon={GraduationCap}
           />
-          <StatCard label="งานทั้งหมด" value={`${assignments.length} งาน`} icon={BookOpen} />
+          <StatCard
+            label="งานทั้งหมด"
+            value={assignmentsLoading ? '-' : assignmentsError ? 'ผิดพลาด' : `${assignments.length} งาน`}
+            icon={BookOpen}
+          />
         </div>
       )}
 
       {activeTab === 'assignments' && (
         <Card>
           <CardContent className="p-0">
-            {assignments.length === 0 ? (
+            {assignmentsLoading ? (
+              <p className="px-5 py-6 text-center text-sm text-muted-foreground">กำลังโหลด...</p>
+            ) : assignmentsError ? (
+              <p className="px-5 py-6 text-center text-sm text-destructive">{assignmentsError}</p>
+            ) : assignments.length === 0 ? (
               <p className="px-5 py-6 text-center text-sm text-muted-foreground">ยังไม่มีงานในวิชานี้</p>
             ) : (
               <div className="divide-y divide-border">
@@ -181,12 +270,13 @@ export function StudentSubjectDetailPage() {
                     <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{a.title}</p>
+                        {a.description && <p className="mt-0.5 truncate text-xs text-muted-foreground">{a.description}</p>}
                         <p className="text-xs text-muted-foreground">
                           กำหนดส่ง {a.dueDate ? formatDate(a.dueDate) : 'ไม่มีกำหนดส่ง'}
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        {a.score !== null && <span className="text-xs text-muted-foreground">{a.score}/{a.maxScore}</span>}
+                        <span className="text-xs text-muted-foreground">{a.score !== null ? `${a.score}/${a.maxScore}` : `-/${a.maxScore}`}</span>
                         <Badge variant={a.status === 'submitted' ? 'success' : a.status === 'not_submitted' ? 'outline' : 'warning'}>
                           {SUBMISSION_STATUS_LABEL[a.status] ?? a.status}
                         </Badge>
@@ -207,7 +297,11 @@ export function StudentSubjectDetailPage() {
             <CardTitle className="text-base">คะแนน</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!subjectGrade || subjectGrade.assignments.length === 0 ? (
+            {assignmentsLoading ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">กำลังโหลด...</p>
+            ) : assignmentsError ? (
+              <p className="py-6 text-center text-sm text-destructive">{assignmentsError}</p>
+            ) : !subjectGrade || subjectGrade.assignments.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">ยังไม่มีคะแนนในวิชานี้</p>
             ) : (
               <>
@@ -237,7 +331,11 @@ export function StudentSubjectDetailPage() {
       {activeTab === 'attendance' && (
         <Card>
           <CardContent className="p-0">
-            {attendance.length === 0 ? (
+            {attendanceLoading ? (
+              <p className="px-5 py-6 text-center text-sm text-muted-foreground">กำลังโหลด...</p>
+            ) : attendanceError ? (
+              <p className="px-5 py-6 text-center text-sm text-destructive">{attendanceError}</p>
+            ) : attendance.length === 0 ? (
               <p className="px-5 py-6 text-center text-sm text-muted-foreground">ยังไม่มีข้อมูลการเข้าเรียน</p>
             ) : (
               <div className="divide-y divide-border">

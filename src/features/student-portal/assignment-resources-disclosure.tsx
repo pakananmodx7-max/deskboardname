@@ -24,7 +24,7 @@ interface AssignmentResourcesDisclosureProps {
  * N+1). A file resource is never linked to its raw storage path directly
  * — opening one always goes through getResourceSignedUrl() first, a
  * short-lived signed URL requested only at the moment the student clicks
- * "เปิดไฟล์", gated by the exact same RLS this student's read access
+ * "เปิดใบงาน", gated by the exact same RLS this student's read access
  * already relies on everywhere else in the portal. A link resource opens
  * its own stored https:// URL directly in a new tab.
  */
@@ -101,7 +101,7 @@ export function AssignmentResourcesDisclosure({ assignmentId, resourceCount }: A
                   className="flex shrink-0 items-center gap-1 font-medium text-primary hover:underline disabled:opacity-50"
                 >
                   {openingId === resource.id ? <Loader2 className="size-3 animate-spin" /> : <ExternalLink className="size-3" />}
-                  เปิดไฟล์
+                  เปิดใบงาน
                 </button>
               ) : (
                 <a

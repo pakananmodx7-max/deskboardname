@@ -359,15 +359,6 @@ export async function getMyAttendance(subjectId?: string, classroomId?: string):
 // anywhere, cheaply unit-testable.
 // ==================================================
 
-export type AssignmentFilter = 'all' | SubmissionStatus
-
-/** ทั้งหมด / ยังไม่ส่ง / ส่งแล้ว / ส่งช้า / ขาดส่ง — the /student/assignments
- * filter tabs. Pure so the exact filtering rule is unit-tested without a
- * live fetch. */
-export function filterMyAssignments(assignments: MyAssignment[], filter: AssignmentFilter): MyAssignment[] {
-  if (filter === 'all') return assignments
-  return assignments.filter((a) => a.status === filter)
-}
 
 /** Pure tally used by /student/dashboard and /student/attendance — same
  * shape as attendance-service.ts's getAttendanceSummary, but built from
@@ -471,8 +462,10 @@ export function computeMyGrades(assignments: MyAssignment[]): MyGradesSummary {
 
 /** งานที่ต้องทำ — assignments not yet (fully) submitted, soonest due date
  * first (assignments with no due date sort last). Used by the dashboard's
- * "to-do" list; /student/assignments shows everything via
- * filterMyAssignments instead. */
+ * "to-do" list. Every full assignment list beyond this "pending only"
+ * view is reached per-subject, through the Subject Workspace's "งาน" tab
+ * (student-subject-detail-page.tsx) — there is no separate flat
+ * cross-subject assignment list/filter anymore. */
 export function getPendingAssignments(assignments: MyAssignment[]): MyAssignment[] {
   return assignments.filter((a) => a.status === 'not_submitted' || a.status === 'late')
 }

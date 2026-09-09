@@ -4,7 +4,6 @@ import {
   computeAttendanceRate,
   computeMyGrades,
   countUnreadNotifications,
-  filterMyAssignments,
   getPendingAssignments,
   isMissingOptionalColumnError,
   isOptionalTableMissingError,
@@ -45,26 +44,6 @@ function attendance(overrides: Partial<MyAttendanceRecord> = {}): MyAttendanceRe
     ...overrides,
   }
 }
-
-describe('filterMyAssignments — /student/assignments filter tabs', () => {
-  const items = [
-    assignment({ id: 'a1', status: 'not_submitted' }),
-    assignment({ id: 'a2', status: 'submitted' }),
-    assignment({ id: 'a3', status: 'late' }),
-    assignment({ id: 'a4', status: 'missing' }),
-  ]
-
-  it('"all" returns every assignment unfiltered', () => {
-    expect(filterMyAssignments(items, 'all')).toHaveLength(4)
-  })
-
-  it('filters to exactly one status at a time', () => {
-    expect(filterMyAssignments(items, 'not_submitted').map((a) => a.id)).toEqual(['a1'])
-    expect(filterMyAssignments(items, 'submitted').map((a) => a.id)).toEqual(['a2'])
-    expect(filterMyAssignments(items, 'late').map((a) => a.id)).toEqual(['a3'])
-    expect(filterMyAssignments(items, 'missing').map((a) => a.id)).toEqual(['a4'])
-  })
-})
 
 describe('getPendingAssignments — dashboard "งานที่ต้องทำ"', () => {
   it('includes not_submitted and late, excludes submitted and missing', () => {

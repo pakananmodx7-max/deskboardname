@@ -10,7 +10,6 @@ import { LoginPage } from '@/pages/auth/login-page'
 import { ResetPasswordPage } from '@/pages/auth/reset-password-page'
 import { SignupPage } from '@/pages/auth/signup-page'
 import { RootPage } from '@/pages/root/root-page'
-import { StudentAssignmentsPage } from '@/pages/student/assignments/student-assignments-page'
 import { StudentAttendancePage } from '@/pages/student/attendance/student-attendance-page'
 import { StudentDashboardPage } from '@/pages/student/dashboard/student-dashboard-page'
 import { StudentGradesPage } from '@/pages/student/grades/student-grades-page'
@@ -76,7 +75,12 @@ const router = createBrowserRouter([
       { path: 'dashboard', element: <StudentDashboardPage /> },
       { path: 'subjects', element: <StudentSubjectsPage /> },
       { path: 'subjects/:subjectId', element: <StudentSubjectDetailPage /> },
-      { path: 'assignments', element: <StudentAssignmentsPage /> },
+      // งานของฉัน is no longer a standalone sidebar destination — every
+      // assignment is reached through its own subject's "งาน" tab now
+      // (see the Subject Workspace, student-subject-detail-page.tsx).
+      // This route stays only so an old bookmark/link still goes
+      // somewhere real instead of 404ing.
+      { path: 'assignments', element: <Navigate to="/student/subjects" replace /> },
       { path: 'attendance', element: <StudentAttendancePage /> },
       { path: 'grades', element: <StudentGradesPage /> },
     ],
