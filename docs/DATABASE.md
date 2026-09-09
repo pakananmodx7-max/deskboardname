@@ -1773,3 +1773,104 @@ it actually catches this class of regression rather than trivially
 passing — was re-run against a deliberately broken state (EXECUTE
 revoked) where it correctly failed with the exact production error, then
 passed again once 0010 was applied on top.
+
+# Phase 13: Production incident — classroom Attendance showed 0 students despite a real 31-student roster
+
+## Symptom
+
+`/teacher/attendance`, for a real classroom with 31 active students
+(confirmed correct on the Students/Classroom UI, which reads the same
+roster via `getStudentsByClassroom`), showed
+`"เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง"` (the generic fallback in
+`src/lib/errors.ts`) plus `total = 0` and
+`"ยังไม่มีนักเรียนในห้องเรียนนี้"`.
+
+## Diagnosis
+
+`attendance-page-real.tsx` loaded the roster (`getStudentsByClassroom`)
+and the saved attendance session (`getAttendance`) as a SINGLE
+`Promise.all([...])`. Because `.then()` only runs if BOTH promises
+resolve, any failure in `getAttendance` — for any reason — meant
+`setStudents(...)` was never called at all, leaving `students` at its
+initial `[]` and rendering the exact "no students in this classroom"
+empty state, alongside whatever generic error text the thrown error
+produced. The roster itself was never the problem; it was silently
+discarded by the failure of an unrelated, coupled request.
+
+Empirically verified against a byte-for-byte local replay of 0001–0010
+with a real 31-student classroom and real `authenticated`/`anon` roles
+(not a superuser bypass) — see `supabase/tests/0004_attendance_roster_and_rls.sql`:
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Owning teacher — roster query (`classroom_students` → `students`) | PASS — all 31 active students |
+| 2 | No attendance session yet for today | PASS — 0 rows, no error (the intended, common "first time" case works correctly) |
+| 3 | `save_attendance_session` for all 31 students, defaulting to "มา" | PASS |
+| 4 | Re-fetch after save | PASS — exactly 1 session row, 31 records — no duplication |
+| 5 | Direct duplicate homeroom-session INSERT (bypassing the RPC entirely) | PASS — rejected by `attendance_sessions_classroom_date_no_subject_uidx`; true duplicates cannot occur via any write path |
+| 6 | Unauthorized teacher (does not own the classroom) | PASS — 0 rows across roster, sessions, and records |
+
+**Conclusion: the schema, RLS, RPC, and indexes from 0004/0005 are all
+correct and unaffected by 0008/0009/0010** — those later migrations only
+ever touch `profiles`/`student_account_link_requests`/the account-link
+RPCs; none of `attendance_sessions`'/`attendance_records`' SELECT
+policies reference `profiles` or `classroom_students` at all, so there is
+no path for the recursion class of bug documented in Phase 10 to reach
+this code. The unique index makes a genuine duplicate session
+structurally impossible going forward. The root cause is a **frontend
+resilience bug**: `getAttendance()`'s `.maybeSingle()` throws (a raw,
+non-SQLSTATE PostgREST "multiple rows" error, invisible to
+`toFriendlyErrorMessage`'s specific branches) if that invariant is ever
+violated for any reason — a legacy row, a not-fully-applied migration
+(see Phase 12 for a real prior example of that exact failure mode), or
+any future edge case — and `Promise.all` then needlessly took the
+already-successful roster load down with it.
+
+## Fix (frontend only — no schema/RLS change)
+
+- **`src/services/attendance-service.ts`**:
+  - `getAttendance()` no longer uses `.maybeSingle()` for the session
+    lookup. `.order('updated_at', { ascending: false }).limit(1)` picks
+    the most recently updated matching session and NEVER throws for
+    "more than one row" — it degrades gracefully instead of taking down
+    the whole page.
+  - New pure `buildRecordsForRoster(activeStudentIds, attendance)` —
+    `attendance: null` (a failed/pending lookup) is treated exactly like
+    "no session saved yet": every active student still defaults to "มา".
+- **`src/pages/teacher/attendance/attendance-page-real.tsx`** and
+  **`src/features/subjects-real/tabs/attendance-tab.tsx`** (same bug,
+  same fix — both call `getAttendance` the same way): the roster fetch
+  and the attendance-session fetch are now two INDEPENDENT requests, not
+  a combined `Promise.all`. The roster renders — with every active
+  student defaulted to "มา" — as soon as `getStudentsByClassroom`
+  resolves, regardless of whether the attendance-session lookup
+  succeeds, fails, or is still in flight. A failed attendance lookup
+  surfaces as a separate, non-blocking warning
+  (`attendanceWarning`/`text-warning-foreground`) instead of blanking
+  the roster. Saved statuses still win over the "มา" default the moment
+  the lookup does succeed — reopening an already-saved day is unchanged.
+
+## Is a new migration required?
+
+**No.** Every schema/RLS/RPC/index check above passed against a clean
+0001–0010 replay; nothing here needed to change on the database side.
+This is recorded for completeness (per the standing "determine root
+cause before touching schema" rule this project follows), not because a
+migration was skipped that should have run.
+
+## Regression test (new — not a migration, not applied automatically)
+
+- **`supabase/tests/0004_attendance_roster_and_rls.sql`** — the
+  six database-level checks in the table above, self-contained
+  (own fixtures, own cleanup), re-runnable against a disposable local
+  Postgres instance.
+- **`src/services/attendance-service.test.ts`** — new
+  `buildRecordsForRoster` suite: the literal reported scenario ("31
+  students + no session yet -> roster renders 31, not 0"), the actual
+  regression case ("31 students + the attendance lookup THREW -> still
+  31, never 0"), an existing-session case (saved statuses win),
+  classroom switch and date switch (no cross-contamination between
+  independent loads), archived/moved-student behavior (composes
+  correctly with the existing, already-tested `deriveAttendanceRoster`),
+  and the legitimate "0 students" case kept distinct from the bug's "0
+  students because a request failed" case.

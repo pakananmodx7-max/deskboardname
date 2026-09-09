@@ -8,7 +8,12 @@ import { AttendanceRosterCard } from '@/features/attendance/attendance-roster-ca
 import { ClassroomSelector } from '@/features/classroom-management/classroom-selector'
 import { NoClassroomsEmptyState } from '@/features/classroom-management/no-classrooms-empty-state'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { buildDefaultRecords, deriveAttendanceRoster, getAttendance, saveAttendance } from '@/services/attendance-service'
+import {
+  buildRecordsForRoster,
+  deriveAttendanceRoster,
+  getAttendance,
+  saveAttendance,
+} from '@/services/attendance-service'
 import { getClassrooms } from '@/services/classroom-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import type { AttendanceRecord, AttendanceStatus } from '@/types/attendance'
@@ -43,6 +48,7 @@ export function AttendancePageReal() {
   const [records, setRecords] = useState<Record<string, AttendanceRecord>>({})
   const [rosterLoading, setRosterLoading] = useState(false)
   const [rosterError, setRosterError] = useState<string | null>(null)
+  const [attendanceWarning, setAttendanceWarning] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   const refreshClassrooms = useCallback(() => {
@@ -62,10 +68,17 @@ export function AttendancePageReal() {
   }, [refreshClassrooms])
 
   // Reloads the roster + saved attendance whenever the selected classroom
-  // or date changes — a fresh classroom_students read (never the 38 demo
-  // students) plus getAttendance's real Supabase lookup for that exact
-  // classroom+date. Saved statuses win over the "present" default so
-  // reopening an already-saved day shows exactly what was recorded.
+  // or date changes. These are two INDEPENDENT requests, deliberately not
+  // combined via Promise.all: the classroom roster (getStudentsByClassroom)
+  // is the source of truth and must always render once it loads, even if
+  // the attendance-session lookup (getAttendance) fails for any reason —
+  // a Promise.all would fail the whole load (and wrongly show "no
+  // students in this classroom") on either failure. A failed attendance
+  // lookup instead surfaces as a separate, non-blocking warning, and every
+  // active student simply defaults to "มา" (buildRecordsForRoster treats a
+  // failed lookup the same as "no session saved yet"). Saved statuses win
+  // over that default whenever the lookup does succeed, so reopening an
+  // already-saved day shows exactly what was recorded.
   useEffect(() => {
     if (!selectedClassroomId) {
       setStudents([])
@@ -76,19 +89,34 @@ export function AttendancePageReal() {
     let cancelled = false
     setRosterLoading(true)
     setRosterError(null)
+    setAttendanceWarning(null)
 
-    Promise.all([getStudentsByClassroom(selectedClassroomId), getAttendance(selectedClassroomId, date)])
-      .then(([classroomStudents, attendance]) => {
+    getStudentsByClassroom(selectedClassroomId)
+      .then((classroomStudents) => {
         if (cancelled) return
         setStudents(classroomStudents)
         const activeIds = classroomStudents.filter((s) => s.status === 'active').map((s) => s.id)
-        setRecords({ ...buildDefaultRecords(activeIds), ...attendance.records })
+        setRecords(buildRecordsForRoster(activeIds, null))
+        setRosterLoading(false)
+
+        getAttendance(selectedClassroomId, date)
+          .then((attendance) => {
+            if (cancelled) return
+            setRecords(buildRecordsForRoster(activeIds, attendance))
+          })
+          .catch((err: unknown) => {
+            if (!cancelled) {
+              setAttendanceWarning(
+                toFriendlyErrorMessage(err, 'ไม่สามารถโหลดสถานะการเช็คชื่อที่บันทึกไว้ได้ กำลังแสดงค่าเริ่มต้น'),
+              )
+            }
+          })
       })
       .catch((err: unknown) => {
-        if (!cancelled) setRosterError(toFriendlyErrorMessage(err))
-      })
-      .finally(() => {
-        if (!cancelled) setRosterLoading(false)
+        if (!cancelled) {
+          setRosterError(toFriendlyErrorMessage(err))
+          setRosterLoading(false)
+        }
       })
 
     return () => {
@@ -166,6 +194,7 @@ export function AttendancePageReal() {
 
       {classroomsError && <p className="text-sm text-destructive">{classroomsError}</p>}
       {rosterError && <p className="text-sm text-destructive">{rosterError}</p>}
+      {attendanceWarning && <p className="text-sm text-warning-foreground">{attendanceWarning}</p>}
 
       {classroomsLoading ? (
         <p className="text-sm text-muted-foreground">กำลังโหลด...</p>

@@ -7,7 +7,7 @@ import { useToast } from '@/components/ui/toast'
 import { AttendanceRosterCard } from '@/features/attendance/attendance-roster-card'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
-  buildDefaultRecords,
+  buildRecordsForRoster,
   deriveAttendanceRoster,
   getAttendance,
   parsePeriodNumber,
@@ -50,6 +50,7 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
   const [records, setRecords] = useState<Record<string, AttendanceRecord>>({})
   const [rosterLoading, setRosterLoading] = useState(false)
   const [rosterError, setRosterError] = useState<string | null>(null)
+  const [attendanceWarning, setAttendanceWarning] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   // periodInput is a free-text field (empty = "no specific period" —
@@ -62,25 +63,47 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
   // date, or period changes. Real students only, from classroom_students
   // for the selected classroom — never the 38 demo students, and never a
   // stored/duplicated "subject roster" row.
+  //
+  // The roster fetch and the attendance-session fetch are two INDEPENDENT
+  // requests, deliberately not combined via Promise.all — the classroom
+  // roster is the source of truth and must render even if the
+  // attendance-session lookup fails; see attendance-page-real.tsx's
+  // identical fix for the full rationale (the "classroom has students but
+  // Attendance shows 0" production bug this pattern caused there).
   useEffect(() => {
     if (periodInvalid) return
 
     let cancelled = false
     setRosterLoading(true)
     setRosterError(null)
+    setAttendanceWarning(null)
 
-    Promise.all([getStudentsByClassroom(classroomId), getAttendance(classroomId, date, subject.id, periodNumber)])
-      .then(([classroomStudents, attendance]) => {
+    getStudentsByClassroom(classroomId)
+      .then((classroomStudents) => {
         if (cancelled) return
         setStudents(classroomStudents)
         const activeIds = classroomStudents.filter((s) => s.status === 'active').map((s) => s.id)
-        setRecords({ ...buildDefaultRecords(activeIds), ...attendance.records })
+        setRecords(buildRecordsForRoster(activeIds, null))
+        setRosterLoading(false)
+
+        getAttendance(classroomId, date, subject.id, periodNumber)
+          .then((attendance) => {
+            if (cancelled) return
+            setRecords(buildRecordsForRoster(activeIds, attendance))
+          })
+          .catch((err: unknown) => {
+            if (!cancelled) {
+              setAttendanceWarning(
+                toFriendlyErrorMessage(err, 'ไม่สามารถโหลดสถานะการเช็คชื่อที่บันทึกไว้ได้ กำลังแสดงค่าเริ่มต้น'),
+              )
+            }
+          })
       })
       .catch((err: unknown) => {
-        if (!cancelled) setRosterError(toFriendlyErrorMessage(err))
-      })
-      .finally(() => {
-        if (!cancelled) setRosterLoading(false)
+        if (!cancelled) {
+          setRosterError(toFriendlyErrorMessage(err))
+          setRosterLoading(false)
+        }
       })
 
     return () => {
@@ -152,6 +175,7 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
 
       {periodInvalid && <p className="text-sm text-destructive">คาบเรียนต้องเป็นจำนวนเต็มบวก</p>}
       {rosterError && <p className="text-sm text-destructive">{rosterError}</p>}
+      {attendanceWarning && <p className="text-sm text-warning-foreground">{attendanceWarning}</p>}
 
       <AttendanceRosterCard
         roster={roster}

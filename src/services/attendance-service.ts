@@ -48,6 +48,23 @@ export interface AttendanceForDate {
  * responsible for defaulting every student to "present" itself (see
  * buildDefaultRecords below) rather than this service inventing rows that
  * were never actually saved.
+ *
+ * Deliberately does NOT use `.maybeSingle()` for the session lookup.
+ * `.maybeSingle()` tolerates zero matching rows but THROWS if more than
+ * one row matches — correct only as long as
+ * attendance_sessions_classroom_date_no_subject_uidx (and its two
+ * subject-scoped siblings, 0004/0005_*.sql) holds perfectly for every
+ * row that has ever existed in the table, an invariant this function has
+ * no way to verify at read time. If it is ever violated for any reason
+ * (a legacy row predating the index, a migration that did not fully
+ * apply — see docs/DATABASE.md's account-linking RPC-permissions
+ * incident for a real prior example of exactly that class of gap), the
+ * whole roll call used to hard-fail with an opaque, non-Thai
+ * PostgREST "multiple rows returned" error instead of just... showing
+ * the roster. `.order(...).limit(1)` never throws for "too many rows":
+ * it deterministically picks the most recently updated matching
+ * session, which degrades gracefully instead of taking down the entire
+ * Attendance page over a single stray row.
  */
 export async function getAttendance(
   classroomId: string,
@@ -66,12 +83,13 @@ export async function getAttendance(
   query = subjectId === null ? query.is('subject_id', null) : query.eq('subject_id', subjectId)
   query = periodNumber === null ? query.is('period_number', null) : query.eq('period_number', periodNumber)
 
-  const { data: sessionRow, error: sessionError } = await query.maybeSingle()
+  const { data: sessionRows, error: sessionError } = await query.order('updated_at', { ascending: false }).limit(1)
 
   if (sessionError) throw sessionError
+  const sessionRow = (sessionRows as AttendanceSessionRow[] | null)?.[0] ?? null
   if (!sessionRow) return { session: null, records: {} }
 
-  const session = mapSession(sessionRow as AttendanceSessionRow)
+  const session = mapSession(sessionRow)
 
   const { data: recordRows, error: recordsError } = await supabase
     .from('attendance_records')
@@ -144,6 +162,32 @@ export function buildDefaultRecords(studentIds: string[]): Record<string, Attend
     records[studentId] = { studentId, status: 'present', note: null }
   }
   return records
+}
+
+/**
+ * The records shown/edited for a roster, given the roster's active
+ * student ids and a (possibly failed) attendance-session lookup. Saved
+ * statuses from `attendance.records` win over the "มา" default when the
+ * lookup succeeded; when it's `null` (the caller's getAttendance() call
+ * failed, or simply hasn't resolved yet), every active student still
+ * gets a default "มา" record rather than none at all.
+ *
+ * This is the fix for the "classroom has 31 students but Attendance
+ * shows 0" production bug: the roster (from getStudentsByClassroom) and
+ * the attendance-session lookup (getAttendance) are two independent
+ * network calls, and the roster is the source of truth — it must never
+ * be blanked out just because the OTHER call had a problem. Callers
+ * should fetch the roster and the attendance session as two independent
+ * requests (not a combined Promise.all that fails both on either one
+ * failing) and pass `null` here for a failed/pending attendance lookup,
+ * exactly like "no session saved yet" — the teacher can still see and
+ * mark the roster either way.
+ */
+export function buildRecordsForRoster(
+  activeStudentIds: string[],
+  attendance: AttendanceForDate | null,
+): Record<string, AttendanceRecord> {
+  return { ...buildDefaultRecords(activeStudentIds), ...(attendance?.records ?? {}) }
 }
 
 export interface ParsedPeriodNumber {
