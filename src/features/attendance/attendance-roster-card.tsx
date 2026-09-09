@@ -21,15 +21,15 @@ interface AttendanceRosterCardProps {
 
 /**
  * Shared summary-card + roster-table UI for every real, Supabase-backed
- * attendance surface in the app — the standalone classroom Attendance
- * page (attendance-page-real.tsx) and every subject's เช็คชื่อ tab
- * (subjects-real/tabs/attendance-tab.tsx) render through this exact same
- * component, per "reuse the existing real Attendance architecture and
- * UI — do not create a second unrelated attendance system." Each caller
- * owns its own data loading (they differ: classroom+date only, vs.
- * subject+classroom+date+period) and passes down the resolved roster and
- * records; this component owns only the summary tally and the
- * table/status-buttons/note rendering.
+ * attendance surface in the app — every subject's เช็คชื่อ tab
+ * (subjects-real/tabs/attendance-tab.tsx) renders through this exact
+ * same component, per "reuse the existing real Attendance architecture
+ * and UI — do not create a second unrelated attendance system." (The
+ * standalone, subject-less classroom Attendance page this was originally
+ * shared with was removed once attendance became subject+classroom-
+ * scoped only — see nav-items.ts.) Each caller owns its own data loading
+ * and passes down the resolved roster and records; this component owns
+ * only the summary tally and the table/status-buttons/note rendering.
  */
 export function AttendanceRosterCard({ roster, records, loading, onSetStatus, onSetNote }: AttendanceRosterCardProps) {
   const rosterRecords: Record<string, AttendanceRecord> = {}

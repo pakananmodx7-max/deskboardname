@@ -102,10 +102,6 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
           )}
         </CardContent>
       </Card>
-
-      <p className="text-xs text-muted-foreground">
-        งาน และคะแนน ยังใช้งานได้เฉพาะในโหมดสาธิต — ยังไม่เชื่อมต่อกับฐานข้อมูลจริงในเฟสนี้
-      </p>
     </div>
   )
 }

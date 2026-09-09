@@ -73,10 +73,6 @@ export function SubjectStudentDrawer({ subjectName, classroomName, student, onOp
         <Button variant="outline" onClick={() => setMessagingOpen(true)}>
           ส่งข้อความ
         </Button>
-
-        <p className="text-xs text-muted-foreground">
-          ข้อมูลงานค้างและคะแนนยังใช้งานได้เฉพาะในโหมดสาธิต — ยังไม่เชื่อมต่อกับฐานข้อมูลจริงในเฟสนี้
-        </p>
       </SheetContent>
 
       <SendNotificationDialog

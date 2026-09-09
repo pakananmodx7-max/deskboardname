@@ -100,8 +100,7 @@ describe('parsePeriodNumber', () => {
  * buildRecordsForRoster + deriveAttendanceRoster together are exactly
  * the pure logic the real page now runs once the roster fetch succeeds,
  * independent of whether the attendance fetch succeeds, fails, or is
- * still pending (see attendance-page-real.tsx and
- * subjects-real/tabs/attendance-tab.tsx).
+ * still pending (see subjects-real/tabs/attendance-tab.tsx).
  */
 describe('buildRecordsForRoster — the roster must survive a failed/missing attendance lookup', () => {
   function makeRoster(count: number) {
