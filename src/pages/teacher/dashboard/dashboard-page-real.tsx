@@ -1,48 +1,61 @@
-import { BookOpen, School, Users } from 'lucide-react'
+import { AlertTriangle, BookOpen, School, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 
-import { AttendanceOverview } from '@/components/dashboard/attendance-overview'
 import { QuickActions } from '@/components/dashboard/quick-actions'
 import { StatCard } from '@/components/dashboard/stat-card'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  getClassroomsWithStudentCounts,
-  getDashboardOverview,
-  getTodayAttendanceOverview,
-  type ClassroomWithStudentCount,
-  type DashboardOverview,
-} from '@/services/dashboard-service'
+import { AssignmentActionCard } from '@/features/dashboard-real/assignment-action-card'
+import { DashboardFollowUpCard } from '@/features/dashboard-real/dashboard-followup-card'
+import { RecentActivityCard } from '@/features/dashboard-real/recent-activity-card'
+import { TodayAttendanceCard } from '@/features/dashboard-real/today-attendance-card'
+import { UpcomingAssignmentsCard } from '@/features/dashboard-real/upcoming-assignments-card'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import type { AttendanceSummary } from '@/types/attendance'
+import {
+  getAssignmentActionItems,
+  getDashboardFollowUpSummary,
+  getDashboardOverview,
+  getRecentActivity,
+  getTodaySubjectAttendanceStatus,
+  selectAssignmentsNeedingAttention,
+  selectUpcomingAssignments,
+  type AssignmentActionItem,
+  type DashboardOverview,
+  type RecentActivityItem,
+  type TodayAttendanceStatus,
+} from '@/services/dashboard-service'
+import type { FollowUpRow } from '@/types/report'
 
 /**
- * /teacher/dashboard — real Supabase data only. Every number here comes
- * from a query scoped by this schema's existing RLS (teacher_id =
- * auth.uid(), or transitively through classroom ownership) — nothing is
- * fabricated. AI Assistant, Integrations status, and a "recent
- * activity"/"at-risk students" feed are deliberately NOT included here:
- * none of them have a real backing data source yet (no activity log
- * table, no risk-scoring logic, no configured integration), and building
- * one is out of scope for this pass — see docs/DATABASE.md and the
- * teacher-production-readiness report for the reasoning. Each section
- * below loads and fails independently so one slow/failed piece (e.g.
- * today's attendance, which fans out one request per classroom) never
- * blanks the whole page.
+ * /teacher/dashboard — the Control Center. Real Supabase data only, no
+ * demo/mock fallback anywhere (see dashboard-service.ts). Every section
+ * below loads and fails INDEPENDENTLY: the assignment action center and
+ * upcoming list share one fetch (they're both derived views over the
+ * exact same assignment data, by design — not an N+1 fallback), but a
+ * failure there never blanks Today's Attendance, Follow-up, or Recent
+ * Activity, and vice versa. No decorative/fabricated metric appears
+ * anywhere on this page — a metric that cannot be reliably computed from
+ * real data is simply not shown (see the Control Center report for what
+ * was deliberately left out and why).
  */
 export function DashboardPageReal() {
   const [overview, setOverview] = useState<DashboardOverview | null>(null)
   const [overviewLoading, setOverviewLoading] = useState(true)
   const [overviewError, setOverviewError] = useState<string | null>(null)
 
-  const [classrooms, setClassrooms] = useState<ClassroomWithStudentCount[]>([])
-  const [classroomsLoading, setClassroomsLoading] = useState(true)
-  const [classroomsError, setClassroomsError] = useState<string | null>(null)
-
-  const [attendance, setAttendance] = useState<AttendanceSummary | null>(null)
+  const [attendanceItems, setAttendanceItems] = useState<TodayAttendanceStatus[]>([])
   const [attendanceLoading, setAttendanceLoading] = useState(true)
   const [attendanceError, setAttendanceError] = useState<string | null>(null)
+
+  const [assignmentItems, setAssignmentItems] = useState<AssignmentActionItem[]>([])
+  const [assignmentLoading, setAssignmentLoading] = useState(true)
+  const [assignmentError, setAssignmentError] = useState<string | null>(null)
+
+  const [followUpRows, setFollowUpRows] = useState<FollowUpRow[]>([])
+  const [followUpLoading, setFollowUpLoading] = useState(true)
+  const [followUpError, setFollowUpError] = useState<string | null>(null)
+
+  const [activityItems, setActivityItems] = useState<RecentActivityItem[]>([])
+  const [activityLoading, setActivityLoading] = useState(true)
+  const [activityError, setActivityError] = useState<string | null>(null)
 
   const loadOverview = useCallback(() => {
     setOverviewLoading(true)
@@ -53,43 +66,52 @@ export function DashboardPageReal() {
       .finally(() => setOverviewLoading(false))
   }, [])
 
-  const loadClassrooms = useCallback(() => {
-    setClassroomsLoading(true)
-    setClassroomsError(null)
-    return getClassroomsWithStudentCounts()
-      .then((rows) => {
-        setClassrooms(rows)
-        return rows
-      })
-      .catch((err: unknown) => {
-        setClassroomsError(toFriendlyErrorMessage(err))
-        return [] as ClassroomWithStudentCount[]
-      })
-      .finally(() => setClassroomsLoading(false))
+  const loadAttendance = useCallback(() => {
+    setAttendanceLoading(true)
+    setAttendanceError(null)
+    return getTodaySubjectAttendanceStatus()
+      .then(setAttendanceItems)
+      .catch((err: unknown) => setAttendanceError(toFriendlyErrorMessage(err)))
+      .finally(() => setAttendanceLoading(false))
+  }, [])
+
+  const loadAssignments = useCallback(() => {
+    setAssignmentLoading(true)
+    setAssignmentError(null)
+    return getAssignmentActionItems()
+      .then(setAssignmentItems)
+      .catch((err: unknown) => setAssignmentError(toFriendlyErrorMessage(err)))
+      .finally(() => setAssignmentLoading(false))
+  }, [])
+
+  const loadFollowUp = useCallback(() => {
+    setFollowUpLoading(true)
+    setFollowUpError(null)
+    return getDashboardFollowUpSummary()
+      .then(setFollowUpRows)
+      .catch((err: unknown) => setFollowUpError(toFriendlyErrorMessage(err)))
+      .finally(() => setFollowUpLoading(false))
+  }, [])
+
+  const loadActivity = useCallback(() => {
+    setActivityLoading(true)
+    setActivityError(null)
+    return getRecentActivity()
+      .then(setActivityItems)
+      .catch((err: unknown) => setActivityError(toFriendlyErrorMessage(err)))
+      .finally(() => setActivityLoading(false))
   }, [])
 
   useEffect(() => {
     loadOverview()
+    loadAttendance()
+    loadAssignments()
+    loadFollowUp()
+    loadActivity()
+  }, [loadOverview, loadAttendance, loadAssignments, loadFollowUp, loadActivity])
 
-    let active = true
-    setAttendanceLoading(true)
-    setAttendanceError(null)
-    loadClassrooms()
-      .then((rows) => (active ? getTodayAttendanceOverview(rows) : null))
-      .then((summary) => {
-        if (active && summary) setAttendance(summary)
-      })
-      .catch((err: unknown) => {
-        if (active) setAttendanceError(toFriendlyErrorMessage(err))
-      })
-      .finally(() => {
-        if (active) setAttendanceLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [loadOverview, loadClassrooms])
+  const needingAttention = selectAssignmentsNeedingAttention(assignmentItems)
+  const upcoming = selectUpcomingAssignments(assignmentItems)
 
   return (
     <div className="space-y-6">
@@ -100,97 +122,41 @@ export function DashboardPageReal() {
 
       {overviewError && <p className="text-sm text-destructive">{overviewError}</p>}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard
-          label="ห้องเรียนทั้งหมด"
-          value={overviewLoading ? '-' : `${overview?.activeClassroomCount ?? 0} ห้อง`}
-          icon={School}
-        />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="นักเรียนทั้งหมด"
           value={overviewLoading ? '-' : `${overview?.studentCount ?? 0} คน`}
           icon={Users}
         />
         <StatCard
-          label="รายวิชาทั้งหมด"
+          label="ห้องเรียนทั้งหมด"
+          value={overviewLoading ? '-' : `${overview?.activeClassroomCount ?? 0} ห้อง`}
+          icon={School}
+        />
+        <StatCard
+          label="รายวิชาที่สอน"
           value={overviewLoading ? '-' : `${overview?.subjectCount ?? 0} วิชา`}
           icon={BookOpen}
+        />
+        <StatCard
+          label="นักเรียนที่ควรติดตาม"
+          value={followUpLoading ? '-' : `${followUpRows.length} คน`}
+          icon={AlertTriangle}
+          tone={!followUpLoading && followUpRows.length > 0 ? 'warning' : 'default'}
         />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">
           <QuickActions />
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">ห้องเรียนของฉัน</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              {classroomsLoading ? (
-                <p className="px-5 py-6 text-center text-sm text-muted-foreground">กำลังโหลด...</p>
-              ) : classroomsError ? (
-                <p className="px-5 py-6 text-center text-sm text-destructive">{classroomsError}</p>
-              ) : classrooms.length === 0 ? (
-                <p className="px-5 py-6 text-center text-sm text-muted-foreground">ยังไม่มีห้องเรียน</p>
-              ) : (
-                <div className="divide-y divide-border">
-                  {classrooms.map((classroom) => (
-                    <Link
-                      key={classroom.id}
-                      to={`/teacher/classrooms/${classroom.id}`}
-                      className="flex items-center justify-between gap-3 px-5 py-3 transition-colors hover:bg-accent"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{classroom.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {[classroom.gradeLevel, classroom.academicYear && `ปีการศึกษา ${classroom.academicYear}`]
-                            .filter(Boolean)
-                            .join(' · ') || '-'}
-                        </p>
-                      </div>
-                      <Badge variant="outline" className="shrink-0">
-                        {classroom.studentCount} คน
-                      </Badge>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <TodayAttendanceCard loading={attendanceLoading} error={attendanceError} items={attendanceItems} />
+          <AssignmentActionCard loading={assignmentLoading} error={assignmentError} items={needingAttention} />
         </div>
 
         <div className="space-y-4">
-          {attendanceLoading ? (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">ภาพรวมการเข้าเรียนวันนี้</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
-              </CardContent>
-            </Card>
-          ) : attendanceError ? (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">ภาพรวมการเข้าเรียนวันนี้</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-destructive">{attendanceError}</p>
-              </CardContent>
-            </Card>
-          ) : attendance && attendance.total > 0 ? (
-            <AttendanceOverview attendance={attendance} />
-          ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">ภาพรวมการเข้าเรียนวันนี้</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">ยังไม่มีการเช็คชื่อวันนี้</p>
-              </CardContent>
-            </Card>
-          )}
+          <DashboardFollowUpCard loading={followUpLoading} error={followUpError} rows={followUpRows} />
+          <UpcomingAssignmentsCard loading={assignmentLoading} error={assignmentError} items={upcoming} />
+          <RecentActivityCard loading={activityLoading} error={activityError} items={activityItems} />
         </div>
       </div>
     </div>

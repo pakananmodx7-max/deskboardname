@@ -101,8 +101,14 @@ export interface FollowUpReason {
   rule: FollowUpRuleKey
   /** Thai, includes the actual measured number and the threshold, e.g.
    * "ขาดเรียน 4 ครั้ง (เกณฑ์ 3 ครั้งขึ้นไป)" — see followup-report-service.ts
-   * for the exact rule definitions and threshold constants. */
+   * for the exact rule definitions and threshold constants. Used by the
+   * Reports page's Student Follow-up table. */
   label: string
+  /** Same measured number, no threshold/explanation — e.g. "ขาด 4 ครั้ง",
+   * "ค้าง 3 งาน", "คะแนน 42%" — computed in the exact same place as
+   * `label` (never a separate/reimplemented rule), used by the Dashboard
+   * Control Center's compact "นักเรียนที่ควรติดตาม" list (Section 5). */
+  shortLabel: string
 }
 
 /** One row of the Student Follow-up report — a student flagged by at

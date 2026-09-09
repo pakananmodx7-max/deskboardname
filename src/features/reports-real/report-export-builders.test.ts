@@ -153,8 +153,8 @@ describe('buildFollowUpExportTable — export data correctness', () => {
         classroomId: 'room-1',
         classroomName: 'ม.5/1',
         reasons: [
-          { rule: 'repeated_absences', label: 'ขาดเรียน 5 ครั้ง' },
-          { rule: 'low_grade_percentage', label: 'คะแนนรวม 20%' },
+          { rule: 'repeated_absences', label: 'ขาดเรียน 5 ครั้ง', shortLabel: 'ขาด 5 ครั้ง' },
+          { rule: 'low_grade_percentage', label: 'คะแนนรวม 20%', shortLabel: 'คะแนน 20%' },
         ],
       },
     ]

@@ -1,4 +1,4 @@
-import { CalendarCheck, FileUp, Plus, Sparkles, Upload, type LucideIcon } from 'lucide-react'
+import { BarChart3, BookPlus, CalendarCheck, FilePlus, PencilLine, UserPlus, type LucideIcon } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
@@ -10,19 +10,24 @@ interface QuickAction {
   to: string
 }
 
-// เช็คชื่อ/เพิ่มคะแนน/เพิ่มงาน all point at /teacher/subjects, NOT the old
-// classroom-less /teacher/attendance, /teacher/grades, /teacher/assignments
-// routes (those now just redirect here anyway — see attendance-redirect-page,
-// grades-redirect-page, assignments-redirect-page) — attendance/grades/
-// assignments are only ever taken from a specific subject+classroom's
-// เช็คชื่อ/คะแนน/งาน tab, so this sends the teacher straight to the real
-// entry point instead of bouncing through a deprecated redirect page first.
+// เช็คชื่อ/สร้างงาน/กรอกคะแนน/สร้างรายวิชา all point at /teacher/subjects,
+// NOT the old classroom-less /teacher/attendance, /teacher/grades,
+// /teacher/assignments routes (those now just redirect here anyway — see
+// attendance-redirect-page, grades-redirect-page, assignments-redirect-page)
+// — attendance/grades/assignments are only ever taken from a specific
+// subject+classroom's เช็คชื่อ/งาน/คะแนน tab, and "สร้างรายวิชา" itself lives
+// on the Subjects list page, so this sends the teacher straight to the
+// real entry point (where they then pick/create the exact subject +
+// classroom) instead of bouncing through a deprecated redirect page or
+// guessing context that isn't known yet — see the Dashboard Control
+// Center report's Section 7 note.
 const actions: QuickAction[] = [
   { label: 'เช็คชื่อ', icon: CalendarCheck, to: '/teacher/subjects' },
-  { label: 'เพิ่มคะแนน', icon: Plus, to: '/teacher/subjects' },
-  { label: 'เพิ่มงาน', icon: FileUp, to: '/teacher/subjects' },
-  { label: 'สร้างรายงาน', icon: Sparkles, to: '/teacher/reports' },
-  { label: 'Import นักเรียน', icon: Upload, to: '/teacher/students' },
+  { label: 'สร้างงาน', icon: FilePlus, to: '/teacher/subjects' },
+  { label: 'กรอกคะแนน', icon: PencilLine, to: '/teacher/subjects' },
+  { label: 'เพิ่มนักเรียน', icon: UserPlus, to: '/teacher/students' },
+  { label: 'สร้างรายวิชา', icon: BookPlus, to: '/teacher/subjects' },
+  { label: 'ดูรายงาน', icon: BarChart3, to: '/teacher/reports' },
 ]
 
 export function QuickActions() {

@@ -136,6 +136,7 @@ export function computeFollowUpReport(
       reasons.push({
         rule: 'repeated_absences',
         label: `ขาดเรียน ${agg.absentCount} ครั้ง (เกณฑ์ ${FOLLOWUP_RULES.ABSENCE_THRESHOLD} ครั้งขึ้นไป) ในช่วงวันที่เลือก`,
+        shortLabel: `ขาด ${agg.absentCount} ครั้ง`,
       })
     }
 
@@ -143,6 +144,7 @@ export function computeFollowUpReport(
       reasons.push({
         rule: 'multiple_missing_assignments',
         label: `มีงานค้าง ${agg.missingAssignmentCount} ชิ้น (เกณฑ์ ${FOLLOWUP_RULES.MISSING_ASSIGNMENT_THRESHOLD} ชิ้นขึ้นไป)`,
+        shortLabel: `ค้าง ${agg.missingAssignmentCount} งาน`,
       })
     }
 
@@ -150,11 +152,13 @@ export function computeFollowUpReport(
       const submitted = agg.totalAssignmentCount - agg.missingAssignmentCount
       const completionRate = submitted / agg.totalAssignmentCount
       if (completionRate < FOLLOWUP_RULES.LOW_COMPLETION_RATE_THRESHOLD) {
+        const completionPercent = (completionRate * 100).toFixed(0)
         reasons.push({
           rule: 'low_completion_rate',
-          label: `ส่งงานเพียง ${(completionRate * 100).toFixed(0)}% ของงานทั้งหมด ${agg.totalAssignmentCount} ชิ้น (เกณฑ์ต่ำกว่า ${
+          label: `ส่งงานเพียง ${completionPercent}% ของงานทั้งหมด ${agg.totalAssignmentCount} ชิ้น (เกณฑ์ต่ำกว่า ${
             FOLLOWUP_RULES.LOW_COMPLETION_RATE_THRESHOLD * 100
           }%)`,
+          shortLabel: `ส่งงาน ${completionPercent}%`,
         })
       }
     }
@@ -162,9 +166,11 @@ export function computeFollowUpReport(
     if (agg.totalPossible > 0) {
       const percentage = (agg.totalEarned / agg.totalPossible) * 100
       if (percentage < FOLLOWUP_RULES.LOW_GRADE_PERCENTAGE_THRESHOLD) {
+        const percentText = percentage.toFixed(0)
         reasons.push({
           rule: 'low_grade_percentage',
-          label: `คะแนนรวม ${percentage.toFixed(0)}% (เกณฑ์ต่ำกว่า ${FOLLOWUP_RULES.LOW_GRADE_PERCENTAGE_THRESHOLD}%)`,
+          label: `คะแนนรวม ${percentText}% (เกณฑ์ต่ำกว่า ${FOLLOWUP_RULES.LOW_GRADE_PERCENTAGE_THRESHOLD}%)`,
+          shortLabel: `คะแนน ${percentText}%`,
         })
       }
     }

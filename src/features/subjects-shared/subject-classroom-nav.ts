@@ -64,3 +64,42 @@ export function summarizeSubjectClassrooms<T extends { studentCount: number }>(l
 export function buildSubjectClassroomPath(subjectId: string, classroomId: string): string {
   return `/teacher/subjects/${subjectId}/classrooms/${classroomId}`
 }
+
+/** The one canonical place the assignment-detail route shape is built —
+ * used by the Assignments tab's card links and (Dashboard Control
+ * Center phase) the dashboard's assignment action center/upcoming list,
+ * so a dashboard card always deep-links to the exact real assignment
+ * detail page, never a deprecated flat /teacher/assignments route. */
+export function buildAssignmentDetailPath(subjectId: string, classroomId: string, assignmentId: string): string {
+  return `${buildSubjectClassroomPath(subjectId, classroomId)}/assignments/${assignmentId}`
+}
+
+/**
+ * Same workspace route as buildSubjectClassroomPath, plus a `?tab=`
+ * query string the workspace page (subject-classroom-workspace-page-
+ * real.tsx) reads on mount to open directly on that tab instead of
+ * always landing on ภาพรวม. Used by the Dashboard Control Center's
+ * "เช็คชื่อ"/"ดู/แก้ไข" and "ให้คะแนน" deep links (Sections 3-4) so a
+ * click goes straight to the real เช็คชื่อ/คะแนน tab, never a rebuilt
+ * dashboard-local editor.
+ */
+export function buildSubjectClassroomTabPath(
+  subjectId: string,
+  classroomId: string,
+  tab: 'students' | 'attendance' | 'assignments' | 'grades',
+): string {
+  return `${buildSubjectClassroomPath(subjectId, classroomId)}?tab=${tab}`
+}
+
+/**
+ * The plain (non-subject-scoped) classroom detail route, with the same
+ * `?tab=` convention as buildSubjectClassroomTabPath — read by
+ * classroom-detail-page-real.tsx. Used by the Dashboard Control Center's
+ * "ดูนักเรียน" follow-up action (Section 5) to open a student's own
+ * classroom roster tab directly, reusing the existing
+ * ClassroomStudentsTab/StudentDetailDrawer rather than a new student
+ * view.
+ */
+export function buildClassroomTabPath(classroomId: string, tab: 'students'): string {
+  return `/teacher/classrooms/${classroomId}?tab=${tab}`
+}

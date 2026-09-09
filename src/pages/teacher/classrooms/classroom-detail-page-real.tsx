@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Navigate, useParams } from 'react-router-dom'
+import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -20,10 +20,20 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'students', label: 'นักเรียน' },
 ]
 
+function isTabKey(value: string | null): value is TabKey {
+  return TABS.some((tab) => tab.key === value)
+}
+
 export function ClassroomDetailPageReal() {
   const { classroomId } = useParams<{ classroomId: string }>()
   const { toast } = useToast()
-  const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  const [searchParams] = useSearchParams()
+  // Lets the Dashboard Control Center's "ดูนักเรียน" follow-up link open
+  // straight to the นักเรียน tab via ?tab=students instead of always
+  // landing on ภาพรวม first — see buildClassroomTabPath in
+  // subject-classroom-nav.ts. Invalid/missing falls back to 'overview'.
+  const initialTabParam = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<TabKey>(isTabKey(initialTabParam) ? initialTabParam : 'overview')
   const [classroom, setClassroom] = useState<Classroom | null | undefined>(undefined)
   const [studentCount, setStudentCount] = useState(0)
   const [error, setError] = useState<string | null>(null)

@@ -40,6 +40,19 @@ export function getDefaultDateRange(now: Date = new Date()): { startDate: string
   return { startDate: toIso(start), endDate: toIso(now) }
 }
 
+/**
+ * The ONE place "no classroom/subject filter, last 30 days" is built —
+ * used both by the Reports page's initial filter state and by the
+ * Dashboard's "นักเรียนที่ควรติดตาม" widget (dashboard-service.ts's
+ * getDashboardFollowUpSummary), so the two surfaces are guaranteed to
+ * run the exact same query shape, not just a visually-similar copy of
+ * it. Changing the default window only ever requires editing this one
+ * function.
+ */
+export function getDefaultReportFilters(now: Date = new Date()): ReportFilters {
+  return { classroomId: null, subjectId: null, ...getDefaultDateRange(now) }
+}
+
 export interface ReportFilterOptions {
   classrooms: { id: string; name: string }[]
   subjects: { id: string; name: string }[]

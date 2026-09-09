@@ -7,7 +7,7 @@ import { MissingAssignmentReport } from '@/features/reports-real/missing-assignm
 import { ReportFiltersBar } from '@/features/reports-real/report-filters-bar'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
-import { getDefaultDateRange, getReportFilterOptions, type ReportFilterOptions } from '@/services/report-service'
+import { getDefaultReportFilters, getReportFilterOptions, type ReportFilterOptions } from '@/services/report-service'
 import type { ReportFilters } from '@/types/report'
 
 type ReportTab = 'attendance' | 'grades' | 'missing' | 'followup'
@@ -33,7 +33,7 @@ export function ReportsPageReal() {
   const [activeTab, setActiveTab] = useState<ReportTab>('attendance')
   const [options, setOptions] = useState<ReportFilterOptions>(EMPTY_OPTIONS)
   const [optionsError, setOptionsError] = useState<string | null>(null)
-  const [filters, setFilters] = useState<ReportFilters>(() => ({ classroomId: null, subjectId: null, ...getDefaultDateRange() }))
+  const [filters, setFilters] = useState<ReportFilters>(getDefaultReportFilters)
 
   useEffect(() => {
     let active = true

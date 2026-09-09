@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { NativeSelect } from '@/components/ui/select'
@@ -48,10 +48,22 @@ export const TABS: { key: TabKey; label: string }[] = [
  * there is no separate grades table, matching 0006's "Future relationship"
  * note.
  */
+function isTabKey(value: string | null): value is TabKey {
+  return TABS.some((tab) => tab.key === value)
+}
+
 export function SubjectClassroomWorkspacePageReal() {
   const { subjectId, classroomId } = useParams<{ subjectId: string; classroomId: string }>()
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  const [searchParams] = useSearchParams()
+  // Lets a caller (e.g. the Dashboard Control Center's "เช็คชื่อ"/"ให้คะแนน"
+  // deep links) open this workspace straight to a specific tab via
+  // ?tab=attendance instead of always landing on ภาพรวม — see
+  // buildSubjectClassroomTabPath in subject-classroom-nav.ts, the one
+  // place this query string is built. An invalid/missing value falls
+  // back to 'overview'.
+  const initialTabParam = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<TabKey>(isTabKey(initialTabParam) ? initialTabParam : 'overview')
 
   const [subject, setSubject] = useState<Subject | null | undefined>(undefined)
   const [links, setLinks] = useState<SubjectClassroomWithCount[]>([])

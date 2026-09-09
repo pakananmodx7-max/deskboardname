@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildAssignmentDetailPath,
+  buildClassroomTabPath,
   buildSubjectClassroomPath,
+  buildSubjectClassroomTabPath,
   isClassroomLinkedToSubject,
   resolveAutoRedirectClassroomId,
   summarizeSubjectClassrooms,
@@ -60,5 +63,41 @@ describe('summarizeSubjectClassrooms', () => {
 describe('buildSubjectClassroomPath', () => {
   it('builds the classroom-scoped workspace path', () => {
     expect(buildSubjectClassroomPath('subj-1', 'room-1')).toBe('/teacher/subjects/subj-1/classrooms/room-1')
+  })
+})
+
+describe('buildAssignmentDetailPath — Dashboard deep links, correct subject+classroom', () => {
+  it('builds the exact real assignment-detail route, never a deprecated flat route', () => {
+    const path = buildAssignmentDetailPath('subj-1', 'room-1', 'assign-1')
+    expect(path).toBe('/teacher/subjects/subj-1/classrooms/room-1/assignments/assign-1')
+    expect(path).not.toContain('/teacher/assignments')
+  })
+
+  it('targets the exact subject and classroom passed in, never a different pair', () => {
+    const path = buildAssignmentDetailPath('subj-A', 'room-B', 'assign-1')
+    expect(path).toContain('subj-A')
+    expect(path).toContain('room-B')
+    expect(path).not.toContain('subj-B')
+    expect(path).not.toContain('room-A')
+  })
+})
+
+describe('buildSubjectClassroomTabPath — Dashboard "เช็คชื่อ"/"ให้คะแนน" deep links', () => {
+  it('builds the workspace path with a ?tab= query string, never a deprecated flat route', () => {
+    const path = buildSubjectClassroomTabPath('subj-1', 'room-1', 'attendance')
+    expect(path).toBe('/teacher/subjects/subj-1/classrooms/room-1?tab=attendance')
+    expect(path).not.toContain('/teacher/attendance')
+  })
+
+  it('supports every real workspace tab', () => {
+    expect(buildSubjectClassroomTabPath('s', 'c', 'grades')).toContain('?tab=grades')
+    expect(buildSubjectClassroomTabPath('s', 'c', 'assignments')).toContain('?tab=assignments')
+    expect(buildSubjectClassroomTabPath('s', 'c', 'students')).toContain('?tab=students')
+  })
+})
+
+describe('buildClassroomTabPath — Dashboard "ดูนักเรียน" deep link', () => {
+  it('builds the classroom detail route with ?tab=students, targeting the exact classroom', () => {
+    expect(buildClassroomTabPath('room-1', 'students')).toBe('/teacher/classrooms/room-1?tab=students')
   })
 })

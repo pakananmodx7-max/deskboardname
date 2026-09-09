@@ -4,6 +4,7 @@ import {
   aggregateAttendanceSummary,
   buildMissingAssignmentRows,
   filterAssignmentsByDateRange,
+  getDefaultReportFilters,
   groupAssignmentsBySubjectClassroom,
   type RawAttendanceRecord,
 } from '@/services/report-service'
@@ -176,5 +177,21 @@ describe('buildMissingAssignmentRows — missing-work detection', () => {
     const rows = buildMissingAssignmentRows(items, {}, rosterByClassroom, subjectNameById, classroomNameById)
     expect(rows[0].subjectName).toBe('คณิตศาสตร์')
     expect(rows[0].classroomName).toBe('ม.5/1')
+  })
+})
+
+describe('getDefaultReportFilters — the one shared default Reports and Dashboard both use', () => {
+  it('is deterministic for a given `now` (same input, same output)', () => {
+    const now = new Date('2026-09-10T00:00:00Z')
+    expect(getDefaultReportFilters(now)).toEqual(getDefaultReportFilters(now))
+  })
+
+  it('has no classroom/subject filter and a 30-day window ending on `now`', () => {
+    const now = new Date('2026-09-10T00:00:00Z')
+    const filters = getDefaultReportFilters(now)
+    expect(filters.classroomId).toBeNull()
+    expect(filters.subjectId).toBeNull()
+    expect(filters.endDate).toBe('2026-09-10')
+    expect(filters.startDate).toBe('2026-08-12')
   })
 })
