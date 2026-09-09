@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ExportButtons } from '@/features/reports-real/export-buttons'
 import { buildFilterSubtitle, buildGradeExportTable } from '@/features/reports-real/report-export-builders'
+import { buildAssignmentDetailPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { getGradeSummaryReport } from '@/services/report-service'
 import type { GradeSummaryGroup, ReportFilters } from '@/types/report'
@@ -81,7 +83,12 @@ export function GradeSummaryReport({ filters, classroomName, subjectName }: Grad
                       <th className="sticky left-0 bg-card px-5 py-3 font-medium">ชื่อ-นามสกุล</th>
                       {group.assignments.map((a) => (
                         <th key={a.assignmentId} className="px-3 py-3 text-center font-medium">
-                          {a.title}
+                          <Link
+                            to={buildAssignmentDetailPath(group.subjectId, group.classroomId, a.assignmentId)}
+                            className="hover:underline"
+                          >
+                            {a.title}
+                          </Link>
                           <div className="font-normal">/{a.maxScore}</div>
                         </th>
                       ))}

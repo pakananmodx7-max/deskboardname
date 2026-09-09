@@ -26,6 +26,23 @@ interface AssignmentDialogProps {
   /** Present = editing this assignment; absent = creating a new one. */
   assignment?: Assignment | null
   onSaved: () => void
+  /** Skip rendering the "สื่อและใบงาน" section — for a caller (the
+   * assignment detail page) that already shows its own standalone
+   * resource manager on the page itself, so this dialog only needs to
+   * handle title/description/due date/max score and never duplicates the
+   * resource UI in a second place. Defaults to false (show it), which
+   * keeps the create flow's "create then continue" step — where this
+   * dialog IS the only place to add a resource — unaffected. */
+  hideResourcesSection?: boolean
+  /** Locks the max-score field and shows a pointer to where it's
+   * actually editable — the assignment detail page's own inline max-
+   * score input, which (unlike this dialog) checks a lowered max score
+   * against every already-recorded submission score first
+   * (validateMaxScoreChange) before allowing the change. Keeping that the
+   * single place max score can change avoids silently truncating a
+   * recorded score out of range through this dialog's plain `maxScore >
+   * 0` check. Defaults to false (editable here) for every other caller. */
+  disableMaxScoreEdit?: boolean
 }
 
 function emptyForm() {
@@ -52,6 +69,8 @@ export function AssignmentDialog({
   classroomId,
   assignment,
   onSaved,
+  hideResourcesSection = false,
+  disableMaxScoreEdit = false,
 }: AssignmentDialogProps) {
   const { toast } = useToast()
   const [form, setForm] = useState(emptyForm)
@@ -132,7 +151,13 @@ export function AssignmentDialog({
           description: form.description.trim() || null,
         })
         toast('บันทึกงานแล้ว')
-        handleOpenChange(false)
+        // Direct onOpenChange + onSaved, not handleOpenChange — that
+        // helper's auto-onSaved-on-close logic only covers the create
+        // flow (where the assignment might already exist from step one
+        // but onSaved hasn't fired yet); an edit always calls onSaved
+        // itself, right here, the moment the update actually succeeds.
+        onOpenChange(false)
+        onSaved()
       } else {
         const created = await createAssignment({
           subjectId,
@@ -189,9 +214,10 @@ export function AssignmentDialog({
                 min={1}
                 value={form.maxScore}
                 onChange={(e) => setForm((f) => ({ ...f, maxScore: e.target.value }))}
-                disabled={isCreateFlowFinishStep}
+                disabled={isCreateFlowFinishStep || disableMaxScoreEdit}
                 required
               />
+              {disableMaxScoreEdit && <p className="text-xs text-muted-foreground">แก้ไขคะแนนเต็มได้ที่หน้ารายละเอียดงาน</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="real-assignment-due">กำหนดส่ง</Label>
@@ -215,7 +241,7 @@ export function AssignmentDialog({
             />
           </div>
 
-          {currentAssignmentId && (
+          {currentAssignmentId && !hideResourcesSection && (
             <AssignmentResourcesSection
               assignmentId={currentAssignmentId}
               subjectId={subjectId}

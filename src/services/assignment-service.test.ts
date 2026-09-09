@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ASSIGNMENT_DETAIL_FILTERS,
   buildDefaultSubmissions,
   bulkFillWouldOverwrite,
   computeClassGradeStats,
+  computeGradedTally,
   computeGradeRows,
   deriveAssignmentRoster,
   deriveGradeRoster,
+  filterRosterByStatus,
   getSubmissionSummary,
   mergeSubmissionsWithDefaults,
   nextScoreFocusIndex,
@@ -14,9 +17,26 @@ import {
   parsePastedScores,
   parseScoreInput,
   planScorePaste,
+  searchRoster,
   validateMaxScoreChange,
 } from '@/services/assignment-service'
 import type { Assignment, AssignmentSubmission } from '@/types/assignment'
+
+function rosterStudent(overrides: Partial<{ id: string; firstName: string; lastName: string; studentCode: string | null; number: number | null; status: 'active' | 'inactive' }> = {}) {
+  return {
+    id: 's1',
+    firstName: 'สมชาย',
+    lastName: 'ใจดี',
+    studentCode: 'S001',
+    number: 1,
+    status: 'active' as const,
+    ...overrides,
+  }
+}
+
+function emptySubmission(overrides: Partial<AssignmentSubmission> = {}): AssignmentSubmission {
+  return { studentId: 's1', status: 'not_submitted', score: null, note: null, ...overrides }
+}
 
 describe('buildDefaultSubmissions', () => {
   it('defaults every given student id to not_submitted with no score/note', () => {
@@ -462,5 +482,98 @@ describe('mergeSubmissionsWithDefaults — score persistence after refresh', () 
   it('an empty fetch result (nothing saved yet) leaves every active student at the default', () => {
     const merged = mergeSubmissionsWithDefaults(['s1', 's2'], {})
     expect(merged).toEqual(buildDefaultSubmissions(['s1', 's2']))
+  })
+})
+
+// ==================================================
+// Assignment Detail Workspace — summary "ตรวจแล้ว/ยังไม่ตรวจ", filters,
+// search (all pure, so the table's filter/search/summary behavior is
+// unit-testable without a live Supabase round trip).
+// ==================================================
+
+describe('computeGradedTally — "ตรวจแล้ว / ยังไม่ตรวจ", always over the FULL roster', () => {
+  it('counts a student with a non-null score as graded, regardless of status', () => {
+    const submissions = { s1: emptySubmission({ studentId: 's1', score: 8, status: 'late' }) }
+    expect(computeGradedTally(['s1'], submissions)).toEqual({ total: 1, graded: 1, notGraded: 0 })
+  })
+
+  it('counts a student with no score yet as not graded, even if marked submitted', () => {
+    const submissions = { s1: emptySubmission({ studentId: 's1', score: null, status: 'submitted' }) }
+    expect(computeGradedTally(['s1'], submissions)).toEqual({ total: 1, graded: 0, notGraded: 1 })
+  })
+
+  it('is unaffected by which students are passed elsewhere as "filtered" — it always reflects exactly the roster ids given', () => {
+    const submissions = {
+      s1: emptySubmission({ studentId: 's1', score: 10 }),
+      s2: emptySubmission({ studentId: 's2', score: null }),
+      s3: emptySubmission({ studentId: 's3', score: 5 }),
+    }
+    expect(computeGradedTally(['s1', 's2', 's3'], submissions)).toEqual({ total: 3, graded: 2, notGraded: 1 })
+  })
+
+  it('treats a roster id with no submission row at all as not graded (never throws)', () => {
+    expect(computeGradedTally(['ghost'], {})).toEqual({ total: 1, graded: 0, notGraded: 1 })
+  })
+})
+
+describe('filterRosterByStatus — assignment detail table filters', () => {
+  const roster = [rosterStudent({ id: 's1' }), rosterStudent({ id: 's2' }), rosterStudent({ id: 's3' })]
+  const submissions = {
+    s1: emptySubmission({ studentId: 's1', status: 'submitted', score: 9 }),
+    s2: emptySubmission({ studentId: 's2', status: 'not_submitted', score: null }),
+    s3: emptySubmission({ studentId: 's3', status: 'late', score: null }),
+  }
+
+  it('"all" returns every roster member unchanged', () => {
+    expect(filterRosterByStatus(roster, submissions, 'all').map((s) => s.id)).toEqual(['s1', 's2', 's3'])
+  })
+
+  it('filters to exactly one status', () => {
+    expect(filterRosterByStatus(roster, submissions, 'submitted').map((s) => s.id)).toEqual(['s1'])
+    expect(filterRosterByStatus(roster, submissions, 'not_submitted').map((s) => s.id)).toEqual(['s2'])
+    expect(filterRosterByStatus(roster, submissions, 'late').map((s) => s.id)).toEqual(['s3'])
+  })
+
+  it('"ungraded" matches by score being null, independent of status', () => {
+    expect(filterRosterByStatus(roster, submissions, 'ungraded').map((s) => s.id).sort()).toEqual(['s2', 's3'])
+  })
+
+  it('a roster member with no submission row defaults to not_submitted for filtering purposes', () => {
+    const rosterWithGhost = [...roster, rosterStudent({ id: 's4' })]
+    expect(filterRosterByStatus(rosterWithGhost, submissions, 'not_submitted').map((s) => s.id)).toEqual(['s2', 's4'])
+  })
+
+  it('every filter option in ASSIGNMENT_DETAIL_FILTERS is a real, handled key', () => {
+    for (const { key } of ASSIGNMENT_DETAIL_FILTERS) {
+      expect(() => filterRosterByStatus(roster, submissions, key)).not.toThrow()
+    }
+  })
+})
+
+describe('searchRoster — assignment detail student search', () => {
+  const roster = [
+    rosterStudent({ id: 's1', firstName: 'สมชาย', lastName: 'ใจดี', studentCode: 'S001', number: 1 }),
+    rosterStudent({ id: 's2', firstName: 'สมหญิง', lastName: 'รักเรียน', studentCode: 'S002', number: 2 }),
+  ]
+
+  it('matches by first or last name (case-insensitive)', () => {
+    expect(searchRoster(roster, 'สมหญิง').map((s) => s.id)).toEqual(['s2'])
+    expect(searchRoster(roster, 'ใจดี').map((s) => s.id)).toEqual(['s1'])
+  })
+
+  it('matches by student code', () => {
+    expect(searchRoster(roster, 'S002').map((s) => s.id)).toEqual(['s2'])
+  })
+
+  it('matches by roll number', () => {
+    expect(searchRoster(roster, '1').map((s) => s.id)).toEqual(['s1'])
+  })
+
+  it('an empty/whitespace query returns the roster unchanged', () => {
+    expect(searchRoster(roster, '   ')).toEqual(roster)
+  })
+
+  it('a query matching nobody returns an empty array', () => {
+    expect(searchRoster(roster, 'ไม่มีตัวตน')).toEqual([])
   })
 })

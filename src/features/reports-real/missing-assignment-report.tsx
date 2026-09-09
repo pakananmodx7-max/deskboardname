@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { ExportButtons } from '@/features/reports-real/export-buttons'
 import { buildFilterSubtitle, buildMissingAssignmentExportTable } from '@/features/reports-real/report-export-builders'
+import { buildAssignmentDetailPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { getMissingAssignmentReport } from '@/services/report-service'
 import type { MissingAssignmentRow, ReportFilters } from '@/types/report'
@@ -108,7 +110,14 @@ export function MissingAssignmentReport({ filters, classroomName, subjectName }:
                       </td>
                       <td className="px-4 py-2 text-muted-foreground">{row.classroomName}</td>
                       <td className="px-4 py-2 text-muted-foreground">{row.subjectName}</td>
-                      <td className="px-4 py-2">{row.assignmentTitle}</td>
+                      <td className="px-4 py-2">
+                        <Link
+                          to={buildAssignmentDetailPath(row.subjectId, row.classroomId, row.assignmentId)}
+                          className="hover:underline"
+                        >
+                          {row.assignmentTitle}
+                        </Link>
+                      </td>
                       <td className="px-4 py-2 text-muted-foreground">{formatDueDate(row.dueDate)}</td>
                       <td className="px-4 py-2">
                         <Badge variant={row.status === 'missing' ? 'destructive' : 'warning'}>

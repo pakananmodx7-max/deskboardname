@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress'
 import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { useToast } from '@/components/ui/toast'
 import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
+import { buildAssignmentDetailPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   archiveAssignment,
@@ -112,9 +113,7 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
               <Card
                 key={assignment.id}
                 className="cursor-pointer transition-shadow hover:shadow-md"
-                onClick={() =>
-                  navigate(`/teacher/subjects/${subject.id}/classrooms/${classroomId}/assignments/${assignment.id}`)
-                }
+                onClick={() => navigate(buildAssignmentDetailPath(subject.id, classroomId, assignment.id))}
               >
                 <CardContent className="space-y-3 pt-5">
                   <div className="flex items-start justify-between gap-2">

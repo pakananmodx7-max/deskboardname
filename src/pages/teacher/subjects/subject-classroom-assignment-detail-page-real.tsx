@@ -1,4 +1,4 @@
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Search } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -17,11 +18,17 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/components/ui/toast'
+import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
+import { AssignmentResourcesSection } from '@/features/subjects-real/assignment-resources-section'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import {
+  ASSIGNMENT_DETAIL_FILTERS,
+  archiveAssignment,
   bulkFillWouldOverwrite,
+  computeGradedTally,
   deriveAssignmentRoster,
+  filterRosterByStatus,
   getAssignmentById,
   getSubmissionSummary,
   getSubmissions,
@@ -30,13 +37,17 @@ import {
   nextStatusAfterScore,
   parseScoreInput,
   planScorePaste,
+  searchRoster,
   setSubmissionNote,
   setSubmissionScore,
   setSubmissionStatus,
   updateAssignment,
   validateMaxScoreChange,
+  type AssignmentDetailFilter,
 } from '@/services/assignment-service'
+import { getClassroomById } from '@/services/classroom-service'
 import { getStudentsByClassroom } from '@/services/student-service'
+import { getSubjectById } from '@/services/subject-service'
 import type { Assignment, AssignmentSubmission, SubmissionStatus } from '@/types/assignment'
 import type { ClassroomStudent } from '@/types/student'
 
@@ -62,22 +73,36 @@ function studentLabel(student: { firstName: string; lastName: string } | undefin
 }
 
 /**
- * Real, Supabase-backed assignment detail — checklist, bulk status
- * actions, and spreadsheet-style score entry, all scoped to this one
- * assignment's classroom roster (getStudentsByClassroom(classroomId),
- * never another linked classroom's students). Unlike the standalone
- * Attendance page, there's no batch "Save" step: each status click and
- * each score/note edit (committed on blur, to avoid a network round trip
- * per keystroke) persists immediately via assignment-service.ts —
- * assignment submissions aren't an atomic all-or-nothing batch the way
- * one day's attendance session is, so there's no shared parent write
- * that needs a single deferred commit.
+ * Real, Supabase-backed assignment detail workspace — header (title,
+ * subject, classroom, due date, description, status, edit/archive),
+ * "สื่อและใบงาน" resources, a REAL classroom roster with submission
+ * status + score entry, and filters/search over that roster. Everything
+ * here reads through assignments / assignment_resources /
+ * assignment_submissions / classroom_students / students — no demo/mock
+ * fallback anywhere.
  *
- * Score entry supports Enter-to-next-row, Arrow Up/Down navigation,
- * pasting a multi-row column copied from Excel/Sheets, and a bulk-fill
- * action for the currently checkbox-selected students — all built on
- * the same setSubmissionScore/parseScoreInput used by a single-cell
- * edit, never a second, competing write path.
+ * Loading is split into two INDEPENDENT sections on purpose (see the
+ * task's "error isolation" requirement): loadHeader() resolves the
+ * assignment plus its subject/classroom names, loadRoster() resolves the
+ * classroom roster + submissions. A failure in either leaves the other
+ * section rendering normally — e.g. a roster load failure never blanks
+ * the header or the resources section, and a header load failure (rare —
+ * it's the same query that already gates the whole page's identity
+ * check) never blocks the resources section, which manages its own
+ * loading/error state entirely on its own (AssignmentResourcesSection).
+ *
+ * Unlike the standalone Attendance page, there's no batch "Save" step for
+ * submissions: each status click and each score/note edit (committed on
+ * blur, to avoid a network round trip per keystroke) persists immediately
+ * via assignment-service.ts. Score entry supports Enter-to-next-row,
+ * Arrow Up/Down navigation, pasting a multi-row column copied from
+ * Excel/Sheets, and a bulk-fill action for the currently checkbox-
+ * selected students — all built on the same setSubmissionScore/
+ * parseScoreInput used by a single-cell edit, never a second, competing
+ * write path. Filtering/searching only narrows what the TABLE shows —
+ * the summary counts above it always reflect the full roster
+ * (computeGradedTally/getSubmissionSummary are always called with the
+ * full, unfiltered roster).
  */
 export function SubjectClassroomAssignmentDetailPageReal() {
   const { subjectId, classroomId, assignmentId } = useParams<{
@@ -89,12 +114,24 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   const { toast } = useToast()
 
   const [assignment, setAssignment] = useState<Assignment | null | undefined>(undefined)
+  const [subjectName, setSubjectName] = useState<string | null>(null)
+  const [classroomName, setClassroomName] = useState<string | null>(null)
+  const [headerLoading, setHeaderLoading] = useState(true)
+  const [headerError, setHeaderError] = useState<string | null>(null)
+
   const [students, setStudents] = useState<ClassroomStudent[]>([])
   const [submissions, setSubmissions] = useState<Record<string, AssignmentSubmission>>({})
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [rosterLoading, setRosterLoading] = useState(true)
+  const [rosterError, setRosterError] = useState<string | null>(null)
+
+  const [statusFilter, setStatusFilter] = useState<AssignmentDetailFilter>('all')
+  const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+
+  const [editOpen, setEditOpen] = useState(false)
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+
   /** Bumped whenever a score entry is rejected as out-of-range, forcing
    * the (uncontrolled, defaultValue-based) score input to remount and
    * revert to the last saved value even when that saved value itself
@@ -117,26 +154,48 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   const [bulkFillConfirmOpen, setBulkFillConfirmOpen] = useState(false)
   const [bulkFillPendingValue, setBulkFillPendingValue] = useState<number | null>(null)
 
-  const refresh = useCallback(() => {
-    if (!assignmentId || !classroomId) return undefined
-    setLoading(true)
-    setError(null)
-    return Promise.all([getAssignmentById(assignmentId), getStudentsByClassroom(classroomId), getSubmissions(assignmentId)])
-      .then(([assignmentRow, classroomStudents, submissionRows]) => {
+  const loadHeader = useCallback(() => {
+    if (!assignmentId) return undefined
+    setHeaderLoading(true)
+    setHeaderError(null)
+    return getAssignmentById(assignmentId)
+      .then(async (assignmentRow) => {
         setAssignment(assignmentRow)
+        if (!assignmentRow) return
+        const [subject, classroom] = await Promise.all([
+          getSubjectById(assignmentRow.subjectId).catch(() => null),
+          getClassroomById(assignmentRow.classroomId).catch(() => null),
+        ])
+        setSubjectName(subject?.name ?? null)
+        setClassroomName(classroom?.name ?? null)
+      })
+      .catch((err: unknown) => setHeaderError(toFriendlyErrorMessage(err)))
+      .finally(() => setHeaderLoading(false))
+  }, [assignmentId])
+
+  const loadRoster = useCallback(() => {
+    if (!assignmentId || !classroomId) return undefined
+    setRosterLoading(true)
+    setRosterError(null)
+    return Promise.all([getStudentsByClassroom(classroomId), getSubmissions(assignmentId)])
+      .then(([classroomStudents, submissionRows]) => {
         setStudents(classroomStudents)
         const activeIds = classroomStudents.filter((s) => s.status === 'active').map((s) => s.id)
         const merged = mergeSubmissionsWithDefaults(activeIds, submissionRows)
         setSubmissions(merged)
         setNoteDrafts(Object.fromEntries(Object.entries(merged).map(([id, s]) => [id, s.note ?? ''])))
       })
-      .catch((err: unknown) => setError(toFriendlyErrorMessage(err)))
-      .finally(() => setLoading(false))
+      .catch((err: unknown) => setRosterError(toFriendlyErrorMessage(err)))
+      .finally(() => setRosterLoading(false))
   }, [assignmentId, classroomId])
 
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    loadHeader()
+  }, [loadHeader])
+
+  useEffect(() => {
+    loadRoster()
+  }, [loadRoster])
 
   useEffect(() => {
     const timers = saveStateTimers.current
@@ -149,14 +208,18 @@ export function SubjectClassroomAssignmentDetailPageReal() {
     return <Navigate to="/teacher/subjects" replace />
   }
 
-  if (assignment === undefined || loading) {
+  if (assignment === undefined || headerLoading) {
     return <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
   }
 
   // Closes the "type a mismatched subject/classroom id into the URL"
   // path — an assignment that doesn't actually belong to this exact
   // subject+classroom bounces back to the workspace instead of silently
-  // rendering it under the wrong classroom.
+  // rendering it under the wrong classroom. This is also what blocks
+  // cross-teacher access: getAssignmentById is scoped by RLS
+  // (assignments_select_own, 0006) to assignments the caller's own
+  // classroom owns, so a URL naming another teacher's assignment id
+  // resolves to `null` here, same as any other not-found id.
   if (!assignment || assignment.subjectId !== subjectId || assignment.classroomId !== classroomId) {
     return <Navigate to={`/teacher/subjects/${subjectId}/classrooms/${classroomId}`} replace />
   }
@@ -172,11 +235,19 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   for (const student of roster) {
     if (submissions[student.id]) rosterSubmissions[student.id] = submissions[student.id]
   }
+  // Summary counts always reflect the FULL roster — never narrowed by
+  // statusFilter/search below, which only affect the table's visible rows.
   const summary = getSubmissionSummary(rosterSubmissions)
-  const allSelected = selectedIds.length > 0 && selectedIds.length === roster.length
+  const gradedTally = computeGradedTally(
+    roster.map((s) => s.id),
+    submissions,
+  )
+
+  const visibleRoster = searchRoster(filterRosterByStatus(roster, submissions, statusFilter), search)
+  const allSelected = selectedIds.length > 0 && selectedIds.length === visibleRoster.length
 
   function toggleSelectAll() {
-    setSelectedIds(allSelected ? [] : roster.map((s) => s.id))
+    setSelectedIds(allSelected ? [] : visibleRoster.map((s) => s.id))
   }
 
   function toggleSelect(studentId: string) {
@@ -285,7 +356,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   function handleScoreKeyDown(e: KeyboardEvent<HTMLInputElement>, studentId: string, rowIndex: number) {
     if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
 
-    const targetIndex = nextScoreFocusIndex(e.key, rowIndex, roster.length)
+    const targetIndex = nextScoreFocusIndex(e.key, rowIndex, visibleRoster.length)
 
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -294,7 +365,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
       // the last row, targetIndex === rowIndex, so this simply re-focuses
       // the same (now-saved) cell instead of nowhere.
       e.currentTarget.blur()
-      const targetId = roster[targetIndex]?.id ?? studentId
+      const targetId = visibleRoster[targetIndex]?.id ?? studentId
       requestAnimationFrame(() => scoreInputRefs.current[targetId]?.focus())
       return
     }
@@ -303,7 +374,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
     // spinner behavior when this actually moves focus to another row.
     if (targetIndex !== rowIndex) {
       e.preventDefault()
-      const targetId = roster[targetIndex]?.id
+      const targetId = visibleRoster[targetIndex]?.id
       if (targetId) scoreInputRefs.current[targetId]?.focus()
     }
   }
@@ -321,7 +392,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
     const plan = planScorePaste(
       text,
       rowIndex,
-      roster.map((s) => s.id),
+      visibleRoster.map((s) => s.id),
       currentAssignment.maxScore,
     )
     const invalidRows = plan.filter((row) => row.error)
@@ -362,7 +433,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   }
 
   async function handleCopySelectedScores() {
-    const orderedSelected = roster.filter((s) => selectedIds.includes(s.id))
+    const orderedSelected = visibleRoster.filter((s) => selectedIds.includes(s.id))
     if (orderedSelected.length === 0) return
     const text = orderedSelected.map((s) => submissions[s.id]?.score ?? '').join('\n')
     try {
@@ -436,6 +507,17 @@ export function SubjectClassroomAssignmentDetailPageReal() {
     }
   }
 
+  async function handleArchive() {
+    try {
+      const updated = await archiveAssignment(currentAssignmentId)
+      setAssignment(updated)
+      toast('เก็บถาวรงานแล้ว')
+      setArchiveConfirmOpen(false)
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถเก็บถาวรงานได้'))
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -447,8 +529,35 @@ export function SubjectClassroomAssignmentDetailPageReal() {
           <ArrowLeft className="size-3.5" />
           กลับไปที่ห้องเรียน
         </button>
-        <h1 className="text-xl font-semibold tracking-tight">{assignment.title}</h1>
-        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold tracking-tight">{currentAssignment.title}</h1>
+              <Badge variant={currentAssignment.isArchived ? 'outline' : 'success'}>
+                {currentAssignment.isArchived ? 'เก็บถาวร' : 'ใช้งานอยู่'}
+              </Badge>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {subjectName ?? '-'} · {classroomName ?? '-'}
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+              แก้ไขงาน
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentAssignment.isArchived}
+              onClick={() => setArchiveConfirmOpen(true)}
+            >
+              เก็บถาวรงาน
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <label htmlFor="assignment-max-score" className="flex items-center gap-1.5">
             คะแนนเต็ม:
             <Input
@@ -461,19 +570,24 @@ export function SubjectClassroomAssignmentDetailPageReal() {
               className="h-8 w-20 text-center"
             />
           </label>
-          {assignment.dueDate && <span>กำหนดส่ง {assignment.dueDate}</span>}
+          {currentAssignment.dueDate && <span>กำหนดส่ง {currentAssignment.dueDate}</span>}
         </div>
         {maxScoreError && <p className="mt-1 text-sm text-destructive">{maxScoreError}</p>}
-        {assignment.description && <p className="mt-1 text-sm text-muted-foreground">{assignment.description}</p>}
+        {currentAssignment.description && <p className="mt-1 text-sm text-muted-foreground">{currentAssignment.description}</p>}
+        {headerError && <p className="mt-1 text-sm text-destructive">{headerError}</p>}
       </div>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      <AssignmentResourcesSection assignmentId={currentAssignmentId} subjectId={subjectId} classroomId={classroomId} />
 
       <Card>
         <CardHeader>
           <CardTitle className="text-base">สรุปการส่งงาน</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">นักเรียนทั้งหมด</span>
+            <span className="font-semibold">{gradedTally.total}</span>
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">ส่งแล้ว</span>
             <span className="font-semibold">{summary.submitted}</span>
@@ -490,14 +604,51 @@ export function SubjectClassroomAssignmentDetailPageReal() {
             <span className="text-muted-foreground">ขาดส่ง</span>
             <span className="font-semibold">{summary.missing}</span>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">ตรวจแล้ว / ยังไม่ตรวจ</span>
+            <span className="font-semibold">
+              {gradedTally.graded} / {gradedTally.notGraded}
+            </span>
+          </div>
           <div className="ml-auto flex items-center gap-2 border-l border-border pl-6">
             <span className="text-muted-foreground">คะแนนเฉลี่ย</span>
             <span className="font-semibold">
-              {summary.average !== null ? summary.average.toFixed(1) : '-'}/{assignment.maxScore}
+              {summary.average !== null ? summary.average.toFixed(1) : '-'}/{currentAssignment.maxScore}
             </span>
           </div>
         </CardContent>
       </Card>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1 overflow-x-auto">
+          {ASSIGNMENT_DETAIL_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setStatusFilter(f.key)}
+              className={cn(
+                'shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                statusFilter === f.key
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+              )}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative ml-auto w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="ค้นหานักเรียน..."
+            className="h-8 pl-8"
+          />
+        </div>
+      </div>
+
+      {rosterError && <p className="text-sm text-destructive">{rosterError}</p>}
 
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-2 text-sm">
@@ -532,21 +683,33 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                 <tr className="border-b border-border text-xs text-muted-foreground">
                   <th className="px-4 py-3"></th>
                   <th className="px-3 py-3 font-medium">เลขที่</th>
-                  <th className="px-3 py-3 font-medium">ชื่อ</th>
+                  <th className="px-3 py-3 font-medium">นักเรียน</th>
                   <th className="px-3 py-3 font-medium">สถานะ</th>
                   <th className="px-3 py-3 font-medium">คะแนน</th>
                   <th className="px-3 py-3 font-medium">หมายเหตุ</th>
                 </tr>
               </thead>
               <tbody>
-                {roster.length === 0 ? (
+                {rosterLoading ? (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-6 text-center text-muted-foreground">
+                      กำลังโหลด...
+                    </td>
+                  </tr>
+                ) : roster.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-5 py-6 text-center text-muted-foreground">
                       ยังไม่มีนักเรียนในห้องเรียนนี้
                     </td>
                   </tr>
+                ) : visibleRoster.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-5 py-6 text-center text-muted-foreground">
+                      ไม่พบนักเรียนตามเงื่อนไขที่เลือก
+                    </td>
+                  </tr>
                 ) : (
-                  roster.map((student, rowIndex) => {
+                  visibleRoster.map((student, rowIndex) => {
                     const submission = submissions[student.id] ?? {
                       studentId: student.id,
                       status: 'not_submitted' as SubmissionStatus,
@@ -671,6 +834,29 @@ export function SubjectClassroomAssignmentDetailPageReal() {
         onConfirm={() => {
           if (bulkFillPendingValue !== null) return applyBulkFill(bulkFillPendingValue)
         }}
+      />
+
+      <AssignmentDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        subjectId={subjectId}
+        classroomId={classroomId}
+        assignment={currentAssignment}
+        hideResourcesSection
+        disableMaxScoreEdit
+        onSaved={() => {
+          setEditOpen(false)
+          loadHeader()
+        }}
+      />
+
+      <ConfirmDialog
+        open={archiveConfirmOpen}
+        onOpenChange={setArchiveConfirmOpen}
+        title="เก็บถาวรงาน"
+        description={`เก็บถาวร "${currentAssignment.title}"?\nงานและคะแนนของนักเรียนจะยังคงอยู่ในระบบ`}
+        confirmLabel="เก็บถาวร"
+        onConfirm={handleArchive}
       />
     </div>
   )

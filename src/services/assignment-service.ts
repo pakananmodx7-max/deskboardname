@@ -349,6 +349,81 @@ export function getSubmissionSummary(submissions: Record<string, AssignmentSubmi
   return summary
 }
 
+export interface GradedTally {
+  /** Roster size this tally was computed over — always the full roster,
+   * never affected by any table filter/search (see the assignment detail
+   * page: summary counts must stay truthful regardless of what the
+   * teacher is currently filtering the table down to). */
+  total: number
+  /** Has a non-null score recorded, regardless of submission status. */
+  graded: number
+  notGraded: number
+}
+
+/** "ตรวจแล้ว / ยังไม่ตรวจ" — derived purely from whether a score is
+ * present, never a separate stored field. Always computed over the full
+ * roster passed in (the assignment detail page always passes the
+ * unfiltered roster here, keeping this truthful regardless of the
+ * table's current filter/search). */
+export function computeGradedTally(
+  rosterIds: string[],
+  submissions: Record<string, AssignmentSubmission>,
+): GradedTally {
+  const total = rosterIds.length
+  const graded = rosterIds.filter((id) => submissions[id]?.score !== null && submissions[id]?.score !== undefined).length
+  return { total, graded, notGraded: total - graded }
+}
+
+export type AssignmentDetailFilter = SubmissionStatus | 'all' | 'ungraded'
+
+export const ASSIGNMENT_DETAIL_FILTERS: { key: AssignmentDetailFilter; label: string }[] = [
+  { key: 'all', label: 'ทั้งหมด' },
+  { key: 'not_submitted', label: 'ยังไม่ส่ง' },
+  { key: 'submitted', label: 'ส่งแล้ว' },
+  { key: 'late', label: 'ส่งช้า' },
+  { key: 'missing', label: 'ขาดส่ง' },
+  { key: 'ungraded', label: 'ยังไม่ให้คะแนน' },
+]
+
+/**
+ * Filters the roster shown in the submission table by status or by
+ * "ungraded" (score is null, regardless of status) — never touches the
+ * summary counts above, which always reflect the full roster. `'all'`
+ * returns the roster unchanged (a new array, so callers can rely on a
+ * fresh reference each call).
+ */
+export function filterRosterByStatus<T extends { id: string }>(
+  roster: T[],
+  submissions: Record<string, AssignmentSubmission>,
+  filter: AssignmentDetailFilter,
+): T[] {
+  if (filter === 'all') return [...roster]
+  if (filter === 'ungraded') {
+    return roster.filter((student) => (submissions[student.id]?.score ?? null) === null)
+  }
+  return roster.filter((student) => (submissions[student.id]?.status ?? 'not_submitted') === filter)
+}
+
+/**
+ * Student search over the currently status-filtered roster — matches
+ * name (either order of first/last), student code, or roll number, all
+ * case-insensitively. An empty/whitespace-only query returns the roster
+ * unchanged.
+ */
+export function searchRoster<T extends { firstName: string; lastName: string; studentCode: string | null; number: number | null }>(
+  roster: T[],
+  query: string,
+): T[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return roster
+  return roster.filter((student) => {
+    const fullName = `${student.firstName} ${student.lastName}`.toLowerCase()
+    const code = (student.studentCode ?? '').toLowerCase()
+    const number = student.number !== null ? String(student.number) : ''
+    return fullName.includes(q) || code.includes(q) || number.includes(q)
+  })
+}
+
 // ==================================================
 // Grades — a derived view over assignments + assignment_submissions,
 // never a separate stored table (see 0006's "Future relationship" note).
