@@ -1,6 +1,11 @@
+import { useState } from 'react'
+
 import { Avatar } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { useToast } from '@/components/ui/toast'
+import { SendNotificationDialog } from '@/features/student-notifications/send-notification-dialog'
 import type { ClassroomStudent } from '@/types/student'
 
 interface SubjectStudentDrawerProps {
@@ -16,6 +21,9 @@ interface SubjectStudentDrawerProps {
  * viewed student is always a plain ClassroomStudent from the selected
  * classroom, not a merged SubjectStudentView. */
 export function SubjectStudentDrawer({ subjectName, classroomName, student, onOpenChange }: SubjectStudentDrawerProps) {
+  const { toast } = useToast()
+  const [messagingOpen, setMessagingOpen] = useState(false)
+
   if (!student) return null
 
   return (
@@ -62,10 +70,22 @@ export function SubjectStudentDrawer({ subjectName, classroomName, student, onOp
           </div>
         </div>
 
+        <Button variant="outline" onClick={() => setMessagingOpen(true)}>
+          ส่งข้อความ
+        </Button>
+
         <p className="text-xs text-muted-foreground">
           ข้อมูลงานค้างและคะแนนยังใช้งานได้เฉพาะในโหมดสาธิต — ยังไม่เชื่อมต่อกับฐานข้อมูลจริงในเฟสนี้
         </p>
       </SheetContent>
+
+      <SendNotificationDialog
+        open={messagingOpen}
+        onOpenChange={setMessagingOpen}
+        studentId={student.id}
+        studentName={`${student.firstName} ${student.lastName}`}
+        onSent={() => toast(`ส่งข้อความถึง ${student.firstName} ${student.lastName} แล้ว`)}
+      />
     </Sheet>
   )
 }

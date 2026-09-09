@@ -2,7 +2,7 @@ import { GraduationCap, LogOut, X } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
 import { studentNavItems } from '@/components/layout/student-nav-items'
-import { Avatar } from '@/components/ui/avatar'
+import { StudentAvatar } from '@/components/layout/student-avatar'
 import { cn } from '@/lib/utils'
 import type { MyClassroom, MyStudentProfile } from '@/types/student-portal'
 
@@ -16,11 +16,10 @@ interface StudentSidebarProps {
 
 function StudentIdentity({ profile, classroom }: { profile: MyStudentProfile | null; classroom: MyClassroom | null }) {
   const displayName = profile ? `${profile.firstName} ${profile.lastName}` : '-'
-  const initials = profile ? profile.firstName.slice(0, 2) : 'นร'
 
   return (
     <div className="flex items-center gap-3 border-b border-border px-5 py-4">
-      <Avatar>{initials}</Avatar>
+      <StudentAvatar avatarPath={profile?.avatarPath ?? null} firstName={profile?.firstName ?? 'นร'} />
       <div className="min-w-0 leading-tight">
         <p className="truncate text-sm font-medium">{displayName}</p>
         <p className="truncate text-xs text-muted-foreground">

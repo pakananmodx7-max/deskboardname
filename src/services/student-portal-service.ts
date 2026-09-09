@@ -4,7 +4,10 @@ import type { SubmissionStatus } from '@/types/assignment'
 import type {
   MyAssignment,
   MyAttendanceRecord,
+  MyCalendarEntry,
+  MyCalendarItem,
   MyClassroom,
+  MyNotification,
   MyStudentProfile,
   MySubject,
 } from '@/types/student-portal'
@@ -28,6 +31,7 @@ interface StudentRow {
   first_name: string
   last_name: string
   nickname: string | null
+  avatar_path: string | null
 }
 
 interface ClassroomRow {
@@ -94,7 +98,7 @@ export async function getMyStudentProfile(): Promise<MyStudentProfile | null> {
   const supabase = getSupabaseClient()
   const { data, error } = await supabase
     .from('students')
-    .select('id, student_code, number, first_name, last_name, nickname')
+    .select('id, student_code, number, first_name, last_name, nickname, avatar_path')
     .maybeSingle()
 
   if (error) throw error
@@ -108,6 +112,7 @@ export async function getMyStudentProfile(): Promise<MyStudentProfile | null> {
     firstName: row.first_name,
     lastName: row.last_name,
     nickname: row.nickname,
+    avatarPath: row.avatar_path,
   }
 }
 
@@ -397,5 +402,320 @@ export function computeMyGrades(assignments: MyAssignment[]): MyGradesSummary {
  * filterMyAssignments instead. */
 export function getPendingAssignments(assignments: MyAssignment[]): MyAssignment[] {
   return assignments.filter((a) => a.status === 'not_submitted' || a.status === 'late')
+}
+
+export interface MyTodoSummary {
+  /** งานค้าง — every not-yet-submitted assignment (same set as
+   * getPendingAssignments). */
+  outstanding: number
+  /** ใกล้กำหนด — the outstanding subset due within DUE_SOON_WINDOW_DAYS
+   * (an already-overdue due date counts too — it's more urgent, not
+   * less). */
+  dueSoon: number
+  /** ส่งแล้ว — status 'submitted' only, matching this app's existing
+   * status semantics (see assignment-service.ts: 'late'/'missing' are
+   * teacher-set outcomes, not "already turned in"). */
+  submitted: number
+}
+
+const DUE_SOON_WINDOW_DAYS = 3
+
+/** Pure — the dashboard's "งานของฉัน" summary. `now` is injectable so the
+ * due-soon window is unit-testable without mocking the system clock. */
+export function summarizeMyTodo(assignments: MyAssignment[], now: Date = new Date()): MyTodoSummary {
+  const pending = getPendingAssignments(assignments)
+  const cutoff = new Date(now)
+  cutoff.setDate(cutoff.getDate() + DUE_SOON_WINDOW_DAYS)
+  const cutoffStr = cutoff.toISOString().slice(0, 10)
+
+  return {
+    outstanding: pending.length,
+    dueSoon: pending.filter((a) => a.dueDate !== null && a.dueDate <= cutoffStr).length,
+    submitted: assignments.filter((a) => a.status === 'submitted').length,
+  }
+}
+
+// ==================================================
+// Personal calendar (student_calendar_entries, 0012) — strictly own-row
+// CRUD, reads/writes exclusively through the RLS added there. Assignment
+// due dates are never stored here; mergeCalendarItems (below) combines
+// them with getMyAssignments' results client-side for display only.
+// ==================================================
+
+interface CalendarEntryRow {
+  id: string
+  title: string
+  note: string | null
+  event_date: string
+  event_time: string | null
+  created_at: string
+  updated_at: string
+}
+
+function mapCalendarEntry(row: CalendarEntryRow): MyCalendarEntry {
+  return {
+    id: row.id,
+    title: row.title,
+    note: row.note,
+    eventDate: row.event_date,
+    eventTime: row.event_time,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+export async function getMyCalendarEntries(): Promise<MyCalendarEntry[]> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('student_calendar_entries')
+    .select('id, title, note, event_date, event_time, created_at, updated_at')
+    .order('event_date', { ascending: true })
+
+  if (error) throw error
+  return (data as CalendarEntryRow[]).map(mapCalendarEntry)
+}
+
+export interface CalendarEntryInput {
+  title: string
+  note?: string | null
+  eventDate: string
+  eventTime?: string | null
+}
+
+/** Resolves the caller's own students.id the same way every other write
+ * in this file resolves it — by reading it back through
+ * students_select_own_linked (0011), never by accepting it as a
+ * parameter from the caller. Thrown error matches the "not an approved
+ * student" case StudentLayout already guards against, so this should
+ * only ever fire if a write is attempted from somewhere that skipped
+ * that guard. */
+async function requireMyStudentId(): Promise<string> {
+  const profile = await getMyStudentProfile()
+  if (!profile) throw new Error('คุณไม่มีสิทธิ์ดำเนินการนี้')
+  return profile.id
+}
+
+export async function createMyCalendarEntry(input: CalendarEntryInput): Promise<MyCalendarEntry> {
+  const supabase = getSupabaseClient()
+  const studentId = await requireMyStudentId()
+  const { data, error } = await supabase
+    .from('student_calendar_entries')
+    .insert({
+      student_id: studentId,
+      title: input.title,
+      note: input.note ?? null,
+      event_date: input.eventDate,
+      event_time: input.eventTime ?? null,
+    })
+    .select('id, title, note, event_date, event_time, created_at, updated_at')
+    .single()
+
+  if (error) throw error
+  return mapCalendarEntry(data as CalendarEntryRow)
+}
+
+export async function updateMyCalendarEntry(id: string, input: CalendarEntryInput): Promise<MyCalendarEntry> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('student_calendar_entries')
+    .update({
+      title: input.title,
+      note: input.note ?? null,
+      event_date: input.eventDate,
+      event_time: input.eventTime ?? null,
+    })
+    .eq('id', id)
+    .select('id, title, note, event_date, event_time, created_at, updated_at')
+    .single()
+
+  if (error) throw error
+  return mapCalendarEntry(data as CalendarEntryRow)
+}
+
+export async function deleteMyCalendarEntry(id: string): Promise<void> {
+  const supabase = getSupabaseClient()
+  const { error } = await supabase.from('student_calendar_entries').delete().eq('id', id)
+  if (error) throw error
+}
+
+/** Merges the student's private calendar notes with read-only assignment
+ * due dates into one display list, newest-first-by-date. Pure — no
+ * Supabase calls — so the merge/sort rule is unit-testable without a
+ * live fetch. Assignments with no due date are excluded (nothing to
+ * place on a calendar). */
+export function mergeCalendarItems(entries: MyCalendarEntry[], assignments: MyAssignment[]): MyCalendarItem[] {
+  const items: MyCalendarItem[] = [
+    ...entries.map((entry): MyCalendarItem => ({ kind: 'note', entry })),
+    ...assignments
+      .filter((a): a is MyAssignment & { dueDate: string } => a.dueDate !== null)
+      .map(
+        (a): MyCalendarItem => ({
+          kind: 'assignment-due',
+          assignmentId: a.id,
+          title: a.title,
+          subjectName: a.subjectName,
+          eventDate: a.dueDate,
+        }),
+      ),
+  ]
+  return items.sort((a, b) => {
+    const dateA = a.kind === 'note' ? a.entry.eventDate : a.eventDate
+    const dateB = b.kind === 'note' ? b.entry.eventDate : b.eventDate
+    return dateA.localeCompare(dateB)
+  })
+}
+
+// ==================================================
+// Teacher -> student notifications (teacher_student_notifications, 0012)
+// — read-only + mark-read from the student side; sending is
+// teacher-side, see notification-service.ts.
+// ==================================================
+
+interface NotificationRow {
+  id: string
+  teacher_id: string
+  title: string | null
+  message: string
+  read_at: string | null
+  created_at: string
+}
+
+/**
+ * Every notification addressed to the signed-in student, newest first,
+ * with the sending teacher's display_name resolved via a second,
+ * independently-scoped query against profiles (readable for exactly
+ * these teacher_id values thanks to profiles_select_my_teachers, 0012) —
+ * same "plain queries + client-side merge" convention as
+ * getMySubjects/getMyAssignments above, rather than an embedded
+ * PostgREST join.
+ */
+export async function getMyNotifications(): Promise<MyNotification[]> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('teacher_student_notifications')
+    .select('id, teacher_id, title, message, read_at, created_at')
+    .order('created_at', { ascending: false })
+  if (error) throw error
+
+  const rows = data as NotificationRow[]
+  const teacherIds = [...new Set(rows.map((r) => r.teacher_id))]
+  const nameByTeacherId = new Map<string, string>()
+  if (teacherIds.length > 0) {
+    const { data: profileRows, error: profileError } = await supabase
+      .from('profiles')
+      .select('id, display_name')
+      .in('id', teacherIds)
+    if (profileError) throw profileError
+    for (const p of profileRows as { id: string; display_name: string | null }[]) {
+      nameByTeacherId.set(p.id, p.display_name ?? 'ครู')
+    }
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    senderName: nameByTeacherId.get(row.teacher_id) ?? 'ครู',
+    title: row.title,
+    message: row.message,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+  }))
+}
+
+/** Pure — used by the notification bell badge and the dashboard's
+ * "ข้อความจากครู" section. */
+export function countUnreadNotifications(notifications: MyNotification[]): number {
+  return notifications.filter((n) => n.readAt === null).length
+}
+
+/** Marks exactly one of the caller's own notifications read, via the
+ * mark_notification_read RPC (0012) — never a raw UPDATE, since there is
+ * no UPDATE policy on this table for students to begin with. */
+export async function markNotificationRead(id: string): Promise<void> {
+  const supabase = getSupabaseClient()
+  const { error } = await supabase.rpc('mark_notification_read', { p_notification_id: id })
+  if (error) throw error
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  const supabase = getSupabaseClient()
+  const { error } = await supabase.rpc('mark_all_notifications_read')
+  if (error) throw error
+}
+
+// ==================================================
+// Avatar (Supabase Storage 'avatars' bucket + students.avatar_path,
+// 0012) — upload always writes to a fixed, own-student-id-prefixed path
+// (never a client-chosen name beyond the file extension), then records
+// that path via update_my_avatar_path, which independently re-validates
+// the same own-id prefix server-side.
+// ==================================================
+
+const AVATAR_BUCKET = 'avatars'
+const AVATAR_MAX_BYTES = 2 * 1024 * 1024
+const AVATAR_ALLOWED_TYPES: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+}
+
+export class InvalidAvatarFileError extends Error {}
+
+/** Client-side pre-check mirroring the storage bucket's own
+ * file_size_limit/allowed_mime_types (0012) — this is a UX nicety (fail
+ * fast, no wasted upload) and NOT the security boundary; Storage itself
+ * enforces both independently no matter what this function does. Pure,
+ * so it's unit-testable without a File/Blob upload. */
+export function validateAvatarFile(file: { type: string; size: number }): string | null {
+  if (!(file.type in AVATAR_ALLOWED_TYPES)) {
+    return 'รองรับเฉพาะไฟล์รูปภาพ JPG, PNG หรือ WEBP เท่านั้น'
+  }
+  if (file.size > AVATAR_MAX_BYTES) {
+    return 'ขนาดไฟล์ต้องไม่เกิน 2MB'
+  }
+  return null
+}
+
+/** Uploads a new avatar image and records its path on the student's own
+ * row. Returns the new avatar_path. Throws InvalidAvatarFileError (a
+ * friendly Thai message) for a rejected file type/size before ever
+ * calling Supabase. */
+export async function uploadMyAvatar(file: File): Promise<string> {
+  const validationError = validateAvatarFile(file)
+  if (validationError) throw new InvalidAvatarFileError(validationError)
+
+  const supabase = getSupabaseClient()
+  const studentId = await requireMyStudentId()
+  const ext = AVATAR_ALLOWED_TYPES[file.type]
+  const path = `${studentId}/avatar.${ext}`
+
+  const { error: uploadError } = await supabase.storage
+    .from(AVATAR_BUCKET)
+    .upload(path, file, { upsert: true, contentType: file.type, cacheControl: '3600' })
+  if (uploadError) throw uploadError
+
+  const { error: rpcError } = await supabase.rpc('update_my_avatar_path', { p_avatar_path: path })
+  if (rpcError) throw rpcError
+
+  return path
+}
+
+/** Removes the avatar and reverts to fallback initials. */
+export async function removeMyAvatar(currentPath: string | null): Promise<void> {
+  const supabase = getSupabaseClient()
+  const { error: rpcError } = await supabase.rpc('update_my_avatar_path', { p_avatar_path: null })
+  if (rpcError) throw rpcError
+
+  if (currentPath) {
+    // Best-effort — the object being left behind (or already gone) never
+    // blocks avatar_path itself from being cleared above.
+    await supabase.storage.from(AVATAR_BUCKET).remove([currentPath]).catch(() => undefined)
+  }
+}
+
+/** The bucket is public (see 0012's storage section) — this is a plain
+ * URL construction, no network call, no auth required to resolve. */
+export function getAvatarUrl(avatarPath: string): string {
+  const supabase = getSupabaseClient()
+  return supabase.storage.from(AVATAR_BUCKET).getPublicUrl(avatarPath).data.publicUrl
 }
 

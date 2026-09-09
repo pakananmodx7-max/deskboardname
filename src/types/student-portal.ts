@@ -15,6 +15,11 @@ export interface MyStudentProfile {
   firstName: string
   lastName: string
   nickname: string | null
+  /** Supabase Storage object path in the 'avatars' bucket, e.g.
+   * '<student_id>/avatar.jpg' — never a full URL. Null when no avatar has
+   * been uploaded yet (render fallback initials). Only ever written via
+   * update_my_avatar_path() (0012) — see student-portal-service.ts. */
+  avatarPath: string | null
 }
 
 /** A classroom the signed-in student currently belongs to. */
@@ -63,4 +68,36 @@ export interface MyAttendanceRecord {
   periodNumber: number | null
   attendanceDate: string
   status: AttendanceStatus
+}
+
+/** A private calendar note/reminder the student created themselves
+ * (student_calendar_entries, 0012) — strictly own-row CRUD, never
+ * visible to a teacher. */
+export interface MyCalendarEntry {
+  id: string
+  title: string
+  note: string | null
+  eventDate: string
+  eventTime: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+/** One entry in the merged personal-calendar view shown on the
+ * dashboard/calendar widget — either a student-created note (editable)
+ * or a read-only assignment due date pulled in from getMyAssignments. */
+export type MyCalendarItem =
+  | { kind: 'note'; entry: MyCalendarEntry }
+  | { kind: 'assignment-due'; assignmentId: string; title: string; subjectName: string; eventDate: string }
+
+/** One teacher -> student notification (teacher_student_notifications,
+ * 0012). Always addressed to the signed-in student themselves — RLS
+ * guarantees this can never be another student's message. */
+export interface MyNotification {
+  id: string
+  senderName: string
+  title: string | null
+  message: string
+  readAt: string | null
+  createdAt: string
 }

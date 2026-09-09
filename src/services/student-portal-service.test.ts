@@ -3,11 +3,15 @@ import { describe, expect, it } from 'vitest'
 import {
   computeAttendanceRate,
   computeMyGrades,
+  countUnreadNotifications,
   filterMyAssignments,
   getPendingAssignments,
+  mergeCalendarItems,
   summarizeMyAttendance,
+  summarizeMyTodo,
+  validateAvatarFile,
 } from '@/services/student-portal-service'
-import type { MyAssignment, MyAttendanceRecord } from '@/types/student-portal'
+import type { MyAssignment, MyAttendanceRecord, MyCalendarEntry, MyNotification } from '@/types/student-portal'
 
 function assignment(overrides: Partial<MyAssignment> = {}): MyAssignment {
   return {
@@ -123,5 +127,98 @@ describe('computeMyGrades — /student/grades, never another student\'s data', (
   it('returns an empty summary (0/0/null) with no assignments', () => {
     const result = computeMyGrades([])
     expect(result).toEqual({ bySubject: [], totalEarned: 0, totalPossible: 0, totalPercentage: null })
+  })
+})
+
+describe('summarizeMyTodo — dashboard "งานของฉัน" summary', () => {
+  const now = new Date('2026-09-10T00:00:00Z')
+
+  it('counts outstanding (not_submitted + late), due-soon (within 3 days, overdue included), and submitted', () => {
+    const items = [
+      assignment({ id: 'a1', status: 'not_submitted', dueDate: '2026-09-11' }), // within 3 days
+      assignment({ id: 'a2', status: 'late', dueDate: '2026-09-05' }), // overdue -> still due-soon
+      assignment({ id: 'a3', status: 'not_submitted', dueDate: '2026-09-30' }), // far future
+      assignment({ id: 'a4', status: 'not_submitted', dueDate: null }), // no due date
+      assignment({ id: 'a5', status: 'submitted' }),
+      assignment({ id: 'a6', status: 'missing' }),
+    ]
+    const result = summarizeMyTodo(items, now)
+    expect(result.outstanding).toBe(4) // a1, a2, a3, a4
+    expect(result.dueSoon).toBe(2) // a1, a2
+    expect(result.submitted).toBe(1) // a5 only — 'late' is not "already submitted" in this app's status model
+  })
+
+  it('returns all-zero for an empty assignment list', () => {
+    expect(summarizeMyTodo([], now)).toEqual({ outstanding: 0, dueSoon: 0, submitted: 0 })
+  })
+})
+
+function calendarEntry(overrides: Partial<MyCalendarEntry> = {}): MyCalendarEntry {
+  return {
+    id: 'ce1',
+    title: 'ทบทวนบทที่ 3',
+    note: null,
+    eventDate: '2026-09-12',
+    eventTime: null,
+    createdAt: '2026-09-01T00:00:00Z',
+    updatedAt: '2026-09-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+describe('mergeCalendarItems — personal notes + read-only assignment due dates', () => {
+  it('merges both kinds, sorted by date, and excludes assignments with no due date', () => {
+    const entries = [calendarEntry({ id: 'ce1', eventDate: '2026-09-15' })]
+    const assignments = [
+      assignment({ id: 'a1', title: 'งาน 1', dueDate: '2026-09-10' }),
+      assignment({ id: 'a2', title: 'งาน 2', dueDate: null }),
+    ]
+    const items = mergeCalendarItems(entries, assignments)
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({ kind: 'assignment-due', assignmentId: 'a1' })
+    expect(items[1]).toMatchObject({ kind: 'note', entry: { id: 'ce1' } })
+  })
+
+  it('returns an empty list when there are no notes and no due dates', () => {
+    expect(mergeCalendarItems([], [assignment({ dueDate: null })])).toEqual([])
+  })
+})
+
+function notification(overrides: Partial<MyNotification> = {}): MyNotification {
+  return {
+    id: 'n1',
+    senderName: 'ครูสมชาย',
+    title: null,
+    message: 'กรุณาติดต่อครู',
+    readAt: null,
+    createdAt: '2026-09-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+describe('countUnreadNotifications', () => {
+  it('counts only notifications with readAt === null', () => {
+    const items = [
+      notification({ id: 'n1', readAt: null }),
+      notification({ id: 'n2', readAt: '2026-09-02T00:00:00Z' }),
+      notification({ id: 'n3', readAt: null }),
+    ]
+    expect(countUnreadNotifications(items)).toBe(2)
+  })
+})
+
+describe('validateAvatarFile', () => {
+  it('accepts jpg/png/webp under the size limit', () => {
+    expect(validateAvatarFile({ type: 'image/jpeg', size: 1024 })).toBeNull()
+    expect(validateAvatarFile({ type: 'image/png', size: 1024 })).toBeNull()
+    expect(validateAvatarFile({ type: 'image/webp', size: 1024 })).toBeNull()
+  })
+
+  it('rejects an unsupported file type', () => {
+    expect(validateAvatarFile({ type: 'image/gif', size: 1024 })).toMatch(/JPG, PNG หรือ WEBP/)
+  })
+
+  it('rejects a file over 2MB', () => {
+    expect(validateAvatarFile({ type: 'image/jpeg', size: 2 * 1024 * 1024 + 1 })).toMatch(/2MB/)
   })
 })

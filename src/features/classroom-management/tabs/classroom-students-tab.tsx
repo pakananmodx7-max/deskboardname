@@ -16,6 +16,7 @@ import {
 import { StudentDetailDrawer } from '@/features/classroom-management/student-detail-drawer'
 import { AddStudentDialog } from '@/features/student-management/add-student-dialog'
 import { StudentImportDialog } from '@/features/student-import/student-import-dialog'
+import { SendNotificationDialog } from '@/features/student-notifications/send-notification-dialog'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { getClassrooms } from '@/services/classroom-service'
 import {
@@ -46,6 +47,7 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
   const [movingStudent, setMovingStudent] = useState<ClassroomStudent | null>(null)
   const [removingStudent, setRemovingStudent] = useState<ClassroomStudent | null>(null)
   const [archivingStudent, setArchivingStudent] = useState<ClassroomStudent | null>(null)
+  const [messagingStudent, setMessagingStudent] = useState<ClassroomStudent | null>(null)
   const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false)
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false)
 
@@ -223,6 +225,7 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
                           actions={[
                             { key: 'view', label: 'ดูรายละเอียด', onSelect: () => setViewingStudent(student) },
                             { key: 'edit', label: 'แก้ไขข้อมูล', onSelect: () => setEditingStudent(student) },
+                            { key: 'message', label: 'ส่งข้อความ', onSelect: () => setMessagingStudent(student) },
                             {
                               key: 'move',
                               label: 'ย้ายห้อง',
@@ -266,6 +269,19 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
         student={viewingStudent}
         onOpenChange={(open) => !open && setViewingStudent(null)}
       />
+
+      {messagingStudent && (
+        <SendNotificationDialog
+          open={Boolean(messagingStudent)}
+          onOpenChange={(open) => !open && setMessagingStudent(null)}
+          studentId={messagingStudent.id}
+          studentName={`${messagingStudent.firstName} ${messagingStudent.lastName}`}
+          onSent={() => {
+            toast(`ส่งข้อความถึง ${messagingStudent.firstName} ${messagingStudent.lastName} แล้ว`)
+            setMessagingStudent(null)
+          }}
+        />
+      )}
 
       {editingStudent && (
         <EditStudentDialog
