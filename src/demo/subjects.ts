@@ -1,4 +1,5 @@
 import type {
+  DemoLesson,
   DemoSubject,
   DemoSubjectAssignment,
   DemoSubmission,
@@ -274,6 +275,48 @@ export function buildInitialSubjectAssignments(studentIdsByClassroomIds: (classr
       description: 'โครงงานประยุกต์คณิตศาสตร์กับชีวิตประจำวัน',
       isArchived: false,
       submissions: buildSubmissions(mathStudents, 20, 8),
+    },
+  ]
+}
+
+/**
+ * Demo mirror of บทเรียน — two published lessons for subject-science's
+ * classroom-1 (matching the feature spec's own example titles), plus one
+ * unpublished draft to demonstrate the publish/draft distinction. See
+ * DemoLesson's own comment for why this does NOT also seed any
+ * per-lesson resources.
+ */
+export function buildInitialLessons(): DemoLesson[] {
+  return [
+    {
+      id: 'sci-lesson-1',
+      subjectId: 'subject-science',
+      classroomId: 'classroom-1',
+      title: 'บทที่ 1 แรงและการเคลื่อนที่',
+      description: 'แนวคิดพื้นฐานเรื่องแรง มวล และความเร่ง',
+      order: 0,
+      isPublished: true,
+      isArchived: false,
+    },
+    {
+      id: 'sci-lesson-2',
+      subjectId: 'subject-science',
+      classroomId: 'classroom-1',
+      title: 'บทที่ 2 กฎของนิวตัน',
+      description: 'กฎการเคลื่อนที่ 3 ข้อของนิวตันและการประยุกต์ใช้',
+      order: 1,
+      isPublished: true,
+      isArchived: false,
+    },
+    {
+      id: 'sci-lesson-3',
+      subjectId: 'subject-science',
+      classroomId: 'classroom-1',
+      title: 'บทที่ 3 งานและพลังงาน',
+      description: 'ยังอยู่ระหว่างจัดเตรียมเนื้อหา',
+      order: 2,
+      isPublished: false,
+      isArchived: false,
     },
   ]
 }

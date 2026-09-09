@@ -4,7 +4,7 @@ import { TABS as REAL_TABS } from '@/pages/teacher/subjects/subject-classroom-wo
 import { TABS as DEMO_TABS } from '@/pages/teacher/subjects/subject-classroom-workspace-page-demo'
 
 describe('Subject-Classroom workspace tabs — Topics removed, real and demo in sync', () => {
-  const expectedKeys = ['overview', 'students', 'attendance', 'assignments', 'grades']
+  const expectedKeys = ['overview', 'students', 'attendance', 'lessons', 'assignments', 'grades']
 
   it('real workspace has no Topics ("หัวข้อ") tab', () => {
     expect(REAL_TABS.some((tab) => (tab.key as string) === 'topics')).toBe(false)

@@ -5,9 +5,11 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { StatCard } from '@/components/dashboard/stat-card'
 import { AssignmentResourcesDisclosure } from '@/features/student-portal/assignment-resources-disclosure'
+import { LessonResourcesList } from '@/features/student-portal/lesson-resources-list'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { getResourceCounts } from '@/services/assignment-resource-service'
+import { getLessons } from '@/services/lesson-service'
 import {
   computeAttendanceRate,
   computeMyGrades,
@@ -16,6 +18,7 @@ import {
   getMySubjects,
   summarizeMyAttendance,
 } from '@/services/student-portal-service'
+import type { Lesson } from '@/types/lesson'
 import type { MyAssignment, MyAttendanceRecord, MySubject } from '@/types/student-portal'
 import { BookOpen, CalendarCheck, ClipboardList, GraduationCap } from 'lucide-react'
 
@@ -33,11 +36,15 @@ const ATTENDANCE_STATUS_LABEL: Record<string, string> = {
   absent: 'ขาด',
 }
 
-type TabKey = 'overview' | 'assignments' | 'grades' | 'attendance'
+type TabKey = 'overview' | 'lessons' | 'assignments' | 'grades' | 'attendance'
 
-/** Exported so the exact tab set is unit-testable without rendering. */
+/** Exported so the exact tab set is unit-testable without rendering.
+ * บทเรียน sits right after ภาพรวม — teacher-organized learning materials
+ * (slides/videos/documents/links), completely separate from งาน
+ * (assignments). See 0015_lessons.sql's scope note. */
 export const STUDENT_SUBJECT_TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
+  { key: 'lessons', label: 'บทเรียน' },
   { key: 'assignments', label: 'งาน' },
   { key: 'grades', label: 'คะแนน' },
   { key: 'attendance', label: 'การเข้าเรียน' },
@@ -80,6 +87,10 @@ export function StudentSubjectDetailPage() {
   const [subjectLoading, setSubjectLoading] = useState(true)
   const [subjectError, setSubjectError] = useState<string | null>(null)
 
+  const [lessons, setLessons] = useState<Lesson[]>([])
+  const [lessonsLoading, setLessonsLoading] = useState(true)
+  const [lessonsError, setLessonsError] = useState<string | null>(null)
+
   const [assignments, setAssignments] = useState<MyAssignment[]>([])
   const [resourceCounts, setResourceCounts] = useState<Record<string, number>>({})
   const [assignmentsLoading, setAssignmentsLoading] = useState(true)
@@ -103,6 +114,29 @@ export function StudentSubjectDetailPage() {
       })
       .finally(() => {
         if (active) setSubjectLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [subjectId])
+
+  const loadLessons = useCallback((classroomId: string) => {
+    if (!subjectId) return undefined
+    let active = true
+    setLessonsLoading(true)
+    setLessonsError(null)
+    // RLS (`lessons_select_student`, 0015) already restricts this to
+    // published, non-archived lessons in this student's own classroom —
+    // no extra filtering needed client-side.
+    getLessons(subjectId, classroomId)
+      .then((rows) => {
+        if (active) setLessons(rows)
+      })
+      .catch((err: unknown) => {
+        if (active) setLessonsError(toFriendlyErrorMessage(err))
+      })
+      .finally(() => {
+        if (active) setLessonsLoading(false)
       })
     return () => {
       active = false
@@ -164,13 +198,15 @@ export function StudentSubjectDetailPage() {
 
   useEffect(() => {
     if (!subject) return
+    const cleanupLessons = loadLessons(subject.classroomId)
     const cleanupAssignments = loadAssignments(subject.classroomId)
     const cleanupAttendance = loadAttendance(subject.classroomId)
     return () => {
+      cleanupLessons?.()
       cleanupAssignments?.()
       cleanupAttendance?.()
     }
-  }, [subject, loadAssignments, loadAttendance])
+  }, [subject, loadLessons, loadAssignments, loadAttendance])
 
   if (!subjectId) return <Navigate to="/student/subjects" replace />
   if (subject === undefined || subjectLoading) {
@@ -252,6 +288,32 @@ export function StudentSubjectDetailPage() {
             icon={BookOpen}
           />
         </div>
+      )}
+
+      {activeTab === 'lessons' && (
+        <Card>
+          <CardContent className="p-0">
+            {lessonsLoading ? (
+              <p className="px-5 py-6 text-center text-sm text-muted-foreground">กำลังโหลด...</p>
+            ) : lessonsError ? (
+              <p className="px-5 py-6 text-center text-sm text-destructive">{lessonsError}</p>
+            ) : lessons.length === 0 ? (
+              <p className="px-5 py-6 text-center text-sm text-muted-foreground">ยังไม่มีบทเรียนที่เผยแพร่ในวิชานี้</p>
+            ) : (
+              <div className="divide-y divide-border">
+                {lessons.map((lesson) => (
+                  <div key={lesson.id} className="space-y-2 px-5 py-4">
+                    <div>
+                      <p className="text-sm font-medium">{lesson.title}</p>
+                      {lesson.description && <p className="mt-0.5 text-xs text-muted-foreground">{lesson.description}</p>}
+                    </div>
+                    <LessonResourcesList lessonId={lesson.id} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {activeTab === 'assignments' && (

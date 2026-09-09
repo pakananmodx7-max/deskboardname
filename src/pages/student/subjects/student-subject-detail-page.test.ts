@@ -9,9 +9,9 @@ function readSourceRelativeToThisFile(relativePath: string): string {
 }
 
 describe('/student/subjects/:subjectId tabs', () => {
-  it('is exactly ภาพรวม/งาน/คะแนน/การเข้าเรียน, in that order — no student roster/classmates tab', () => {
-    expect(STUDENT_SUBJECT_TABS.map((tab) => tab.key)).toEqual(['overview', 'assignments', 'grades', 'attendance'])
-    expect(STUDENT_SUBJECT_TABS.map((tab) => tab.label)).toEqual(['ภาพรวม', 'งาน', 'คะแนน', 'การเข้าเรียน'])
+  it('is exactly ภาพรวม/บทเรียน/งาน/คะแนน/การเข้าเรียน, in that order — no student roster/classmates tab', () => {
+    expect(STUDENT_SUBJECT_TABS.map((tab) => tab.key)).toEqual(['overview', 'lessons', 'assignments', 'grades', 'attendance'])
+    expect(STUDENT_SUBJECT_TABS.map((tab) => tab.label)).toEqual(['ภาพรวม', 'บทเรียน', 'งาน', 'คะแนน', 'การเข้าเรียน'])
   })
 
   it('has no "students"/roster tab of any kind', () => {
@@ -27,13 +27,19 @@ describe('/student/subjects/:subjectId tabs', () => {
 describe('StudentSubjectDetailPage — independent per-section loading, source-level guards', () => {
   const source = readSourceRelativeToThisFile('./student-subject-detail-page.tsx')
 
-  it('gives subject identity, assignments, and attendance each their own independent loading + error state', () => {
+  it('gives subject identity, lessons, assignments, and attendance each their own independent loading + error state', () => {
     expect(source).toContain('subjectLoading')
     expect(source).toContain('subjectError')
+    expect(source).toContain('lessonsLoading')
+    expect(source).toContain('lessonsError')
     expect(source).toContain('assignmentsLoading')
     expect(source).toContain('assignmentsError')
     expect(source).toContain('attendanceLoading')
     expect(source).toContain('attendanceError')
+  })
+
+  it('lessons are read via getLessons() — RLS-scoped to published, own-classroom rows only, no client-side re-filtering needed', () => {
+    expect(source).toContain('getLessons(subjectId, classroomId)')
   })
 
   it('never bundles assignments and attendance into one shared Promise.all with one shared error', () => {

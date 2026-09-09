@@ -14,12 +14,13 @@ import {
 } from '@/demo/selectors'
 import { DEMO_CLASSROOM_NAME, DEMO_STUDENTS } from '@/demo/students'
 import { getStudentIdsForClassrooms } from '@/demo/subject-selectors'
-import { buildInitialSubjectAssignments, buildInitialSubjects, buildInitialTopics } from '@/demo/subjects'
+import { buildInitialLessons, buildInitialSubjectAssignments, buildInitialSubjects, buildInitialTopics } from '@/demo/subjects'
 import type {
   DemoAssignment,
   DemoAttendanceStatus,
   DemoClassroomInfo,
   DemoGradeScores,
+  DemoLesson,
   DemoStudent,
   DemoSubject,
   DemoSubjectAssignment,
@@ -63,6 +64,11 @@ export interface NewSubjectAssignmentInput {
   description: string
 }
 
+export interface NewLessonInput {
+  title: string
+  description: string
+}
+
 interface DemoClassroomState {
   classroomName: string
   students: DemoStudent[]
@@ -77,6 +83,7 @@ interface DemoClassroomState {
   topics: DemoTopic[]
   subjectAssignments: DemoSubjectAssignment[]
   subjectAttendance: DemoSubjectAttendance
+  lessons: DemoLesson[]
 }
 
 function buildInitialState(): DemoClassroomState {
@@ -98,6 +105,7 @@ function buildInitialState(): DemoClassroomState {
     topics: buildInitialTopics(),
     subjectAssignments: buildInitialSubjectAssignments(studentIdsForClassrooms),
     subjectAttendance: {},
+    lessons: buildInitialLessons(),
   }
 }
 
@@ -137,6 +145,11 @@ interface DemoClassroomContextValue extends DemoClassroomState {
   bulkSetSubmissionStatus: (assignmentId: string, studentIds: string[], status: SubmissionStatus) => void
   setSubmissionScore: (assignmentId: string, studentId: string, score: number | null) => void
   setSubmissionNote: (assignmentId: string, studentId: string, note: string) => void
+  addLesson: (subjectId: string, classroomId: string, input: NewLessonInput) => DemoLesson
+  updateLesson: (lessonId: string, patch: Partial<Pick<DemoLesson, 'title' | 'description'>>) => void
+  setLessonPublished: (lessonId: string, isPublished: boolean) => void
+  archiveLesson: (lessonId: string) => void
+  reorderLessonsDemo: (subjectId: string, classroomId: string, orderedIds: string[]) => void
   setSubjectAttendanceStatus: (
     subjectId: string,
     classroomId: string,
@@ -353,6 +366,59 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
 
   function archiveSubjectAssignment(assignmentId: string) {
     updateSubjectAssignment(assignmentId, { isArchived: true })
+  }
+
+  function addLesson(subjectId: string, classroomId: string, input: NewLessonInput): DemoLesson {
+    const siblingCount = state.lessons.filter((l) => l.subjectId === subjectId && l.classroomId === classroomId).length
+    const lesson: DemoLesson = {
+      id: `demo-lesson-${Date.now()}`,
+      subjectId,
+      classroomId,
+      title: input.title,
+      description: input.description,
+      order: siblingCount,
+      isPublished: false,
+      isArchived: false,
+    }
+    setState((prev) => ({ ...prev, lessons: [...prev.lessons, lesson] }))
+    logActivity(`สร้างบทเรียนใหม่: ${lesson.title}`)
+    return lesson
+  }
+
+  function updateLesson(lessonId: string, patch: Partial<Pick<DemoLesson, 'title' | 'description'>>) {
+    setState((prev) => ({
+      ...prev,
+      lessons: prev.lessons.map((l) => (l.id === lessonId ? { ...l, ...patch } : l)),
+    }))
+  }
+
+  function setLessonPublished(lessonId: string, isPublished: boolean) {
+    setState((prev) => ({
+      ...prev,
+      lessons: prev.lessons.map((l) => (l.id === lessonId ? { ...l, isPublished } : l)),
+    }))
+  }
+
+  function archiveLesson(lessonId: string) {
+    setState((prev) => ({
+      ...prev,
+      lessons: prev.lessons.map((l) => (l.id === lessonId ? { ...l, isArchived: true } : l)),
+    }))
+  }
+
+  /** Re-numbers `order` for one subject+classroom's lessons to match
+   * `orderedIds` exactly — lessons belonging to any other subject/
+   * classroom pair are left completely untouched. */
+  function reorderLessonsDemo(subjectId: string, classroomId: string, orderedIds: string[]) {
+    const orderById = new Map(orderedIds.map((id, index) => [id, index]))
+    setState((prev) => ({
+      ...prev,
+      lessons: prev.lessons.map((l) =>
+        l.subjectId === subjectId && l.classroomId === classroomId && orderById.has(l.id)
+          ? { ...l, order: orderById.get(l.id)! }
+          : l,
+      ),
+    }))
   }
 
   function setSubmissionStatus(assignmentId: string, studentId: string, status: SubmissionStatus) {
@@ -578,6 +644,11 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     bulkSetSubmissionStatus,
     setSubmissionScore,
     setSubmissionNote,
+    addLesson,
+    updateLesson,
+    setLessonPublished,
+    archiveLesson,
+    reorderLessonsDemo,
     setSubjectAttendanceStatus,
     saveSubjectAttendance,
     hasSubjectClassroomAttendanceDemo,

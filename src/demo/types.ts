@@ -98,6 +98,28 @@ export interface DemoSubmission {
 }
 
 /**
+ * "บทเรียน" — teacher-organized learning materials (slides, videos,
+ * documents, external links), always scoped to one subject+classroom
+ * pair, entirely separate from DemoSubjectAssignment (mirrors
+ * supabase/migrations/0015_lessons.sql's real schema/scope). Demo mode
+ * deliberately does not mirror per-resource attachment (file upload/link
+ * management) the way the real Supabase-backed LessonResourcesSection
+ * does — matching the same precedent already set by assignment
+ * resources (0013), which also has no demo-mode equivalent, since demo
+ * mode has no real Storage backing to attach a file to.
+ */
+export interface DemoLesson {
+  id: string
+  subjectId: string
+  classroomId: string
+  title: string
+  description: string
+  order: number
+  isPublished: boolean
+  isArchived: boolean
+}
+
+/**
  * An assignment always belongs to exactly one subject AND one of that
  * subject's linked classrooms — never a bare subject-wide thing. Two
  * classrooms linked to the same subject get completely independent

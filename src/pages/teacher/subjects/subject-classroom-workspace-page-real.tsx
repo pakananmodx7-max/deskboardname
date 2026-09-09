@@ -6,6 +6,7 @@ import { NativeSelect } from '@/components/ui/select'
 import { AssignmentsTab } from '@/features/subjects-real/tabs/assignments-tab'
 import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
 import { GradesTab } from '@/features/subjects-real/tabs/grades-tab'
+import { LessonsTab } from '@/features/subjects-real/tabs/lessons-tab'
 import { OverviewTab } from '@/features/subjects-real/tabs/overview-tab'
 import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
 import { buildSubjectClassroomPath, isClassroomLinkedToSubject } from '@/features/subjects-shared/subject-classroom-nav'
@@ -14,15 +15,20 @@ import { cn } from '@/lib/utils'
 import { getSubjectById, getSubjectClassroomsWithCounts } from '@/services/subject-service'
 import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
-type TabKey = 'overview' | 'students' | 'attendance' | 'assignments' | 'grades'
+type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments' | 'grades'
 
 /** Exported (rather than kept module-private) so the exact tab set — and
  * specifically that Topics is gone — is unit-testable without rendering.
- * See subject-classroom-workspace-page.test.ts. */
+ * See subject-classroom-workspace-page.test.ts.
+ *
+ * บทเรียน (Lessons) sits between เช็คชื่อ and งาน — teacher-organized
+ * learning materials (slides/videos/documents/links), completely
+ * separate from the assignment workflow (see 0015_lessons.sql). */
 export const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
   { key: 'attendance', label: 'เช็คชื่อ' },
+  { key: 'lessons', label: 'บทเรียน' },
   { key: 'assignments', label: 'งาน' },
   { key: 'grades', label: 'คะแนน' },
 ]
@@ -182,6 +188,7 @@ export function SubjectClassroomWorkspacePageReal() {
           />
         )}
         {activeTab === 'attendance' && <AttendanceTab subject={subject} classroomId={activeClassroomId} />}
+        {activeTab === 'lessons' && <LessonsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'assignments' && <AssignmentsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'grades' && <GradesTab subject={subject} classroomId={activeClassroomId} />}
       </div>
