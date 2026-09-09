@@ -662,6 +662,107 @@ end $$;
 reset role;
 
 -- ==================================================
+-- TEST 24: the exact "teacher sees it, one specific student doesn't"
+-- scenario — a single subject linked to TWO classrooms, a student
+-- enrolled in only ONE of them. Reproduces a real production report
+-- (2026-09) where a published lesson was visible to the teacher but not
+-- to an enrolled student; this proves RLS behaves exactly as designed —
+-- a lesson published under a classroom the student does NOT belong to
+-- is correctly invisible to them, which is data/workflow (the teacher
+-- picked the wrong classroom in the picker), not an RLS defect.
+-- ==================================================
+
+insert into public.classrooms (id, teacher_id, name) values
+  ('00000000-0015-0001-0000-000000000003', '00000000-0015-0000-0000-000000000001', 'TEST0015: Classroom A3 (multi-link)');
+
+insert into public.subject_classrooms (subject_id, classroom_id) values
+  ('00000000-0015-0003-0000-000000000001', '00000000-0015-0001-0000-000000000003');
+-- Subject A is now linked to BOTH classroom A1 (student S1's classroom)
+-- AND this new classroom A3 (student S1 is NOT a member of).
+
+set role authenticated;
+select set_test_user('00000000-0015-0000-0000-000000000001');
+
+insert into public.lessons (id, subject_id, classroom_id, title, is_published, created_by)
+values (
+  '00000000-0015-0004-0000-000000000003',
+  '00000000-0015-0003-0000-000000000001',
+  '00000000-0015-0001-0000-000000000003',
+  'TEST0015: บทที่ 4 published under the OTHER classroom',
+  true,
+  '00000000-0015-0000-0000-000000000001'
+);
+
+select set_test_user('00000000-0015-0000-0000-000000000003');
+
+do $$
+declare
+  v_count_own int;
+  v_count_other int;
+begin
+  select count(*) into v_count_own from public.lessons
+  where subject_id = '00000000-0015-0003-0000-000000000001' and classroom_id = '00000000-0015-0001-0000-000000000001';
+  select count(*) into v_count_other from public.lessons
+  where subject_id = '00000000-0015-0003-0000-000000000001' and classroom_id = '00000000-0015-0001-0000-000000000003';
+
+  if v_count_own < 1 then
+    raise exception 'TEST 24 FAILED: student cannot see the published lesson in THEIR OWN classroom (got %)', v_count_own;
+  end if;
+  if v_count_other <> 0 then
+    raise exception 'TEST 24 FAILED: student sees a lesson published under a classroom they are NOT enrolled in (got %)', v_count_other;
+  end if;
+  raise notice 'TEST 24 passed: same-subject multi-classroom scoping is exact — a lesson is visible only in the specific classroom it was published under, confirming the "teacher sees it, student does not" report is a classroom-selection mismatch, not an RLS defect';
+end $$;
+
+select set_test_user('00000000-0015-0000-0000-000000000001');
+delete from public.lessons where id = '00000000-0015-0004-0000-000000000003';
+delete from public.subject_classrooms where subject_id = '00000000-0015-0003-0000-000000000001' and classroom_id = '00000000-0015-0001-0000-000000000003';
+reset role;
+delete from public.classrooms where id = '00000000-0015-0001-0000-000000000003';
+
+-- ==================================================
+-- TEST 25: a published lesson with ZERO resources is still visible to
+-- the enrolled student (Section 5 requirement: "A lesson must still
+-- appear even if it has zero resources").
+-- ==================================================
+
+set role authenticated;
+select set_test_user('00000000-0015-0000-0000-000000000001');
+
+insert into public.lessons (id, subject_id, classroom_id, title, is_published, created_by)
+values (
+  '00000000-0015-0004-0000-000000000004',
+  '00000000-0015-0003-0000-000000000001',
+  '00000000-0015-0001-0000-000000000001',
+  'TEST0015: บทที่ 5 no resources yet',
+  true,
+  '00000000-0015-0000-0000-000000000001'
+);
+
+select set_test_user('00000000-0015-0000-0000-000000000003');
+
+do $$
+declare
+  v_lesson_count int;
+  v_resource_count int;
+begin
+  select count(*) into v_lesson_count from public.lessons where id = '00000000-0015-0004-0000-000000000004';
+  select count(*) into v_resource_count from public.lesson_resources where lesson_id = '00000000-0015-0004-0000-000000000004';
+
+  if v_lesson_count <> 1 then
+    raise exception 'TEST 25 FAILED: a resource-less published lesson is not visible to the enrolled student';
+  end if;
+  if v_resource_count <> 0 then
+    raise exception 'TEST 25 FAILED: unexpectedly found resources on a lesson that should have none';
+  end if;
+  raise notice 'TEST 25 passed: a lesson with zero resources still appears to the student — resource count 0 is never mistaken for the lesson itself being hidden';
+end $$;
+
+select set_test_user('00000000-0015-0000-0000-000000000001');
+delete from public.lessons where id = '00000000-0015-0004-0000-000000000004';
+reset role;
+
+-- ==================================================
 -- Cleanup
 -- ==================================================
 
