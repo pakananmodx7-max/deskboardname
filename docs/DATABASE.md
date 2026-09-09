@@ -1972,3 +1972,149 @@ dashboard shortcut's target URL. `docs/DATABASE.md`'s own standing rule
 followed by construction: Attendance/Assignments/Grades keep their
 existing, already-correct data scopes exactly as documented in Phases
 5/6/8/9 — only their *sidebar entry point* changed.
+
+# Phase 15: Student Portal Phase 2 — real Student Dashboard (0011)
+
+## Scope
+
+The real, Supabase-backed student portal — `/student/dashboard`,
+`/student/subjects[/:subjectId]`, `/student/assignments`,
+`/student/attendance`, `/student/grades` — replacing the "แดชบอร์ด
+นักเรียนจะเปิดให้ใช้งานเร็ว ๆ นี้" stub an approved student saw at the end
+of Student Portal Phase 1 (0008). Read-only: no student-initiated write
+anywhere (no submission/upload, no self-editable attendance/grades).
+Builds on `students.linked_profile_id` (0008) — the only permanent link
+between an auth account and a student record — and touches no
+already-applied migration.
+
+## Schema
+
+No table created, altered, or dropped. `0011_student_portal_read_access.sql`
+adds two `SECURITY DEFINER` helper functions and nine new, additive
+`SELECT` policies (below) — nothing else.
+
+## Identity model — never trust the browser
+
+Every new policy resolves "which student is this?" through
+**`my_student_id()`**: `select s.id from students s where
+s.linked_profile_id = auth.uid()`. No policy, RPC, or frontend service
+function in this phase accepts a student_id parameter from the client —
+`students.linked_profile_id` (set only by `approve_student_link_request`,
+0008) is the only path from `auth.uid()` to "which student." A pending,
+rejected, or never-linked account gets `my_student_id() = null`, and
+every new policy denies by construction — there is no separate "is this
+account approved" check anywhere, because there is no other way to
+become "the" linked student for a given `auth.uid()` than approval.
+
+## Two policy shapes, by whether the table holds per-student data
+
+- **Classroom-shared, no per-student data** (`classrooms`, `subjects`,
+  `subject_classrooms`, `assignments`, `attendance_sessions`) — every
+  classmate legitimately sees the identical row (a classroom's name, an
+  assignment's title/due date, a session's date). Scoped via
+  **`is_my_classroom(classroom_id)`** (or, for `subjects`,
+  **`is_my_subject(subject_id)`**, built on it): "does the caller
+  currently belong to this classroom?"
+- **Strictly own-row-only** (`classroom_students`, `assignment_submissions`,
+  `attendance_records`) — the literal enforcement of "students must
+  never read another student's roster membership/grades/attendance."
+  Scoped to `student_id = my_student_id()` and NOTHING else — never a
+  classroom-wide fallback, which is what would let a student enumerate
+  classmates or read a classmate's score/status.
+- **`students`** gets its own narrow policy, `id = my_student_id()` — a
+  student may read exactly their own row, never a classmate's.
+
+## Recursion avoidance (empirically found and fixed before this migration was finalized)
+
+A first draft put "is this subject linked to one of my classrooms" as a
+raw subquery straight inside `subjects`' own policy instead of behind a
+helper. Empirically verified (local Postgres) that this created a
+two-table RLS cycle with the EXISTING teacher policy
+`subject_classrooms_select_own` (0002, which itself queries `subjects`):
+`subjects` → `subject_classrooms` → `subjects`. Postgres raised
+"infinite recursion detected in policy for relation 'subjects'" on ANY
+query touching `subjects` OR `subject_classrooms` — including
+`assignments_insert_own`'s existing, otherwise-unrelated
+`subject_classrooms` check (0006), breaking assignment creation for
+teachers. Same root cause and same fix as Phase 10's `profiles`/
+`classroom_students` recursion: wrap the cross-table check in a
+`SECURITY DEFINER` helper (`is_my_subject`) so the calling table's
+policy never contains a raw reference to the other table at all. Fixed
+and re-verified — see the empirical results table below.
+
+## New functions
+
+- **`my_student_id()`** — `SECURITY DEFINER`, returns a single
+  uuid-or-null, no parameters, no enumeration surface. The one place
+  every other function/policy in this migration answers "which student."
+- **`is_my_classroom(classroom_id)`** — `SECURITY DEFINER` boolean,
+  built on `my_student_id()`. Shared by `classrooms`,
+  `subject_classrooms`, `assignments`, and `attendance_sessions`'
+  policies.
+- **`is_my_subject(subject_id)`** — `SECURITY DEFINER` boolean, built on
+  `is_my_classroom()`. Backs `subjects`' policy only — see the
+  recursion-avoidance note above for why this couldn't just be a raw
+  subquery.
+
+## Frontend
+
+- **`src/services/student-portal-service.ts`** (new) —
+  `getMyStudentProfile`/`getMyClassrooms`/`getMySubjects`/
+  `getMyAssignments`/`getMyAttendance` (all Supabase I/O, zero
+  student_id parameters, reads exclusively through the policies above)
+  plus pure aggregation (`computeMyGrades`, `summarizeMyAttendance`,
+  `computeAttendanceRate`, `filterMyAssignments`,
+  `getPendingAssignments`) unit-tested without any live fetch.
+- **`src/layouts/student-layout.tsx`** + **`student-sidebar.tsx`** (new)
+  — a completely separate shell from the teacher one; renders only
+  `studentNavItems` (หน้าหลัก/รายวิชาของฉัน/งานของฉัน/การเข้าเรียน/คะแนน),
+  never a `/teacher/*` link. Loads the student's own profile once (for
+  the sidebar's name/code/classroom block); `getMyStudentProfile()`
+  returning `null` — not approved — redirects to `/student/pending`
+  before any portal page renders.
+- **No demo fallback anywhere in this phase**: every new page calls
+  `student-portal-service.ts` directly, never anything under `src/demo/*`
+  and never branches on `dataMode`. If Supabase is unconfigured,
+  `getSupabaseClient()` throws `SupabaseNotConfiguredError` (existing,
+  pre-Phase-15 behavior), which every page's own `catch` renders as a
+  plain error state — never demo data.
+- **`root-page.tsx`** and **`pending-page.tsx`** now send an
+  `'approved'` status straight to `/student/dashboard` instead of
+  `/student/pending`'s old stub message.
+
+## Empirical RLS verification — PASS (all scenarios)
+
+Fixtures: two teachers, two classrooms/subjects, two students (Alice,
+Bob) in the SAME classroom (one approved+linked each), a third student
+with a genuinely pending link request, a fourth never-linked portal
+account — see `supabase/tests/0011_student_portal_read_access.sql`.
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Approved student reads own classroom/subject/assignment/submission/attendance | PASS |
+| 2 | Pending student (no approved link yet) | PASS — `my_student_id()` null, 0 rows everywhere |
+| 3 | Never-linked student | PASS — same as pending |
+| 4 | Student A reads student B's submissions | PASS — 0 rows |
+| 5 | Student A reads student B's attendance | PASS — 0 rows |
+| 6 | Student enumerates the roster (`classroom_students`/`students` beyond own row) | PASS — 1 row each (own only) |
+| 7 | Subject/classroom isolation against an unrelated teacher's data | PASS — 0 rows |
+| 8 | Student attempts to UPDATE attendance/grades/assignments, or INSERT an assignment | PASS — 0 rows affected / INSERT blocked (42501); confirmed unchanged as superuser afterward |
+| 9 | `student_code` changed after approval | PASS — `my_student_id()` and own-data access both unaffected (identity is `linked_profile_id`, never `student_code`) |
+| 10 | Existing teacher flow: `create_student_and_enroll` (the `classroom_students` insert path Phase 10's recursion bug affected) | PASS — still works for the owning teacher |
+
+Also re-ran the full `0009_student_link_rpc_permissions.sql` and
+`0004_attendance_roster_and_rls.sql` regression scripts against this
+same 0001–0011 database: both still pass every scenario, confirming
+0011 introduces no regression in either the account-linking RPCs or the
+classroom Attendance roster/RLS behavior from earlier phases.
+
+**Overall verdict: PASS.** No scenario let a student read, enumerate, or
+modify another student's data, escalate to `/teacher/*` access, or
+break any existing teacher-side flow. The one real bug found (the
+`subjects`/`subject_classrooms` recursion) was fixed and re-verified,
+not just argued, before this migration was finalized.
+
+## Is a migration required?
+
+**Yes** — `supabase/migrations/0011_student_portal_read_access.sql`,
+**not applied automatically**. 0001–0010 are untouched.

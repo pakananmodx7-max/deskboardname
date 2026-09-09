@@ -9,14 +9,18 @@ import type { StudentAccountLinkRequest } from '@/types/student-link-request'
 
 /**
  * Where a signed-in student with the given link-request history should
- * land: no request yet -> the link-account form; any request on record
- * (pending/approved/rejected) -> /student/pending, which already renders
- * the right state for each of those (including the "approved" stub — see
- * StudentPendingPage). Pure so it's testable without rendering anything.
+ * land: no request yet -> the link-account form; approved -> the real
+ * dashboard (Student Portal Phase 2, 0011_student_portal_read_access.sql)
+ * directly, rather than bouncing through /student/pending's own
+ * approved->dashboard redirect; pending/rejected -> /student/pending,
+ * which renders the right state for each. Pure so it's testable without
+ * rendering anything.
  */
 export function deriveStudentRootDestination(requests: StudentAccountLinkRequest[]): string {
   const status = deriveMyLinkStatus(requests)
-  return status.status === 'none' ? '/student/link-account' : '/student/pending'
+  if (status.status === 'none') return '/student/link-account'
+  if (status.status === 'approved') return '/student/dashboard'
+  return '/student/pending'
 }
 
 /**

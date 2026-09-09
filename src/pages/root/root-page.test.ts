@@ -32,9 +32,9 @@ describe('deriveStudentRootDestination — where "/" sends a signed-in student',
     )
   })
 
-  it('sends a student with an approved request to /student/pending (its approved-state view)', () => {
+  it('sends a student with an approved request straight to /student/dashboard', () => {
     expect(deriveStudentRootDestination([request('a', 'approved', '2026-01-01T00:00:00Z')])).toBe(
-      '/student/pending',
+      '/student/dashboard',
     )
   })
 
@@ -47,6 +47,6 @@ describe('deriveStudentRootDestination — where "/" sends a signed-in student',
   it('uses the most recent request when history has multiple entries', () => {
     const older = request('a', 'rejected', '2026-01-01T00:00:00Z')
     const newer = request('b', 'approved', '2026-01-05T00:00:00Z')
-    expect(deriveStudentRootDestination([older, newer])).toBe('/student/pending')
+    expect(deriveStudentRootDestination([older, newer])).toBe('/student/dashboard')
   })
 })

@@ -14,10 +14,12 @@ import type { StudentLinkRequestStatus } from '@/types/student-link-request'
  * visible to them via student_account_link_requests_select_own_or_teacher
  * in 0008), never from the students table directly (which stays
  * completely closed to a student account in this phase — see
- * deriveMyLinkStatus's doc comment). The 'approved' state is
- * deliberately a stub, not a real dashboard — Student Portal Phase 1
- * ends at "linked," Phase 2 is what actually reads classroom/attendance/
- * assignment data through students.linked_profile_id = auth.uid().
+ * deriveMyLinkStatus's doc comment). An 'approved' status redirects
+ * straight to /student/dashboard (Student Portal Phase 2,
+ * 0011_student_portal_read_access.sql) — this page's own 'approved'
+ * branch below is now unreachable in normal use (the effect navigates
+ * away before it would render) and is kept only as a defensive fallback
+ * in case navigation itself ever fails.
  */
 export function StudentPendingPage() {
   const { signOut } = useAuth()
@@ -38,6 +40,10 @@ export function StudentPendingPage() {
         const result = deriveMyLinkStatus(requests)
         if (result.status === 'none') {
           navigate('/student/link-account', { replace: true })
+          return
+        }
+        if (result.status === 'approved') {
+          navigate('/student/dashboard', { replace: true })
           return
         }
         setStatus(result.status)

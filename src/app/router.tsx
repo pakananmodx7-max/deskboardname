@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 
 import { ProtectedRoute } from '@/components/auth/protected-route'
 import { StudentProtectedRoute } from '@/components/auth/student-protected-route'
+import { StudentLayout } from '@/layouts/student-layout'
 import { TeacherLayout } from '@/layouts/teacher-layout'
 import { AuthProvider } from '@/lib/auth-context'
 import { ForgotPasswordPage } from '@/pages/auth/forgot-password-page'
@@ -9,10 +10,16 @@ import { LoginPage } from '@/pages/auth/login-page'
 import { ResetPasswordPage } from '@/pages/auth/reset-password-page'
 import { SignupPage } from '@/pages/auth/signup-page'
 import { RootPage } from '@/pages/root/root-page'
+import { StudentAssignmentsPage } from '@/pages/student/assignments/student-assignments-page'
+import { StudentAttendancePage } from '@/pages/student/attendance/student-attendance-page'
+import { StudentDashboardPage } from '@/pages/student/dashboard/student-dashboard-page'
+import { StudentGradesPage } from '@/pages/student/grades/student-grades-page'
 import { StudentLinkAccountPage } from '@/pages/student/link-account-page'
 import { StudentLoginPage } from '@/pages/student/login-page'
 import { StudentPendingPage } from '@/pages/student/pending-page'
 import { StudentSignupPage } from '@/pages/student/signup-page'
+import { StudentSubjectDetailPage } from '@/pages/student/subjects/student-subject-detail-page'
+import { StudentSubjectsPage } from '@/pages/student/subjects/student-subjects-page'
 import { AiPage } from '@/pages/teacher/ai/ai-page'
 import { AssignmentsRedirectPage } from '@/pages/teacher/assignments/assignments-redirect-page'
 import { AttendanceRedirectPage } from '@/pages/teacher/attendance/attendance-redirect-page'
@@ -56,6 +63,23 @@ const router = createBrowserRouter([
         <StudentPendingPage />
       </StudentProtectedRoute>
     ),
+  },
+  {
+    path: '/student',
+    element: (
+      <StudentProtectedRoute>
+        <StudentLayout />
+      </StudentProtectedRoute>
+    ),
+    children: [
+      { index: true, element: <Navigate to="/student/dashboard" replace /> },
+      { path: 'dashboard', element: <StudentDashboardPage /> },
+      { path: 'subjects', element: <StudentSubjectsPage /> },
+      { path: 'subjects/:subjectId', element: <StudentSubjectDetailPage /> },
+      { path: 'assignments', element: <StudentAssignmentsPage /> },
+      { path: 'attendance', element: <StudentAttendancePage /> },
+      { path: 'grades', element: <StudentGradesPage /> },
+    ],
   },
   {
     path: '/teacher',
