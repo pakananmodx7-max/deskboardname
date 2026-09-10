@@ -45,10 +45,13 @@ function StudentSidebarContent({
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-16 items-center gap-2 border-b border-border px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <GraduationCap className="size-5" />
         </div>
-        <span className="text-sm font-semibold tracking-tight">AI Classroom</span>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate text-sm font-bold tracking-tight">ระบบการจัดการชั้นเรียน</p>
+          <p className="truncate text-xs text-muted-foreground">จัดทำโดยครูเนม</p>
+        </div>
       </div>
 
       <StudentIdentity profile={profile} classroom={classroom} />

@@ -13,10 +13,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-16 items-center gap-2 border-b border-border px-5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
           <GraduationCap className="size-5" />
         </div>
-        <span className="text-sm font-semibold tracking-tight">AI Classroom</span>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate text-sm font-bold tracking-tight">ระบบการจัดการชั้นเรียน</p>
+          <p className="truncate text-xs text-muted-foreground">จัดทำโดยครูเนม</p>
+        </div>
       </div>
 
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
@@ -41,7 +44,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       <div className="border-t border-border px-5 py-4 text-xs text-muted-foreground">
-        AI Classroom Management
+        ระบบการจัดการชั้นเรียน
         <br />
         v0.1.0 — Prototype
       </div>

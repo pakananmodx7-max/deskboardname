@@ -14,8 +14,9 @@ export function RoleChoicePage() {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-2xl space-y-8">
         <div className="space-y-1 text-center">
-          <h1 className="text-2xl font-semibold">AI Classroom Management</h1>
-          <p className="text-sm text-muted-foreground">กรุณาเลือกประเภทผู้ใช้งานเพื่อเข้าสู่ระบบ</p>
+          <h1 className="text-2xl font-bold">ระบบการจัดการชั้นเรียน</h1>
+          <p className="text-xs text-muted-foreground">จัดทำโดยครูเนม</p>
+          <p className="pt-1 text-sm text-muted-foreground">กรุณาเลือกประเภทผู้ใช้งานเพื่อเข้าสู่ระบบ</p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

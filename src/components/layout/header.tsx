@@ -61,9 +61,10 @@ function DemoHeader({ onOpenMobileMenu }: HeaderProps) {
       <MenuButton onOpenMobileMenu={onOpenMobileMenu} />
 
       <div className="flex flex-1 items-center gap-3 sm:gap-4">
-        <h1 className="hidden shrink-0 text-base font-semibold tracking-tight lg:block">
-          AI Classroom
-        </h1>
+        <div className="hidden shrink-0 leading-tight lg:block">
+          <h1 className="text-base font-bold tracking-tight">ระบบการจัดการชั้นเรียน</h1>
+          <p className="text-[12px] leading-tight text-muted-foreground">จัดทำโดยครูเนม</p>
+        </div>
 
         <div className="hidden h-6 w-px bg-border lg:block" />
 
@@ -135,7 +136,10 @@ function RealHeader({ onOpenMobileMenu }: HeaderProps) {
       <MenuButton onOpenMobileMenu={onOpenMobileMenu} />
 
       <div className="flex flex-1 items-center gap-3 sm:gap-4">
-        <h1 className="shrink-0 text-base font-semibold tracking-tight">AI Classroom</h1>
+        <div className="shrink-0 leading-tight">
+          <h1 className="text-base font-bold tracking-tight">ระบบการจัดการชั้นเรียน</h1>
+          <p className="hidden text-[12px] leading-tight text-muted-foreground sm:block">จัดทำโดยครูเนม</p>
+        </div>
       </div>
 
       <ThemeToggle />
