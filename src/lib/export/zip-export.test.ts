@@ -18,6 +18,21 @@ describe('buildZip — teacher backup export bundling', () => {
     expect(await zip.file('students.csv')?.async('string')).toBe('x,y\r\n3,4')
   })
 
+  it('creates raw/ and readable/ folders automatically when a filename contains a "/" (the teacher backup\'s two-section layout)', async () => {
+    const blob = await buildZip([
+      { filename: 'backup_info.csv', content: 'field,value\r\na,b' },
+      { filename: 'raw/classrooms.csv', content: 'a,b\r\n1,2' },
+      { filename: 'readable/grades.csv', content: 'x,y\r\n3,4' },
+    ])
+    const zip = await JSZip.loadAsync(await blob.arrayBuffer())
+    expect(await zip.file('raw/classrooms.csv')?.async('string')).toBe('a,b\r\n1,2')
+    expect(await zip.file('readable/grades.csv')?.async('string')).toBe('x,y\r\n3,4')
+    expect(await zip.file('backup_info.csv')?.async('string')).toBe('field,value\r\na,b')
+    // JSZip represents the folders themselves as directory entries.
+    expect(zip.folder('raw')).not.toBeNull()
+    expect(zip.folder('readable')).not.toBeNull()
+  })
+
   it('produces an empty (but valid) archive for an empty file list', async () => {
     const blob = await buildZip([])
     const zip = await JSZip.loadAsync(await blob.arrayBuffer())
