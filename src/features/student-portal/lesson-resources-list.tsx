@@ -2,6 +2,13 @@ import { ExternalLink, FileText, Link2, Loader2, Presentation, Video } from 'luc
 import { useEffect, useState } from 'react'
 
 import { toFriendlyErrorMessage } from '@/lib/errors'
+import {
+  detectResourceProvider,
+  getGoogleSlidesEmbedUrl,
+  PROVIDER_ICON,
+  PROVIDER_LABEL,
+  PROVIDER_OPEN_LABEL,
+} from '@/lib/resource-provider'
 import { getLessonResourceSignedUrl, getLessonResources, getYoutubeEmbedUrl } from '@/services/lesson-service'
 import type { LessonResource, LessonResourceType } from '@/types/lesson'
 
@@ -57,6 +64,53 @@ function OpenFileButton({ resource }: { resource: LessonResource }) {
 }
 
 /**
+ * Google Drive Integration, Section 4: a Google Slides preview is
+ * ALWAYS optional (click-to-reveal), unlike the YouTube video preview
+ * below (which is automatic) — the student explicitly chooses to load
+ * Google's own embed iframe. `embedUrl` is Google's OWN public embed
+ * endpoint (see getGoogleSlidesEmbedUrl's doc comment) — showing it is
+ * not a permissions bypass: if the presentation isn't shared as "anyone
+ * with the link", Google renders its own access-denied page inside the
+ * iframe, and the caption below says as much. The plain "[เปิดใน Google
+ * Slides]" open-in-new-tab link (rendered by the caller, outside this
+ * component) is always present regardless of whether the preview is
+ * shown — never replaced by it.
+ */
+function GoogleSlidesPreview({ title, embedUrl }: { title: string; embedUrl: string }) {
+  const [showPreview, setShowPreview] = useState(false)
+
+  return (
+    <div className="space-y-1.5">
+      <button
+        type="button"
+        onClick={() => setShowPreview((v) => !v)}
+        className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
+      >
+        {showPreview ? 'ซ่อนตัวอย่างสไลด์' : 'แสดงตัวอย่างสไลด์'}
+      </button>
+      {showPreview && (
+        <>
+          <div className="aspect-video w-full max-w-md overflow-hidden rounded-md border">
+            <iframe
+              src={embedUrl}
+              title={title}
+              className="size-full"
+              loading="lazy"
+              allowFullScreen
+              sandbox="allow-scripts allow-same-origin allow-presentation"
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            การแสดงตัวอย่างขึ้นอยู่กับการตั้งค่าสิทธิ์การแชร์ไฟล์ใน Google Slides —
+            หากไม่สามารถดูตัวอย่างได้ ให้ลองเปิดในแท็บใหม่แทน
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
  * One lesson's resources, rendered inline (no click-to-expand — Section
  * 6 of the feature spec shows every resource directly under its
  * lesson). Fetched independently PER LESSON — a resource-fetch failure
@@ -71,6 +125,15 @@ function OpenFileButton({ resource }: { resource: LessonResource }) {
  * (slide/document) is never linked to its raw storage path directly —
  * opening one always goes through getLessonResourceSignedUrl() first,
  * the same short-lived-signed-URL pattern as AssignmentResourcesDisclosure.
+ *
+ * GOOGLE PROVIDER UX (Google Drive Integration, Section 3/4/6): every
+ * link resource shows its provider (Google Drive/Docs/Sheets/Slides/
+ * YouTube/Canva/generic link) via the ONE shared detectResourceProvider
+ * (never a second, locally-reimplemented parser) — the label AND the
+ * open button's text always come from that detection, never from
+ * resource_type or anything the teacher picked while adding it. A
+ * recognized Google Slides link additionally gets the optional preview
+ * above.
  */
 export function LessonResourcesList({ lessonId }: LessonResourcesListProps) {
   const [resources, setResources] = useState<LessonResource[] | null>(null)
@@ -103,20 +166,24 @@ export function LessonResourcesList({ lessonId }: LessonResourcesListProps) {
   return (
     <div className="space-y-3">
       {resources.map((resource) => {
-        const Icon = RESOURCE_ICON[resource.resourceType]
-        const embedUrl = resource.resourceType === 'video' && resource.url ? getYoutubeEmbedUrl(resource.url) : null
+        const provider = resource.url ? detectResourceProvider(resource.url) : null
+        const Icon = provider ? PROVIDER_ICON[provider] : RESOURCE_ICON[resource.resourceType]
+        const youtubeEmbedUrl = resource.resourceType === 'video' && resource.url ? getYoutubeEmbedUrl(resource.url) : null
+        const slidesEmbedUrl = provider === 'google_slides' && resource.url ? getGoogleSlidesEmbedUrl(resource.url) : null
+        const openLabel = provider ? PROVIDER_OPEN_LABEL[provider] : OPEN_LABEL[resource.resourceType]
 
         return (
           <div key={resource.id} className="space-y-1.5">
             <div className="flex items-center gap-1.5 text-sm">
               <Icon className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="font-medium">{resource.title}</span>
+              {provider && <span className="text-xs text-muted-foreground">· {PROVIDER_LABEL[provider]}</span>}
             </div>
 
-            {embedUrl && (
+            {youtubeEmbedUrl && (
               <div className="aspect-video w-full max-w-md overflow-hidden rounded-md border">
                 <iframe
-                  src={embedUrl}
+                  src={youtubeEmbedUrl}
                   title={resource.title}
                   className="size-full"
                   loading="lazy"
@@ -127,6 +194,8 @@ export function LessonResourcesList({ lessonId }: LessonResourcesListProps) {
               </div>
             )}
 
+            {slidesEmbedUrl && <GoogleSlidesPreview title={resource.title} embedUrl={slidesEmbedUrl} />}
+
             {resource.filePath ? (
               <OpenFileButton resource={resource} />
             ) : (
@@ -136,7 +205,7 @@ export function LessonResourcesList({ lessonId }: LessonResourcesListProps) {
                 rel="noopener noreferrer"
                 className="flex w-fit items-center gap-1 text-xs font-medium text-primary hover:underline"
               >
-                <ExternalLink className="size-3" />[{OPEN_LABEL[resource.resourceType]}]
+                <ExternalLink className="size-3" />[{openLabel}]
               </a>
             )}
           </div>

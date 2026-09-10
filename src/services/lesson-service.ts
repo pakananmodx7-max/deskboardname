@@ -9,6 +9,12 @@ import type {
   UpdateLessonInput,
 } from '@/types/lesson'
 
+/** Re-exported for backward compatibility — every real implementation
+ * now lives in the shared resource-provider module (see its own doc
+ * comment for why), alongside the equivalent Google Slides embed
+ * derivation this feature adds. */
+export { getYoutubeEmbedUrl } from '@/lib/resource-provider'
+
 const RESOURCE_BUCKET = 'lesson-files'
 
 /**
@@ -478,49 +484,4 @@ export async function getLessonResourceSignedUrl(filePath: string, expiresInSeco
   const { data, error } = await supabase.storage.from(RESOURCE_BUCKET).createSignedUrl(filePath, expiresInSeconds)
   if (error) throw error
   return data.signedUrl
-}
-
-// ==================================================
-// Video provider detection — Section 7 ("VIDEO UX"): prefer an inline
-// preview/player for a trusted, supported provider (YouTube) when safe
-// and practical; every other link (Google Drive, other HTTPS video/
-// resource links) falls back to a plain "[เปิดวิดีโอ]" button that opens
-// in a new tab. Never downloads or proxies a video through Supabase —
-// this only ever derives an <iframe> embed src for a URL already
-// confirmed to be youtube.com/youtu.be; nothing else is ever embedded.
-// ==================================================
-
-/**
- * Returns a `https://www.youtube.com/embed/<id>` URL for a recognized
- * youtube.com/youtu.be watch/share link, or null for anything else
- * (including a malformed YouTube-looking URL with no extractable video
- * id) — null always means "fall back to the plain open-in-new-tab
- * button," never an error.
- */
-export function getYoutubeEmbedUrl(rawUrl: string): string | null {
-  let parsed: URL
-  try {
-    parsed = new URL(rawUrl)
-  } catch {
-    return null
-  }
-  if (parsed.protocol !== 'https:') return null
-
-  const host = parsed.hostname.replace(/^www\./, '')
-  let videoId: string | null = null
-
-  if (host === 'youtu.be') {
-    videoId = parsed.pathname.slice(1).split('/')[0] || null
-  } else if (host === 'youtube.com' || host === 'm.youtube.com') {
-    if (parsed.pathname === '/watch') {
-      videoId = parsed.searchParams.get('v')
-    } else if (parsed.pathname.startsWith('/embed/')) {
-      videoId = parsed.pathname.slice('/embed/'.length).split('/')[0] || null
-    } else if (parsed.pathname.startsWith('/shorts/')) {
-      videoId = parsed.pathname.slice('/shorts/'.length).split('/')[0] || null
-    }
-  }
-
-  if (!videoId || !/^[\w-]{6,}$/.test(videoId)) return null
-  return `https://www.youtube.com/embed/${videoId}`
 }

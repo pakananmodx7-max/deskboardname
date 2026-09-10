@@ -1,7 +1,8 @@
-import { ChevronDown, ChevronRight, ExternalLink, FileText, Link2, Loader2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, ExternalLink, FileText, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 
 import { toFriendlyErrorMessage } from '@/lib/errors'
+import { detectResourceProvider, PROVIDER_ICON, PROVIDER_LABEL, PROVIDER_OPEN_LABEL } from '@/lib/resource-provider'
 import { getAssignmentResources, getResourceSignedUrl } from '@/services/assignment-resource-service'
 import type { AssignmentResource } from '@/types/assignment-resource'
 
@@ -85,37 +86,42 @@ export function AssignmentResourcesDisclosure({ assignmentId, resourceCount }: A
           {!loading && resources !== null && resources.length === 0 && (
             <p className="text-xs text-muted-foreground">ยังไม่มีสื่อหรือใบงานสำหรับงานนี้</p>
           )}
-          {resources?.map((resource) => (
-            <div key={resource.id} className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
-              {resource.resourceType === 'file' ? (
-                <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <Link2 className="size-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <span className="min-w-0 flex-1 truncate font-medium">{resource.title}</span>
-              {resource.resourceType === 'file' ? (
-                <button
-                  type="button"
-                  onClick={() => handleOpenFile(resource)}
-                  disabled={openingId === resource.id}
-                  className="flex shrink-0 items-center gap-1 font-medium text-primary hover:underline disabled:opacity-50"
-                >
-                  {openingId === resource.id ? <Loader2 className="size-3 animate-spin" /> : <ExternalLink className="size-3" />}
-                  เปิดใบงาน
-                </button>
-              ) : (
-                <a
-                  href={resource.url ?? undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex shrink-0 items-center gap-1 font-medium text-primary hover:underline"
-                >
-                  <ExternalLink className="size-3" />
-                  เปิดงานออนไลน์
-                </a>
-              )}
-            </div>
-          ))}
+          {resources?.map((resource) => {
+            const provider = resource.resourceType === 'link' && resource.url ? detectResourceProvider(resource.url) : null
+            const Icon = provider ? PROVIDER_ICON[provider] : FileText
+            return (
+              <div key={resource.id} className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{resource.title}</p>
+                  {provider && <p className="truncate text-muted-foreground">{PROVIDER_LABEL[provider]}</p>}
+                </div>
+                {resource.resourceType === 'file' ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenFile(resource)}
+                    disabled={openingId === resource.id}
+                    className="flex shrink-0 items-center gap-1 font-medium text-primary hover:underline disabled:opacity-50"
+                  >
+                    {openingId === resource.id ? <Loader2 className="size-3 animate-spin" /> : <ExternalLink className="size-3" />}
+                    เปิดใบงาน
+                  </button>
+                ) : (
+                  provider && (
+                    <a
+                      href={resource.url ?? undefined}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex shrink-0 items-center gap-1 font-medium text-primary hover:underline"
+                    >
+                      <ExternalLink className="size-3" />
+                      {provider === 'link' ? 'เปิดงานออนไลน์' : PROVIDER_OPEN_LABEL[provider]}
+                    </a>
+                  )
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

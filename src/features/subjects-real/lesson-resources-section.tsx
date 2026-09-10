@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, FileText, Link2, Loader2, Plus, Presentation, Video, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, ExternalLink, FileText, Link2, Loader2, Plus, Presentation, Video, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,17 @@ import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { NativeSelect } from '@/components/ui/select'
 import { toFriendlyErrorMessage } from '@/lib/errors'
+import {
+  detectResourceProvider,
+  GOOGLE_PERMISSIONS_HELPER_TEXT,
+  isGoogleProvider,
+  PROVIDER_ICON,
+  PROVIDER_LABEL,
+  PROVIDER_OPEN_LABEL,
+  RESOURCE_ADD_KIND_PLACEHOLDER,
+  RESOURCE_ADD_KINDS,
+  type ResourceProvider,
+} from '@/lib/resource-provider'
 import {
   addLessonFileResource,
   addLessonLinkResource,
@@ -38,7 +49,28 @@ const RESOURCE_ICON: Record<LessonResourceType, typeof FileText> = {
 /** 'video' is deliberately excluded — a video resource can never be an
  * upload, only a link (see 0015's video-no-upload constraint). */
 const UPLOADABLE_TYPES: Extract<LessonResourceType, 'slide' | 'document'>[] = ['slide', 'document']
-const LINKABLE_TYPES: LessonResourceType[] = ['slide', 'video', 'document', 'link']
+
+/**
+ * Maps the teacher-facing "kind" picked in the add-link form (Google
+ * Drive Integration, Section 1: Google Drive/Docs/Slides/YouTube/Canva/
+ * ลิงก์อื่น) onto the database's actual, coarser `resource_type` enum.
+ * Google Docs/Slides map to their natural content-type counterparts
+ * (document/slide); YouTube maps to 'video', matching the pre-existing
+ * convention (0015's own migration comment names YouTube as the
+ * intended video-link example); Drive/Canva/other map to the generic
+ * 'link' bucket since either can hold any kind of content. This mapping
+ * only ever decides which of the 4 existing resource_type values gets
+ * stored — it is a one-way UX convenience, never reversed: what a
+ * SAVED resource displays as (provider badge, icon, open label) always
+ * comes back from detectResourceProvider(resource.url), never from
+ * this mapping or from resource_type.
+ */
+function kindToResourceType(kind: ResourceProvider): LessonResourceType {
+  if (kind === 'google_slides') return 'slide'
+  if (kind === 'youtube') return 'video'
+  if (kind === 'google_docs') return 'document'
+  return 'link'
+}
 
 function displayFileName(resource: LessonResource): string {
   if (!resource.filePath) return resource.title
@@ -62,7 +94,12 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const [linkFormOpen, setLinkFormOpen] = useState(false)
-  const [linkType, setLinkType] = useState<LessonResourceType>('link')
+  /** Purely a UX hint (placeholder text, the Google permissions
+   * reminder, and which resource_type gets stored via
+   * kindToResourceType) — never trusted for display. The provider
+   * badge shown once a resource is saved always comes from
+   * detectResourceProvider(resource.url), never from this. */
+  const [linkKind, setLinkKind] = useState<ResourceProvider>('link')
   const [linkTitle, setLinkTitle] = useState('')
   const [linkUrl, setLinkUrl] = useState('')
   const [linkError, setLinkError] = useState<string | null>(null)
@@ -135,8 +172,8 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
     }
   }
 
-  function openLinkForm(type: LessonResourceType) {
-    setLinkType(type)
+  function openLinkForm(kind: ResourceProvider = 'link') {
+    setLinkKind(kind)
     setLinkTitle('')
     setLinkUrl('')
     setLinkError(null)
@@ -159,7 +196,7 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
     setLinkError(null)
     try {
       const created = await addLessonLinkResource(
-        { lessonId, resourceType: linkType, title: linkTitle, url: linkUrl },
+        { lessonId, resourceType: kindToResourceType(linkKind), title: linkTitle, url: linkUrl },
         computeNextResourceSortOrder(resources),
       )
       setResources((prev) => [...prev, created])
@@ -206,19 +243,15 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => handleFileButtonClick('slide')} disabled={uploading}>
             <Plus className="size-3.5" />
-            เพิ่มสไลด์
-          </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => openLinkForm('video')}>
-            <Plus className="size-3.5" />
-            เพิ่มวิดีโอ
+            อัปโหลดไฟล์ (สไลด์)
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => handleFileButtonClick('document')} disabled={uploading}>
             <Plus className="size-3.5" />
-            เพิ่มเอกสาร
+            อัปโหลดไฟล์ (เอกสาร)
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => openLinkForm('link')}>
+          <Button type="button" variant="outline" size="sm" onClick={() => openLinkForm()}>
             <Plus className="size-3.5" />
-            เพิ่มลิงก์
+            เพิ่มลิงก์ / Google
           </Button>
           <input
             ref={fileInputRef}
@@ -245,37 +278,42 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
         <div className="space-y-2 rounded-md border bg-muted/30 p-3">
           {linkError && <p className="text-sm text-destructive">{linkError}</p>}
           <div className="space-y-1.5">
-            <Label htmlFor="lesson-resource-type">ประเภทสื่อ</Label>
+            <Label htmlFor="lesson-resource-type">ประเภท</Label>
             <NativeSelect
               id="lesson-resource-type"
-              value={linkType}
-              onChange={(e) => setLinkType(e.target.value as LessonResourceType)}
+              value={linkKind}
+              onChange={(e) => setLinkKind(e.target.value as ResourceProvider)}
             >
-              {LINKABLE_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {lessonResourceTypeLabel(type)}
+              {RESOURCE_ADD_KINDS.map((k) => (
+                <option key={k.kind} value={k.kind}>
+                  {k.label}
                 </option>
               ))}
             </NativeSelect>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="lesson-resource-link-title">ชื่อที่แสดง</Label>
+            <Label htmlFor="lesson-resource-link-title">ชื่อสื่อ</Label>
             <Input
               id="lesson-resource-link-title"
               value={linkTitle}
               onChange={(e) => setLinkTitle(e.target.value)}
-              placeholder="เช่น คลิปการสอนบทที่ 1"
+              placeholder="เช่น สไลด์บทที่ 1"
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="lesson-resource-link-url">ลิงก์ (https://) — YouTube, Google Drive, Google Slides, Canva ฯลฯ</Label>
+            <Label htmlFor="lesson-resource-link-url">Google URL / ลิงก์ (https://)</Label>
             <Input
               id="lesson-resource-link-url"
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
-              placeholder="https://..."
+              placeholder={RESOURCE_ADD_KIND_PLACEHOLDER[linkKind]}
             />
           </div>
+          {isGoogleProvider(linkKind) && (
+            <p className="rounded-md bg-primary/5 px-2.5 py-2 text-xs text-muted-foreground">
+              {GOOGLE_PERMISSIONS_HELPER_TEXT}
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={() => setLinkFormOpen(false)}>
               ยกเลิก
@@ -294,17 +332,30 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
       ) : (
         <ul className="space-y-1.5">
           {resources.map((resource, index) => {
-            const Icon = RESOURCE_ICON[resource.resourceType]
+            const provider = resource.url ? detectResourceProvider(resource.url) : null
+            const Icon = provider ? PROVIDER_ICON[provider] : RESOURCE_ICON[resource.resourceType]
             return (
               <li key={resource.id} className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm">
                 <Icon className="size-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{resource.title}</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {lessonResourceTypeLabel(resource.resourceType)} ·{' '}
-                    {resource.resourceType !== 'video' && resource.filePath ? displayFileName(resource) : resource.url}
+                    {lessonResourceTypeLabel(resource.resourceType)}
+                    {provider && ` · ${PROVIDER_LABEL[provider]}`}
+                    {!provider && resource.filePath && ` · ${displayFileName(resource)}`}
                   </p>
                 </div>
+                {provider && resource.url && (
+                  <a
+                    href={resource.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    <ExternalLink className="size-3" />
+                    {PROVIDER_OPEN_LABEL[provider]}
+                  </a>
+                )}
                 <div className="flex shrink-0 items-center gap-0.5">
                   <Button
                     type="button"

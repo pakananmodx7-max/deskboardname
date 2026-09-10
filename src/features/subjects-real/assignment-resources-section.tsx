@@ -1,11 +1,23 @@
-import { ChevronDown, ChevronUp, FileText, Link2, Loader2, Plus, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, ExternalLink, FileText, Loader2, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
+import { NativeSelect } from '@/components/ui/select'
 import { toFriendlyErrorMessage } from '@/lib/errors'
+import {
+  detectResourceProvider,
+  GOOGLE_PERMISSIONS_HELPER_TEXT,
+  isGoogleProvider,
+  PROVIDER_ICON,
+  PROVIDER_LABEL,
+  PROVIDER_OPEN_LABEL,
+  RESOURCE_ADD_KIND_PLACEHOLDER,
+  RESOURCE_ADD_KINDS,
+  type ResourceProvider,
+} from '@/lib/resource-provider'
 import {
   addFileResource,
   addLinkResource,
@@ -54,6 +66,11 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const [linkFormOpen, setLinkFormOpen] = useState(false)
+  /** Purely a UX hint (placeholder text + the Google permissions
+   * reminder) — never persisted or trusted for display. The actual
+   * provider badge shown once a resource is saved always comes from
+   * detectResourceProvider(resource.url), never from this. */
+  const [linkKind, setLinkKind] = useState<ResourceProvider>('link')
   const [linkTitle, setLinkTitle] = useState('')
   const [linkUrl, setLinkUrl] = useState('')
   const [linkError, setLinkError] = useState<string | null>(null)
@@ -127,6 +144,7 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
   }
 
   function openLinkForm() {
+    setLinkKind('link')
     setLinkTitle('')
     setLinkUrl('')
     setLinkError(null)
@@ -224,23 +242,42 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
         <div className="space-y-2 rounded-md border bg-muted/30 p-3">
           {linkError && <p className="text-sm text-destructive">{linkError}</p>}
           <div className="space-y-1.5">
-            <Label htmlFor="resource-link-title">ชื่อที่แสดง</Label>
+            <Label htmlFor="resource-link-kind">ประเภท</Label>
+            <NativeSelect
+              id="resource-link-kind"
+              value={linkKind}
+              onChange={(e) => setLinkKind(e.target.value as ResourceProvider)}
+            >
+              {RESOURCE_ADD_KINDS.map((k) => (
+                <option key={k.kind} value={k.kind}>
+                  {k.label}
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="resource-link-title">ชื่อสื่อ</Label>
             <Input
               id="resource-link-title"
               value={linkTitle}
               onChange={(e) => setLinkTitle(e.target.value)}
-              placeholder="เช่น แบบทดสอบ Google Form"
+              placeholder="เช่น สไลด์บทที่ 1"
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="resource-link-url">ลิงก์ (https://)</Label>
+            <Label htmlFor="resource-link-url">Google URL / ลิงก์ (https://)</Label>
             <Input
               id="resource-link-url"
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
-              placeholder="https://..."
+              placeholder={RESOURCE_ADD_KIND_PLACEHOLDER[linkKind]}
             />
           </div>
+          {isGoogleProvider(linkKind) && (
+            <p className="rounded-md bg-primary/5 px-2.5 py-2 text-xs text-muted-foreground">
+              {GOOGLE_PERMISSIONS_HELPER_TEXT}
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={() => setLinkFormOpen(false)}>
               ยกเลิก
@@ -258,56 +295,67 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
         <p className="text-sm text-muted-foreground">ยังไม่มีสื่อหรือใบงานสำหรับงานนี้</p>
       ) : (
         <ul className="space-y-1.5">
-          {resources.map((resource, index) => (
-            <li key={resource.id} className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm">
-              {resource.resourceType === 'file' ? (
-                <FileText className="size-4 shrink-0 text-muted-foreground" />
-              ) : (
-                <Link2 className="size-4 shrink-0 text-muted-foreground" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{resource.title}</p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {resource.resourceType === 'file' ? displayFileName(resource) : resource.url}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-0.5">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  disabled={index === 0}
-                  onClick={() => handleMove(index, -1)}
-                  aria-label="เลื่อนขึ้น"
-                >
-                  <ChevronUp className="size-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  disabled={index === resources.length - 1}
-                  onClick={() => handleMove(index, 1)}
-                  aria-label="เลื่อนลง"
-                >
-                  <ChevronDown className="size-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-destructive"
-                  disabled={busyResourceId === resource.id}
-                  onClick={() => handleRemove(resource)}
-                  aria-label="ลบ"
-                >
-                  {busyResourceId === resource.id ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
-                </Button>
-              </div>
-            </li>
-          ))}
+          {resources.map((resource, index) => {
+            const provider = resource.resourceType === 'link' ? detectResourceProvider(resource.url ?? '') : null
+            const Icon = provider ? PROVIDER_ICON[provider] : FileText
+            return (
+              <li key={resource.id} className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm">
+                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium">{resource.title}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {provider ? PROVIDER_LABEL[provider] : displayFileName(resource)}
+                  </p>
+                </div>
+                {provider && resource.url && (
+                  <a
+                    href={resource.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    <ExternalLink className="size-3" />
+                    {PROVIDER_OPEN_LABEL[provider]}
+                  </a>
+                )}
+                <div className="flex shrink-0 items-center gap-0.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={index === 0}
+                    onClick={() => handleMove(index, -1)}
+                    aria-label="เลื่อนขึ้น"
+                  >
+                    <ChevronUp className="size-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    disabled={index === resources.length - 1}
+                    onClick={() => handleMove(index, 1)}
+                    aria-label="เลื่อนลง"
+                  >
+                    <ChevronDown className="size-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 text-destructive"
+                    disabled={busyResourceId === resource.id}
+                    onClick={() => handleRemove(resource)}
+                    aria-label="ลบ"
+                  >
+                    {busyResourceId === resource.id ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
+                  </Button>
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>

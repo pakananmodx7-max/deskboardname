@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -62,6 +64,31 @@ describe('computeNextLessonSortOrder', () => {
 
   it('starts at 0 for the first lesson in a subject+classroom', () => {
     expect(computeNextLessonSortOrder([])).toBe(0)
+  })
+})
+
+/**
+ * Google Drive Integration, Section 7/8/10: a Google-linked resource
+ * (or any link resource) must never be uploaded into Supabase Storage —
+ * only addLessonFileResource (the separate slide/document upload path)
+ * ever calls `.storage.`. This is a source-text guard rather than a
+ * mocked-Supabase test, matching this codebase's established pattern for
+ * "never touches X" assertions (see assignment-resources-disclosure.test.ts).
+ */
+describe('addLessonLinkResource — never touches Supabase Storage (Section 7/8/10)', () => {
+  const source = readFileSync(new URL('./lesson-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function addLessonLinkResource'),
+    source.indexOf('\n}', source.indexOf('export async function addLessonLinkResource')),
+  )
+
+  it('addLessonLinkResource never calls supabase.storage', () => {
+    expect(fnBody).not.toContain('.storage.')
+  })
+
+  it('addLessonLinkResource only inserts into lesson_resources with a url, never a file_path', () => {
+    expect(fnBody).toContain("from('lesson_resources')")
+    expect(fnBody).toContain('url: input.url.trim()')
   })
 })
 

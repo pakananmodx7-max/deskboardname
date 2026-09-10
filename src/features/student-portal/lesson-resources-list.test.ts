@@ -42,3 +42,27 @@ describe('LessonResourcesList — student-facing resource buttons match exact sp
     expect(source).toMatch(/if \(error\) return/)
   })
 })
+
+describe('LessonResourcesList — Google provider display (Google Drive Integration, Section 3/4/6/9)', () => {
+  const source = readSource()
+
+  it('derives provider from the ONE shared resource-provider module, never a second local parser', () => {
+    expect(source).toContain("from '@/lib/resource-provider'")
+    expect(source).toMatch(/detectResourceProvider\(resource\.url\)/)
+  })
+
+  it('the Google Slides preview is optional (click-to-reveal), never automatic like the YouTube embed', () => {
+    expect(source).toContain('getGoogleSlidesEmbedUrl')
+    expect(source).toContain('showPreview')
+    expect(source).toContain("'แสดงตัวอย่างสไลด์'")
+  })
+
+  it('always retains a plain open-in-new-tab fallback link alongside any preview, using the shared provider open-label (never hardcoding it locally)', () => {
+    expect(source).toContain('PROVIDER_OPEN_LABEL')
+    expect(source).toMatch(/<a\s/)
+  })
+
+  it('shows the Google sharing-permissions caveat rather than claiming this app controls Drive permissions', () => {
+    expect(source).toContain('การแสดงตัวอย่างขึ้นอยู่กับการตั้งค่าสิทธิ์การแชร์ไฟล์ใน Google Slides')
+  })
+})
