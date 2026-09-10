@@ -1,5 +1,5 @@
 import { Save } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,6 +10,7 @@ import {
   buildRecordsForRoster,
   deriveAttendanceRoster,
   getAttendance,
+  mergeLoadedAttendance,
   parsePeriodNumber,
   saveAttendance,
 } from '@/services/attendance-service'
@@ -22,6 +23,8 @@ interface AttendanceTabProps {
   subject: Subject
   classroomId: string
 }
+
+type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
@@ -51,7 +54,16 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
   const [rosterLoading, setRosterLoading] = useState(false)
   const [rosterError, setRosterError] = useState<string | null>(null)
   const [attendanceWarning, setAttendanceWarning] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
+  const [saveState, setSaveState] = useState<SaveState>('idle')
+  const saveStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /** Student ids the teacher has clicked/typed into SINCE the current
+   * roster-load effect started — consulted by mergeLoadedAttendance so
+   * the delayed saved-session fetch can never silently overwrite an
+   * in-progress edit. Reset at the top of every load (new
+   * classroom/date/period). See mergeLoadedAttendance's doc comment in
+   * attendance-service.ts for the production race this closes. */
+  const editedIdsRef = useRef<Set<string>>(new Set())
 
   // periodInput is a free-text field (empty = "no specific period" —
   // exactly the homeroom-style null). Only a positive integer is ever
@@ -74,9 +86,11 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
     if (periodInvalid) return
 
     let cancelled = false
+    editedIdsRef.current = new Set()
     setRosterLoading(true)
     setRosterError(null)
     setAttendanceWarning(null)
+    setSaveState('idle')
 
     getStudentsByClassroom(classroomId)
       .then((classroomStudents) => {
@@ -89,7 +103,8 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
         getAttendance(classroomId, date, subject.id, periodNumber)
           .then((attendance) => {
             if (cancelled) return
-            setRecords(buildRecordsForRoster(activeIds, attendance))
+            const loaded = buildRecordsForRoster(activeIds, attendance)
+            setRecords((prev) => mergeLoadedAttendance(prev, loaded, editedIdsRef.current))
           })
           .catch((err: unknown) => {
             if (!cancelled) {
@@ -116,6 +131,7 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
   }, [classroomId, date, periodInput, subject.id])
 
   function setStatus(studentId: string, status: AttendanceStatus) {
+    editedIdsRef.current.add(studentId)
     setRecords((prev) => ({
       ...prev,
       [studentId]: { studentId, status, note: prev[studentId]?.note ?? null },
@@ -123,6 +139,7 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
   }
 
   function setNote(studentId: string, note: string) {
+    editedIdsRef.current.add(studentId)
     setRecords((prev) => ({
       ...prev,
       [studentId]: { studentId, status: prev[studentId]?.status ?? 'present', note: note || null },
@@ -131,17 +148,28 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
 
   async function handleSave() {
     if (periodInvalid) return
-    setSaving(true)
+    if (saveStateTimerRef.current) clearTimeout(saveStateTimerRef.current)
+    setSaveState('saving')
     try {
       const recordsToSave = roster.map((student) => records[student.id] ?? { studentId: student.id, status: 'present', note: null })
       await saveAttendance(classroomId, date, recordsToSave, subject.id, periodNumber)
+      setSaveState('saved')
       toast('บันทึกการเช็คชื่อเรียบร้อยแล้ว')
+      saveStateTimerRef.current = setTimeout(() => setSaveState('idle'), 2000)
     } catch (err) {
+      // Deliberately does NOT touch `records` here — the teacher's marked
+      // statuses/notes stay exactly as they were, visible and re-savable,
+      // never silently cleared just because the write failed.
+      setSaveState('error')
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกการเช็คชื่อได้'))
-    } finally {
-      setSaving(false)
     }
   }
+
+  useEffect(() => {
+    return () => {
+      if (saveStateTimerRef.current) clearTimeout(saveStateTimerRef.current)
+    }
+  }, [])
 
   const roster = deriveAttendanceRoster(students, records)
 
@@ -167,10 +195,17 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
             aria-label="คาบเรียน"
           />
         </div>
-        <Button onClick={handleSave} disabled={saving || rosterLoading || roster.length === 0 || periodInvalid}>
-          <Save className="size-4" />
-          {saving ? 'กำลังบันทึก...' : 'บันทึกการเช็คชื่อ'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={handleSave}
+            disabled={saveState === 'saving' || rosterLoading || roster.length === 0 || periodInvalid}
+          >
+            <Save className="size-4" />
+            {saveState === 'saving' ? 'กำลังบันทึก...' : 'บันทึกการเช็คชื่อ'}
+          </Button>
+          {saveState === 'saved' && <span className="text-sm text-success">บันทึกแล้ว</span>}
+          {saveState === 'error' && <span className="text-sm text-destructive">บันทึกไม่สำเร็จ</span>}
+        </div>
       </div>
 
       {periodInvalid && <p className="text-sm text-destructive">คาบเรียนต้องเป็นจำนวนเต็มบวก</p>}

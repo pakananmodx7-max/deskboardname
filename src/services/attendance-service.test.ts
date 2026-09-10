@@ -6,7 +6,9 @@ import {
   buildRecordsForRoster,
   deriveAttendanceRoster,
   getAttendanceSummary,
+  mergeLoadedAttendance,
   parsePeriodNumber,
+  pickAttendanceSession,
   type AttendanceForDate,
 } from '@/services/attendance-service'
 import type { AttendanceRecord } from '@/types/attendance'
@@ -243,6 +245,85 @@ describe('buildRecordsForRoster — the roster must survive a failed/missing att
  * correctly" — a source-level guard confirms it never re-implements or
  * bypasses that scoping.
  */
+/**
+ * pickAttendanceSession (Attendance Production Fix phase) — Section 3's
+ * "if multiple legacy sessions exist, do not silently crash; handle
+ * deterministically and report the data issue" requirement. A true
+ * duplicate is already provably impossible via any normal write path
+ * (see supabase/tests/0004_attendance_roster_and_rls.sql PASS 5, which
+ * proves the unique index rejects it) — this only has to handle the
+ * legacy/anomalous-data case gracefully, never throw.
+ */
+describe('pickAttendanceSession — duplicate-session handling (Section 3)', () => {
+  function row(id: string, updatedAt: string) {
+    return { id, updatedAt }
+  }
+
+  it('returns null/0 for no matching rows (the common "nothing saved yet" case)', () => {
+    expect(pickAttendanceSession([])).toEqual({ selected: null, duplicateCount: 0 })
+  })
+
+  it('returns the single row with duplicateCount 1 for the healthy, expected case', () => {
+    const result = pickAttendanceSession([row('a', '2026-09-09T10:00:00Z')])
+    expect(result).toEqual({ selected: row('a', '2026-09-09T10:00:00Z'), duplicateCount: 1 })
+  })
+
+  it('deterministically picks the most recently updated row when more than one matches, and reports the true count', () => {
+    const rows = [row('old', '2026-09-01T00:00:00Z'), row('newest', '2026-09-09T12:00:00Z'), row('middle', '2026-09-05T00:00:00Z')]
+    const result = pickAttendanceSession(rows)
+    expect(result.selected?.id).toBe('newest')
+    expect(result.duplicateCount).toBe(3)
+  })
+
+  it('never throws for any input size — degrades gracefully instead of crashing the attendance page', () => {
+    expect(() => pickAttendanceSession([row('a', '2026-01-01T00:00:00Z'), row('b', '2026-01-01T00:00:00Z')])).not.toThrow()
+  })
+})
+
+/**
+ * mergeLoadedAttendance (Attendance Production Fix phase) — closes a real
+ * production race: the roster becomes interactive as soon as it loads,
+ * but the saved-session fetch (getAttendance) is a second, independent,
+ * slower request. A teacher who starts marking statuses before that
+ * second fetch resolves must never have their in-progress marks silently
+ * discarded when it finally does resolve.
+ */
+describe('mergeLoadedAttendance — the delayed saved-session fetch must never clobber an in-progress edit (Section 5)', () => {
+  const s1present: AttendanceRecord = { studentId: 's1', status: 'present', note: null }
+  const s1absent: AttendanceRecord = { studentId: 's1', status: 'absent', note: null }
+  const s2present: AttendanceRecord = { studentId: 's2', status: 'present', note: null }
+  const s2late: AttendanceRecord = { studentId: 's2', status: 'late', note: 'สาย 10 นาที' }
+
+  it('an untouched student gets the freshly-loaded value', () => {
+    const merged = mergeLoadedAttendance({ s1: s1present }, { s1: s1absent }, new Set())
+    expect(merged.s1).toEqual(s1absent)
+  })
+
+  it('a student the teacher already edited keeps their in-progress value, ignoring the freshly-loaded one', () => {
+    // Teacher clicked "ขาด" for s1 while the saved-session fetch was still
+    // in flight; that fetch then resolves with the OLD saved value
+    // (present) — the teacher's click must win.
+    const merged = mergeLoadedAttendance({ s1: s1absent }, { s1: s1present }, new Set(['s1']))
+    expect(merged.s1).toEqual(s1absent)
+  })
+
+  it('mixed: one edited student keeps their edit, one untouched student gets the loaded value', () => {
+    const merged = mergeLoadedAttendance({ s1: s1absent, s2: s2present }, { s1: s1present, s2: s2late }, new Set(['s1']))
+    expect(merged.s1).toEqual(s1absent)
+    expect(merged.s2).toEqual(s2late)
+  })
+
+  it('an edited id with no current record (should not normally happen) is safely skipped, never crashes', () => {
+    const merged = mergeLoadedAttendance({}, { s1: s1present }, new Set(['s1', 'ghost-id']))
+    expect(merged.s1).toEqual(s1present)
+  })
+
+  it('no edits at all: behaves exactly like using the loaded records directly', () => {
+    const loaded = { s1: s1absent, s2: s2late }
+    expect(mergeLoadedAttendance({ s1: s1present }, loaded, new Set())).toEqual(loaded)
+  })
+})
+
 describe('getAllAttendanceForClassroom — source-level safety guard (Data Safety phase)', () => {
   const source = readFileSync(new URL('./attendance-service.ts', import.meta.url), 'utf-8')
 

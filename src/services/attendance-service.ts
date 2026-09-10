@@ -37,6 +37,62 @@ export interface AttendanceForDate {
   records: Record<string, AttendanceRecord>
 }
 
+export interface SessionSelection<T> {
+  selected: T | null
+  /** How many rows actually matched — 0 or 1 in a healthy database. A
+   * caller should treat anything above 1 as a data anomaly worth
+   * reporting (see getAttendance's console.warn), never a crash. */
+  duplicateCount: number
+}
+
+/**
+ * Pure — given every attendance_sessions row that matched one exact
+ * classroom+date(+subject+period) combination, deterministically picks
+ * the one to treat as authoritative (most recently updated first) and
+ * reports how many rows actually matched, so a caller can log/report a
+ * data anomaly instead of silently guessing or crashing. Exactly one row
+ * should ever match in a healthy database — the partial unique indexes
+ * in 0004/0005_*.sql make a true duplicate impossible via any actual
+ * write path (empirically verified in
+ * supabase/tests/0004_attendance_roster_and_rls.sql, PASS 5) — this only
+ * guards against a legacy/manually-inserted row that predates those
+ * indexes, which is exactly the "handle deterministically, don't
+ * silently crash, report the data issue" requirement for that case.
+ */
+export function pickAttendanceSession<T extends { updatedAt: string }>(rows: T[]): SessionSelection<T> {
+  if (rows.length === 0) return { selected: null, duplicateCount: 0 }
+  const sorted = [...rows].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  return { selected: sorted[0], duplicateCount: rows.length }
+}
+
+/**
+ * Pure — merges a freshly-loaded saved session's records into whatever
+ * is currently displayed, WITHOUT letting the load silently discard a
+ * student the teacher has already marked while that load was still in
+ * flight (`editedIds`). This is the fix for a real production race: the
+ * roster becomes interactive (and clickable) the moment the classroom
+ * roster itself loads, but the saved-session lookup is a second,
+ * independent request (deliberately not combined via Promise.all — see
+ * getAttendance's own doc comment) that can resolve AFTER the teacher
+ * has already started clicking statuses. Without this guard, that later
+ * resolution would call setRecords with the DB's (older, relative to the
+ * teacher's own just-made edit) saved values and silently overwrite
+ * marks the teacher had just set — exactly the "attendance is not
+ * reliably usable" symptom this exists to close. A student NOT in
+ * `editedIds` still gets the freshly-loaded value, unchanged.
+ */
+export function mergeLoadedAttendance(
+  currentRecords: Record<string, AttendanceRecord>,
+  loadedRecords: Record<string, AttendanceRecord>,
+  editedIds: ReadonlySet<string>,
+): Record<string, AttendanceRecord> {
+  const merged = { ...loadedRecords }
+  for (const id of editedIds) {
+    if (currentRecords[id]) merged[id] = currentRecords[id]
+  }
+  return merged
+}
+
 /**
  * Looks up the session for this classroom+date, plus every record saved
  * on it. `subjectId`/`periodNumber` default to null — the classroom-level
@@ -61,10 +117,11 @@ export interface AttendanceForDate {
  * incident for a real prior example of exactly that class of gap), the
  * whole roll call used to hard-fail with an opaque, non-Thai
  * PostgREST "multiple rows returned" error instead of just... showing
- * the roster. `.order(...).limit(1)` never throws for "too many rows":
+ * the roster. `pickAttendanceSession` never throws for "too many rows":
  * it deterministically picks the most recently updated matching
- * session, which degrades gracefully instead of taking down the entire
- * Attendance page over a single stray row.
+ * session (degrading gracefully instead of taking down the entire
+ * Attendance page over a single stray row) AND reports the anomaly via
+ * `console.warn` when it finds more than one — see its own doc comment.
  */
 export async function getAttendance(
   classroomId: string,
@@ -83,13 +140,26 @@ export async function getAttendance(
   query = subjectId === null ? query.is('subject_id', null) : query.eq('subject_id', subjectId)
   query = periodNumber === null ? query.is('period_number', null) : query.eq('period_number', periodNumber)
 
-  const { data: sessionRows, error: sessionError } = await query.order('updated_at', { ascending: false }).limit(1)
+  // .limit(5) rather than .limit(1): a healthy database only ever has 0
+  // or 1 matching row (see 0004/0005_*.sql's partial unique indexes and
+  // supabase/tests/0004_attendance_roster_and_rls.sql PASS 5, which
+  // proves a true duplicate is rejected by the database itself on every
+  // normal write path) — this only exists to CATCH the anomalous case
+  // (a legacy row predating those indexes) instead of silently hiding it
+  // behind a plain .limit(1) that would look identical either way.
+  const { data: sessionRows, error: sessionError } = await query.order('updated_at', { ascending: false }).limit(5)
 
   if (sessionError) throw sessionError
-  const sessionRow = (sessionRows as AttendanceSessionRow[] | null)?.[0] ?? null
-  if (!sessionRow) return { session: null, records: {} }
+  const { selected, duplicateCount } = pickAttendanceSession(((sessionRows as AttendanceSessionRow[] | null) ?? []).map(mapSession))
 
-  const session = mapSession(sessionRow)
+  if (duplicateCount > 1) {
+    console.warn(
+      `[attendance] ${duplicateCount} attendance_sessions rows matched classroom_id=${classroomId} attendance_date=${attendanceDate} subject_id=${subjectId ?? 'null'} period_number=${periodNumber ?? 'null'} — expected at most 1 (see 0004/0005_*.sql's unique indexes). Using the most recently updated row (id=${selected?.id}).`,
+    )
+  }
+
+  if (!selected) return { session: null, records: {} }
+  const session = selected
 
   const { data: recordRows, error: recordsError } = await supabase
     .from('attendance_records')
