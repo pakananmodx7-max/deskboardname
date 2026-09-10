@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildDefaultRecords,
   buildRecordsForRoster,
   deriveAttendanceRoster,
   getAttendanceSummary,
+  logAttendanceError,
   mergeLoadedAttendance,
   parsePeriodNumber,
   pickAttendanceSession,
@@ -321,6 +322,59 @@ describe('mergeLoadedAttendance — the delayed saved-session fetch must never c
   it('no edits at all: behaves exactly like using the loaded records directly', () => {
     const loaded = { s1: s1absent, s2: s2late }
     expect(mergeLoadedAttendance({ s1: s1present }, loaded, new Set())).toEqual(loaded)
+  })
+})
+
+/**
+ * logAttendanceError (Production Bug Investigation, Section 1) — "report
+ * the complete Supabase error: code, message, details, hint, HTTP status
+ * if available. Do not replace it with only a generic Thai message."
+ * toFriendlyErrorMessage (lib/errors.ts) still converts every thrown
+ * error into a safe Thai string for the teacher to see — that is correct
+ * UI behavior and is unchanged — but this function guarantees the real,
+ * complete PostgREST error always reaches the console first, for exactly
+ * the situation reported: a generic toast with no way to see the actual
+ * code/message/details/hint behind it.
+ */
+describe('logAttendanceError — full Supabase error surfaced to the console (Section 1)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('logs code, message, details, hint, and status exactly as given', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const error = { code: '42883', message: 'function ... does not exist', details: 'some details', hint: 'add explicit casts' }
+
+    logAttendanceError('saveAttendance: save_attendance_session RPC', error, 404)
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    const [label, payload] = spy.mock.calls[0]
+    expect(label).toContain('saveAttendance: save_attendance_session RPC')
+    expect(payload).toEqual({
+      code: '42883',
+      message: 'function ... does not exist',
+      details: 'some details',
+      hint: 'add explicit casts',
+      status: 404,
+      raw: error,
+    })
+  })
+
+  it('never throws on a malformed/non-object error, and fills missing fields with null', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(() => logAttendanceError('getAttendance: attendance_sessions select', 'a plain string error')).not.toThrow()
+    const [, payload] = spy.mock.calls[0]
+    expect(payload).toMatchObject({ code: null, message: null, details: null, hint: null, status: null })
+  })
+})
+
+describe('getAttendance/saveAttendance — every failure path logs before throwing (Section 1)', () => {
+  const source = readFileSync(new URL('./attendance-service.ts', import.meta.url), 'utf-8')
+
+  it('the attendance_sessions select, the attendance_records select, and the RPC call each log via logAttendanceError before their throw', () => {
+    expect(source).toMatch(/logAttendanceError\('getAttendance: attendance_sessions select', sessionError, sessionStatus\)\s*\n\s*throw sessionError/)
+    expect(source).toMatch(/logAttendanceError\('getAttendance: attendance_records select', recordsError, recordsStatus\)\s*\n\s*throw recordsError/)
+    expect(source).toMatch(/logAttendanceError\('saveAttendance: save_attendance_session RPC', error, status\)\s*\n\s*throw error/)
   })
 })
 

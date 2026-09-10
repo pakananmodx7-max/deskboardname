@@ -1,6 +1,39 @@
 import { getSupabaseClient } from '@/lib/supabase'
 import type { AttendanceRecord, AttendanceSession, AttendanceStatus, AttendanceSummary } from '@/types/attendance'
 
+/** Supabase/PostgREST error shape — see @supabase/postgrest-js's
+ * PostgrestError: code/message/details/hint are always present on a
+ * failed request; `status` is the HTTP status from the surrounding
+ * response, not the error object itself, so callers pass it separately. */
+interface SupabaseErrorLike {
+  code?: string
+  message?: string
+  details?: string
+  hint?: string
+}
+
+/**
+ * Logs the COMPLETE Supabase/PostgREST error to the console before it is
+ * thrown and converted into a generic Thai message by
+ * toFriendlyErrorMessage (lib/errors.ts) — that conversion is correct for
+ * what a teacher should see, but it must never be the only place the real
+ * code/message/details/hint/status end up. `context` names exactly which
+ * call failed (e.g. "getAttendance: attendance_sessions select" or
+ * "saveAttendance: save_attendance_session RPC") so a duplicate error
+ * shape from two different call sites is never ambiguous in the console.
+ */
+export function logAttendanceError(context: string, error: unknown, status?: number): void {
+  const e = error as SupabaseErrorLike
+  console.error(`[attendance] ${context} failed`, {
+    code: e?.code ?? null,
+    message: e?.message ?? null,
+    details: e?.details ?? null,
+    hint: e?.hint ?? null,
+    status: status ?? null,
+    raw: error,
+  })
+}
+
 interface AttendanceSessionRow {
   id: string
   classroom_id: string
@@ -147,9 +180,16 @@ export async function getAttendance(
   // normal write path) — this only exists to CATCH the anomalous case
   // (a legacy row predating those indexes) instead of silently hiding it
   // behind a plain .limit(1) that would look identical either way.
-  const { data: sessionRows, error: sessionError } = await query.order('updated_at', { ascending: false }).limit(5)
+  const {
+    data: sessionRows,
+    error: sessionError,
+    status: sessionStatus,
+  } = await query.order('updated_at', { ascending: false }).limit(5)
 
-  if (sessionError) throw sessionError
+  if (sessionError) {
+    logAttendanceError('getAttendance: attendance_sessions select', sessionError, sessionStatus)
+    throw sessionError
+  }
   const { selected, duplicateCount } = pickAttendanceSession(((sessionRows as AttendanceSessionRow[] | null) ?? []).map(mapSession))
 
   if (duplicateCount > 1) {
@@ -161,12 +201,16 @@ export async function getAttendance(
   if (!selected) return { session: null, records: {} }
   const session = selected
 
-  const { data: recordRows, error: recordsError } = await supabase
-    .from('attendance_records')
-    .select('student_id, status, note')
-    .eq('attendance_session_id', session.id)
+  const {
+    data: recordRows,
+    error: recordsError,
+    status: recordsStatus,
+  } = await supabase.from('attendance_records').select('student_id, status, note').eq('attendance_session_id', session.id)
 
-  if (recordsError) throw recordsError
+  if (recordsError) {
+    logAttendanceError('getAttendance: attendance_records select', recordsError, recordsStatus)
+    throw recordsError
+  }
 
   const records: Record<string, AttendanceRecord> = {}
   for (const row of recordRows as AttendanceRecordRow[]) {
@@ -254,7 +298,7 @@ export async function saveAttendance(
 ): Promise<AttendanceSession> {
   const supabase = getSupabaseClient()
 
-  const { data, error } = await supabase.rpc('save_attendance_session', {
+  const { data, error, status } = await supabase.rpc('save_attendance_session', {
     p_classroom_id: classroomId,
     p_attendance_date: attendanceDate,
     p_records: records.map((record) => ({
@@ -266,7 +310,10 @@ export async function saveAttendance(
     p_period_number: periodNumber,
   })
 
-  if (error) throw error
+  if (error) {
+    logAttendanceError('saveAttendance: save_attendance_session RPC', error, status)
+    throw error
+  }
   return mapSession(data as AttendanceSessionRow)
 }
 
