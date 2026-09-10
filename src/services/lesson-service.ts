@@ -60,6 +60,7 @@ interface LessonResourceRow {
   file_path: string | null
   url: string | null
   mime_type: string | null
+  drive_file_id: string | null
   sort_order: number
   created_at: string
   updated_at: string
@@ -90,6 +91,7 @@ function mapResource(row: LessonResourceRow): LessonResource {
     filePath: row.file_path,
     url: row.url,
     mimeType: row.mime_type,
+    driveFileId: row.drive_file_id,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -427,6 +429,8 @@ export async function addLessonLinkResource(input: AddLessonLinkResourceInput, s
       resource_type: input.resourceType,
       title: input.title.trim(),
       url: input.url.trim(),
+      mime_type: input.mimeType ?? null,
+      drive_file_id: input.driveFileId ?? null,
       sort_order: sortOrder,
       created_by: teacherId,
     })

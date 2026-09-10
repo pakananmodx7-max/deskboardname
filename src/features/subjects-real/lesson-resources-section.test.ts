@@ -55,3 +55,28 @@ describe('LessonResourcesSection — Google resource kind picker (Google Drive I
     expect(source).toMatch(/detectResourceProvider\(resource\.url\)/)
   })
 })
+
+describe('LessonResourcesSection — "เลือกจาก Google Drive" (Google Drive API Integration, Section 3/5)', () => {
+  const source = readSource()
+
+  it('offers a Google Drive Picker button alongside the existing add-file/add-link entry points', () => {
+    expect(source).toContain('เลือกจาก Google Drive')
+    expect(source).toContain('pickGoogleDriveFile')
+  })
+
+  it('a Picker-added resource is saved via the SAME addLessonLinkResource call as a hand-pasted link — never a second, separate insert path', () => {
+    const fn = source.slice(source.indexOf('async function handlePickFromDrive'), source.indexOf('async function handleRemove'))
+    expect(fn).toContain('addLessonLinkResource(')
+    expect(fn).toContain('driveFileId: picked.driveFileId')
+  })
+
+  it('never uploads the picked file\'s bytes to Supabase Storage', () => {
+    const fn = source.slice(source.indexOf('async function handlePickFromDrive'), source.indexOf('async function handleRemove'))
+    expect(fn).not.toContain('.storage.')
+  })
+
+  it('surfaces a clear message (not a generic error) when Google is not connected or needs reconnecting', () => {
+    expect(source).toContain('GoogleNotConnectedError')
+    expect(source).toContain('GoogleReauthRequiredError')
+  })
+})

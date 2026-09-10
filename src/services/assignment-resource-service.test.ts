@@ -23,6 +23,7 @@ function resource(overrides: Partial<AssignmentResource> = {}): AssignmentResour
     filePath: null,
     url: 'https://example.com',
     mimeType: null,
+    driveFileId: null,
     sortOrder: 0,
     createdAt: '2026-09-01T00:00:00Z',
     updatedAt: '2026-09-01T00:00:00Z',

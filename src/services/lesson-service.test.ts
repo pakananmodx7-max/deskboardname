@@ -42,6 +42,7 @@ function resource(id: string, sortOrder: number): LessonResource {
     filePath: null,
     url: 'https://example.com',
     mimeType: null,
+    driveFileId: null,
     sortOrder,
     createdAt: '2026-09-01T00:00:00Z',
     updatedAt: '2026-09-01T00:00:00Z',

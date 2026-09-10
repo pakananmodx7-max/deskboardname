@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, ExternalLink, FileText, Link2, Loader2, Plus, Presentation, Video, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Cloud, ExternalLink, FileText, Link2, Loader2, Plus, Presentation, Video, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,7 @@ import {
   RESOURCE_ADD_KINDS,
   type ResourceProvider,
 } from '@/lib/resource-provider'
+import { GoogleNotConnectedError, GoogleReauthRequiredError, pickGoogleDriveFile } from '@/services/google-drive-service'
 import {
   addLessonFileResource,
   addLessonLinkResource,
@@ -32,6 +33,20 @@ import {
   validateLessonResourceUrl,
 } from '@/services/lesson-service'
 import type { LessonResource, LessonResourceType } from '@/types/lesson'
+
+/** Maps a Picker-selected file's Drive mimeType onto the closest
+ * lesson_resources resource_type — same idea as kindToResourceType
+ * below (which maps the teacher-picked "kind" for a hand-pasted link),
+ * so a Drive-native Slides/Doc file is filed the same way a Google
+ * Slides/Docs URL typed by hand would be. */
+function driveMimeTypeToResourceType(mimeType: string): LessonResourceType {
+  if (mimeType === 'application/vnd.google-apps.presentation') return 'slide'
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') return 'slide'
+  if (mimeType === 'application/vnd.google-apps.document') return 'document'
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'document'
+  if (mimeType === 'application/pdf' || mimeType.startsWith('image/')) return 'document'
+  return 'link'
+}
 
 interface LessonResourcesSectionProps {
   lessonId: string
@@ -113,6 +128,9 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
 
   const [rowError, setRowError] = useState<string | null>(null)
   const [busyResourceId, setBusyResourceId] = useState<string | null>(null)
+
+  const [drivePickerBusy, setDrivePickerBusy] = useState(false)
+  const [drivePickerError, setDrivePickerError] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -208,6 +226,45 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
     }
   }
 
+  /**
+   * Google Drive API Integration, Section 3: opens the Google Picker and,
+   * if the teacher selects a file, saves it exactly like a hand-pasted
+   * Google link (same addLessonLinkResource call, same
+   * lesson_resources_url_https_check constraint, same provider
+   * re-derivation at display time) — only its url/driveFileId/mimeType
+   * come from Drive's own response instead of a typed-in URL. Never
+   * uploads the file's bytes anywhere (Section 5) — this stores metadata
+   * only, exactly like the manual-paste flow always has.
+   */
+  async function handlePickFromDrive() {
+    setDrivePickerError(null)
+    setDrivePickerBusy(true)
+    try {
+      const picked = await pickGoogleDriveFile()
+      if (!picked) return
+      const created = await addLessonLinkResource(
+        {
+          lessonId,
+          resourceType: driveMimeTypeToResourceType(picked.mimeType),
+          title: picked.name,
+          url: picked.url,
+          driveFileId: picked.driveFileId,
+          mimeType: picked.mimeType,
+        },
+        computeNextResourceSortOrder(resources),
+      )
+      setResources((prev) => [...prev, created])
+    } catch (err) {
+      if (err instanceof GoogleNotConnectedError || err instanceof GoogleReauthRequiredError) {
+        setDrivePickerError(err.message)
+      } else {
+        setDrivePickerError(toFriendlyErrorMessage(err, 'ไม่สามารถเลือกไฟล์จาก Google Drive ได้'))
+      }
+    } finally {
+      setDrivePickerBusy(false)
+    }
+  }
+
   async function handleRemove(resource: LessonResource) {
     setRowError(null)
     setBusyResourceId(resource.id)
@@ -253,6 +310,10 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
             <Plus className="size-3.5" />
             เพิ่มลิงก์ / Google
           </Button>
+          <Button type="button" variant="outline" size="sm" onClick={handlePickFromDrive} disabled={drivePickerBusy}>
+            <Cloud className="size-3.5" />
+            {drivePickerBusy ? 'กำลังเปิด Google Drive...' : 'เลือกจาก Google Drive'}
+          </Button>
           <input
             ref={fileInputRef}
             type="file"
@@ -265,6 +326,7 @@ export function LessonResourcesSection({ lessonId, subjectId, classroomId }: Les
 
       {loadError && <p className="text-sm text-destructive">{loadError}</p>}
       {rowError && <p className="text-sm text-destructive">{rowError}</p>}
+      {drivePickerError && <p className="text-sm text-destructive">{drivePickerError}</p>}
 
       {uploading && (
         <div className="space-y-1">

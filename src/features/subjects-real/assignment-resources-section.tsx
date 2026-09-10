@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, ExternalLink, FileText, Loader2, Plus, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Cloud, ExternalLink, FileText, Loader2, Plus, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,7 @@ import {
   RESOURCE_ADD_KINDS,
   type ResourceProvider,
 } from '@/lib/resource-provider'
+import { GoogleNotConnectedError, GoogleReauthRequiredError, pickGoogleDriveFile } from '@/services/google-drive-service'
 import {
   addFileResource,
   addLinkResource,
@@ -83,6 +84,9 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
 
   const [rowError, setRowError] = useState<string | null>(null)
   const [busyResourceId, setBusyResourceId] = useState<string | null>(null)
+
+  const [drivePickerBusy, setDrivePickerBusy] = useState(false)
+  const [drivePickerError, setDrivePickerError] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -176,6 +180,38 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
     }
   }
 
+  /**
+   * Google Drive API Integration, Section 3: opens the Google Picker and,
+   * if the teacher selects a file, saves it exactly like a hand-pasted
+   * Google link (same addLinkResource call, same
+   * assignment_resources_url_https_check constraint, same provider
+   * re-derivation at display time) — only its url/driveFileId/mimeType
+   * come from Drive's own response instead of a typed-in URL. Never
+   * uploads the file's bytes anywhere (Section 5) — this stores metadata
+   * only, exactly like the manual-paste flow always has.
+   */
+  async function handlePickFromDrive() {
+    setDrivePickerError(null)
+    setDrivePickerBusy(true)
+    try {
+      const picked = await pickGoogleDriveFile()
+      if (!picked) return
+      const created = await addLinkResource(
+        { assignmentId, title: picked.name, url: picked.url, driveFileId: picked.driveFileId, mimeType: picked.mimeType },
+        computeNextSortOrder(resources),
+      )
+      setResources((prev) => [...prev, created])
+    } catch (err) {
+      if (err instanceof GoogleNotConnectedError || err instanceof GoogleReauthRequiredError) {
+        setDrivePickerError(err.message)
+      } else {
+        setDrivePickerError(toFriendlyErrorMessage(err, 'ไม่สามารถเลือกไฟล์จาก Google Drive ได้'))
+      }
+    } finally {
+      setDrivePickerBusy(false)
+    }
+  }
+
   async function handleRemove(resource: AssignmentResource) {
     setRowError(null)
     setBusyResourceId(resource.id)
@@ -217,6 +253,10 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
             <Plus className="size-3.5" />
             เพิ่มลิงก์
           </Button>
+          <Button type="button" variant="outline" size="sm" onClick={handlePickFromDrive} disabled={drivePickerBusy}>
+            <Cloud className="size-3.5" />
+            {drivePickerBusy ? 'กำลังเปิด Google Drive...' : 'เลือกจาก Google Drive'}
+          </Button>
           <input
             ref={fileInputRef}
             type="file"
@@ -229,6 +269,7 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
 
       {loadError && <p className="text-sm text-destructive">{loadError}</p>}
       {rowError && <p className="text-sm text-destructive">{rowError}</p>}
+      {drivePickerError && <p className="text-sm text-destructive">{drivePickerError}</p>}
 
       {uploading && (
         <div className="space-y-1">
