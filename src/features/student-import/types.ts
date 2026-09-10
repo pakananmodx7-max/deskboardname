@@ -9,6 +9,7 @@ export type ImportTargetField =
   | 'nickname'
   | 'email'
   | 'phone'
+  | 'classroom'
 
 export const IMPORT_TARGET_FIELDS: ImportTargetField[] = [
   'studentCode',
@@ -19,6 +20,7 @@ export const IMPORT_TARGET_FIELDS: ImportTargetField[] = [
   'nickname',
   'email',
   'phone',
+  'classroom',
 ]
 
 export const IMPORT_TARGET_FIELD_LABELS: Record<ImportTargetField, string> = {
@@ -30,6 +32,15 @@ export const IMPORT_TARGET_FIELD_LABELS: Record<ImportTargetField, string> = {
   nickname: 'ชื่อเล่น',
   email: 'อีเมล',
   phone: 'เบอร์โทร',
+  /** Google Sheets Integration, Section 1: an OPTIONAL safety-check
+   * column, not a routing field — this importer always imports into the
+   * one classroom the teacher is already viewing (see
+   * StudentImportDialog's classroomId prop); mapping this column only
+   * lets parseImportRows cross-check each row's value against that
+   * classroom's name and flag a mismatch, catching an accidental
+   * paste from a mixed multi-classroom sheet rather than silently
+   * importing a wrong-classroom row. */
+  classroom: 'ห้องเรียน (ตรวจสอบเท่านั้น)',
 }
 
 /** Maps a target field to the source column index in the parsed sheet. */
@@ -52,6 +63,10 @@ export interface DraftImportRow {
   nickname: string | null
   email: string | null
   phone: string | null
+  /** The file's own "classroom" column value for this row, if mapped —
+   * kept only for display/cross-check; never used to route the row to a
+   * different classroom than the one this import is already scoped to. */
+  classroom: string | null
   status: ImportRowStatus
   reason: string | null
   fullNameAmbiguous: boolean

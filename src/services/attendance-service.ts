@@ -229,24 +229,29 @@ export interface AttendanceRecordWithSession extends AttendanceRecord {
 
 /**
  * EVERY attendance session and record ever saved for this classroom —
- * across every date/subject/คาบ, never just one specific lookup like
- * getAttendance above. Used only by the teacher data backup export
- * (Settings → สำรองข้อมูล); RLS (attendance_sessions_select_own /
+ * across every date/คาบ, never just one specific lookup like
+ * getAttendance above. With `subjectId` omitted (the teacher data backup
+ * export's use — Settings → สำรองข้อมูล), this is every subject AND the
+ * homeroom (subject_id is null) rows together; passing `subjectId`
+ * (the Subject → Classroom → เช็คชื่อ export's use, Google Sheets
+ * Integration Section 3) scopes it to exactly that subject's sessions,
+ * matching AttendanceTab's own p_subject_id scoping — never another
+ * subject's rows, never homeroom. RLS (attendance_sessions_select_own /
  * attendance_records_select_own, 0004/0005 — unchanged, no new policy)
  * already scopes this to sessions/records belonging to a classroom the
- * caller owns, so this plain, unfiltered `select('*')` cannot reach
- * another teacher's data no matter how it's called.
+ * caller owns, so this plain `select('*')` cannot reach another
+ * teacher's data no matter how it's called.
  */
 export async function getAllAttendanceForClassroom(
   classroomId: string,
+  subjectId?: string,
 ): Promise<{ sessions: AttendanceSession[]; records: AttendanceRecordWithSession[] }> {
   const supabase = getSupabaseClient()
 
-  const { data: sessionRows, error: sessionError } = await supabase
-    .from('attendance_sessions')
-    .select('*')
-    .eq('classroom_id', classroomId)
-    .order('attendance_date', { ascending: true })
+  let sessionQuery = supabase.from('attendance_sessions').select('*').eq('classroom_id', classroomId)
+  if (subjectId !== undefined) sessionQuery = sessionQuery.eq('subject_id', subjectId)
+
+  const { data: sessionRows, error: sessionError } = await sessionQuery.order('attendance_date', { ascending: true })
   if (sessionError) throw sessionError
 
   const sessions = (sessionRows as AttendanceSessionRow[]).map(mapSession)

@@ -36,6 +36,11 @@ describe('autoDetectMapping', () => {
     })
   })
 
+  it('detects a "classroom" column (Google Sheets Integration, Section 1)', () => {
+    expect(autoDetectMapping(['ชื่อ', 'นามสกุล', 'ห้องเรียน'])).toEqual({ firstName: 0, lastName: 1, classroom: 2 })
+    expect(autoDetectMapping(['First Name', 'Last Name', 'Classroom'])).toEqual({ firstName: 0, lastName: 1, classroom: 2 })
+  })
+
   it('ignores unrecognized headers and never assigns the same field twice', () => {
     const mapping = autoDetectMapping(['ชื่อ', 'หมายเหตุ', 'ชื่อ'])
     expect(mapping.firstName).toBe(0)

@@ -43,6 +43,11 @@ interface StudentImportDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   classroomId: string
+  /** Used only as an optional cross-check (see parseImportRows'
+   * expectedClassroomName param) against the file's own "classroom"
+   * column, when the teacher maps one — never to route rows to a
+   * different classroom than classroomId above. */
+  classroomName: string
   onImported: () => void
 }
 
@@ -52,6 +57,7 @@ export function StudentImportDialog({
   open,
   onOpenChange,
   classroomId,
+  classroomName,
   onImported,
 }: StudentImportDialogProps) {
   const [step, setStep] = useState<Step>('select')
@@ -146,7 +152,7 @@ export function StudentImportDialog({
     setStep('resolving')
     setError(null)
     try {
-      const draftRows = parseImportRows(parsed, mapping)
+      const draftRows = parseImportRows(parsed, mapping, classroomName)
       const resolved = await resolveImportRows(draftRows, classroomId)
       setResolvedRows(resolved)
       setStep('preview')

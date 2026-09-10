@@ -76,6 +76,55 @@ describe('parseImportRows', () => {
   })
 })
 
+describe('parseImportRows — classroom cross-check (Google Sheets Integration, Section 1 "invalid classroom")', () => {
+  it('flags a row invalid when the file\'s classroom column disagrees with the classroom being imported into', () => {
+    const mapping: ColumnMapping = { firstName: 0, lastName: 1, classroom: 2 }
+    const sheet = makeSheet(
+      ['ชื่อ', 'นามสกุล', 'ห้องเรียน'],
+      [['สมชาย', 'ใจดี', 'ม.5/2']],
+    )
+
+    const [row] = parseImportRows(sheet, mapping, 'ม.5/1')
+    expect(row.status).toBe('invalid')
+    expect(row.reason).toContain('ห้องเรียนในไฟล์')
+  })
+
+  it('accepts a row whose classroom column matches, ignoring case/whitespace differences', () => {
+    const mapping: ColumnMapping = { firstName: 0, lastName: 1, classroom: 2 }
+    const sheet = makeSheet(
+      ['ชื่อ', 'นามสกุล', 'ห้องเรียน'],
+      [['สมชาย', 'ใจดี', ' ม.5/1 ']],
+    )
+
+    const [row] = parseImportRows(sheet, mapping, 'ม.5/1')
+    expect(row.status).toBe('ready')
+  })
+
+  it('never flags a row when no classroom column is mapped at all', () => {
+    const mapping: ColumnMapping = { firstName: 0, lastName: 1 }
+    const sheet = makeSheet(['ชื่อ', 'นามสกุล'], [['สมชาย', 'ใจดี']])
+
+    const [row] = parseImportRows(sheet, mapping, 'ม.5/1')
+    expect(row.status).toBe('ready')
+  })
+
+  it('never flags a row with an empty classroom cell, even when the column is mapped', () => {
+    const mapping: ColumnMapping = { firstName: 0, lastName: 1, classroom: 2 }
+    const sheet = makeSheet(['ชื่อ', 'นามสกุล', 'ห้องเรียน'], [['สมชาย', 'ใจดี', '']])
+
+    const [row] = parseImportRows(sheet, mapping, 'ม.5/1')
+    expect(row.status).toBe('ready')
+  })
+
+  it('is a no-op when expectedClassroomName is omitted entirely', () => {
+    const mapping: ColumnMapping = { firstName: 0, lastName: 1, classroom: 2 }
+    const sheet = makeSheet(['ชื่อ', 'นามสกุล', 'ห้องเรียน'], [['สมชาย', 'ใจดี', 'ม.5/2']])
+
+    const [row] = parseImportRows(sheet, mapping)
+    expect(row.status).toBe('ready')
+  })
+})
+
 describe('flagInFileDuplicates', () => {
   it('leaves rows without a student code untouched', () => {
     const rows = flagInFileDuplicates([
@@ -88,6 +137,7 @@ describe('flagInFileDuplicates', () => {
         nickname: null,
         email: null,
         phone: null,
+        classroom: null,
         status: 'ready',
         reason: null,
         fullNameAmbiguous: false,

@@ -262,6 +262,7 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
         open={importOpen}
         onOpenChange={setImportOpen}
         classroomId={classroom.id}
+        classroomName={classroom.name}
         onImported={refresh}
       />
       <StudentDetailDrawer

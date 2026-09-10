@@ -1,14 +1,17 @@
-import { Save } from 'lucide-react'
+import { Download, Save } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { AttendanceRosterCard } from '@/features/attendance/attendance-roster-card'
+import { buildClassroomAttendanceExportTable } from '@/features/subjects-real/classroom-export-builders'
+import { downloadCsv } from '@/lib/export/csv-export'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   buildRecordsForRoster,
   deriveAttendanceRoster,
+  getAllAttendanceForClassroom,
   getAttendance,
   mergeLoadedAttendance,
   parsePeriodNumber,
@@ -22,6 +25,7 @@ import type { Subject } from '@/types/subject'
 interface AttendanceTabProps {
   subject: Subject
   classroomId: string
+  classroomName: string
 }
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -44,7 +48,7 @@ function todayIso(): string {
  * sent as p_subject_id, so this reads/writes into a subject-scoped
  * session, never the standalone page's homeroom rows.
  */
-export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
+export function AttendanceTab({ subject, classroomId, classroomName }: AttendanceTabProps) {
   const { toast } = useToast()
 
   const [date, setDate] = useState(todayIso)
@@ -55,6 +59,7 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
   const [rosterError, setRosterError] = useState<string | null>(null)
   const [attendanceWarning, setAttendanceWarning] = useState<string | null>(null)
   const [saveState, setSaveState] = useState<SaveState>('idle')
+  const [exporting, setExporting] = useState(false)
   const saveStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /** Student ids the teacher has clicked/typed into SINCE the current
@@ -171,6 +176,28 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
     }
   }, [])
 
+  /**
+   * Google Sheets Integration, Section 3: exports EVERY saved attendance
+   * record for this subject+classroom across every date/คาบ — a
+   * deliberately separate fetch from the single-date `records` state
+   * above (getAllAttendanceForClassroom scoped to subject.id, never
+   * another subject or homeroom), since the on-screen roster only ever
+   * holds one date at a time.
+   */
+  async function handleExport() {
+    setExporting(true)
+    setRosterError(null)
+    try {
+      const { sessions, records: allRecords } = await getAllAttendanceForClassroom(classroomId, subject.id)
+      const table = buildClassroomAttendanceExportTable(subject.name, classroomName, sessions, allRecords, students)
+      downloadCsv(table, `เช็คชื่อ-${subject.name}-${classroomName}`)
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถส่งออกข้อมูลการเช็คชื่อได้'))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const roster = deriveAttendanceRoster(students, records)
 
   return (
@@ -196,6 +223,10 @@ export function AttendanceTab({ subject, classroomId }: AttendanceTabProps) {
           />
         </div>
         <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" onClick={handleExport} disabled={exporting}>
+            <Download className="size-4" />
+            {exporting ? 'กำลังส่งออก...' : 'ส่งออกการเช็คชื่อ (CSV)'}
+          </Button>
           <Button
             onClick={handleSave}
             disabled={saveState === 'saving' || rosterLoading || roster.length === 0 || periodInvalid}

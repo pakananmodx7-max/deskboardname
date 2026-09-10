@@ -13,6 +13,7 @@ function makeRow(overrides: Partial<DraftImportRow> = {}): DraftImportRow {
     nickname: null,
     email: null,
     phone: null,
+    classroom: null,
     status: 'ready',
     reason: null,
     fullNameAmbiguous: false,

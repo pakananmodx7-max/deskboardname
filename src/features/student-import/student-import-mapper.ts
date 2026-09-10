@@ -25,6 +25,7 @@ const HEADER_ALIASES: Record<ImportTargetField, string[]> = {
   nickname: ['ชื่อเล่น', 'nickname'],
   email: ['อีเมล', 'อีเมล์', 'email', 'emailaddress'],
   phone: ['เบอร์โทร', 'เบอร์โทรศัพท์', 'เบอร์', 'โทรศัพท์', 'phone', 'tel', 'telephone'],
+  classroom: ['ห้องเรียน', 'ห้อง', 'classroom', 'class', 'room'],
 }
 
 /** Lower-cases and strips whitespace/punctuation so header variants converge. */

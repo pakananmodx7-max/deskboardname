@@ -76,3 +76,23 @@ describe('AttendanceTab — real classroom+subject scoping (Section 8/9)', () =>
     expect(source).toContain('saveAttendance(classroomId, date, recordsToSave, subject.id, periodNumber)')
   })
 })
+
+describe('AttendanceTab — export attendance (Google Sheets Integration, Section 3/6)', () => {
+  const source = readSource()
+
+  it('exports through getAllAttendanceForClassroom scoped to this exact classroom AND subject — never every subject or another classroom', () => {
+    expect(source).toContain('getAllAttendanceForClassroom(classroomId, subject.id)')
+  })
+
+  it('downloads via the shared downloadCsv/ExportTable pipeline — never a locally reimplemented CSV writer (formula-injection guard + Thai UTF-8 BOM stay centralized)', () => {
+    expect(source).toContain("from '@/lib/export/csv-export'")
+    expect(source).toContain('buildClassroomAttendanceExportTable')
+  })
+
+  it('an export failure surfaces a toast and never touches the on-screen roster state', () => {
+    const fn = source.slice(source.indexOf('async function handleExport'), source.indexOf('const roster = deriveAttendanceRoster'))
+    const catchBlock = fn.slice(fn.indexOf('catch (err)'))
+    expect(catchBlock).not.toMatch(/setRecords|setStudents/)
+    expect(catchBlock).toContain('toast(')
+  })
+})

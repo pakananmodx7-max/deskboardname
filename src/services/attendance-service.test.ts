@@ -398,4 +398,12 @@ describe('getAllAttendanceForClassroom — source-level safety guard (Data Safet
     )
     expect(fn).toContain('if (sessions.length === 0) return { sessions: [], records: [] }')
   })
+
+  it('the optional subjectId param (Google Sheets Integration, Section 3 export) only adds a subject_id filter — omitting it keeps every subject + homeroom, exactly like before this param existed', () => {
+    const fn = source.slice(
+      source.indexOf('export async function getAllAttendanceForClassroom'),
+      source.indexOf('export async function saveAttendance'),
+    )
+    expect(fn).toContain("if (subjectId !== undefined) sessionQuery = sessionQuery.eq('subject_id', subjectId)")
+  })
 })

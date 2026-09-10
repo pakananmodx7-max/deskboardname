@@ -1,8 +1,12 @@
+import { Download } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
+import { buildClassroomGradesExportTable } from '@/features/subjects-real/classroom-export-builders'
+import { downloadCsv } from '@/lib/export/csv-export'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   computeClassGradeStats,
@@ -22,6 +26,7 @@ import type { ClassroomStudent } from '@/types/student'
 interface GradesTabProps {
   subject: Subject
   classroomId: string
+  classroomName: string
 }
 
 /**
@@ -38,7 +43,7 @@ interface GradesTabProps {
  * entered here shows up there immediately (and vice versa) — there is no
  * separate, competing grade record.
  */
-export function GradesTab({ subject, classroomId }: GradesTabProps) {
+export function GradesTab({ subject, classroomId, classroomName }: GradesTabProps) {
   const { toast } = useToast()
 
   const [assignments, setAssignments] = useState<Assignment[]>([])
@@ -116,6 +121,21 @@ export function GradesTab({ subject, classroomId }: GradesTabProps) {
     }
   }
 
+  /**
+   * Google Sheets Integration, Section 2: a teacher-readable CSV of every
+   * score currently loaded — the exact same `assignments`/`roster`/
+   * `submissionsByAssignment` state this screen already renders from, so
+   * the export can never drift from what's on screen (same "export only
+   * ever sees what's already loaded" discipline as report-export-builders.ts).
+   * downloadCsv's buildCsvContent already handles the UTF-8 BOM (Thai
+   * text in Excel) and formula-injection escaping — this never
+   * re-implements either.
+   */
+  function handleExport() {
+    const table = buildClassroomGradesExportTable(subject.name, classroomName, assignments, roster, submissionsByAssignment)
+    downloadCsv(table, `คะแนน-${subject.name}-${classroomName}`)
+  }
+
   if (!loading && assignments.length === 0) {
     return (
       <Card className="border-dashed">
@@ -129,6 +149,13 @@ export function GradesTab({ subject, classroomId }: GradesTabProps) {
   return (
     <div className="space-y-4">
       {error && <p className="text-sm text-destructive">{error}</p>}
+
+      <div className="flex justify-end">
+        <Button type="button" variant="outline" size="sm" onClick={handleExport} disabled={loading || roster.length === 0}>
+          <Download className="size-3.5" />
+          ส่งออกคะแนน (CSV)
+        </Button>
+      </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card>

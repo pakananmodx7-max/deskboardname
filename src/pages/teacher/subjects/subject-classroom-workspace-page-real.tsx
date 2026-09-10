@@ -187,10 +187,14 @@ export function SubjectClassroomWorkspacePageReal() {
             classroomName={currentLink.classroomName ?? ''}
           />
         )}
-        {activeTab === 'attendance' && <AttendanceTab subject={subject} classroomId={activeClassroomId} />}
+        {activeTab === 'attendance' && (
+          <AttendanceTab subject={subject} classroomId={activeClassroomId} classroomName={currentLink.classroomName ?? ''} />
+        )}
         {activeTab === 'lessons' && <LessonsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'assignments' && <AssignmentsTab subject={subject} classroomId={activeClassroomId} />}
-        {activeTab === 'grades' && <GradesTab subject={subject} classroomId={activeClassroomId} />}
+        {activeTab === 'grades' && (
+          <GradesTab subject={subject} classroomId={activeClassroomId} classroomName={currentLink.classroomName ?? ''} />
+        )}
       </div>
     </div>
   )
