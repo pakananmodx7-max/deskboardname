@@ -64,6 +64,7 @@ interface PickerBuilder {
   addView: (view: unknown) => PickerBuilder
   setOAuthToken: (token: string) => PickerBuilder
   setDeveloperKey: (key: string) => PickerBuilder
+  setAppId: (appId: string) => PickerBuilder
   setCallback: (callback: (data: PickerResponse) => void) => PickerBuilder
   build: () => { setVisible: (visible: boolean) => void }
 }
@@ -135,9 +136,16 @@ export function loadGooglePickerApi(): Promise<void> {
 /**
  * Opens the Picker and resolves with the single file the teacher chose,
  * or null if they closed/canceled it — never throws for a cancel, only
- * for a genuine setup failure (missing API key, script load failure).
+ * for a genuine setup failure (missing API key/app id, script load
+ * failure). `appId` is the Google Cloud project's NUMERIC project
+ * number (not the project id, OAuth client id, or API key) — Google
+ * requires it via setAppId() for a Picker session using the drive.file
+ * scope; omitting it produces a generic 403 "you do not have access to
+ * this page" response from Google when the picker opens, with every
+ * other part of the flow (OAuth token, API key, scope) otherwise
+ * correct. See google-drive-service.ts for where this value comes from.
  */
-export function openGoogleDrivePicker(accessToken: string, apiKey: string): Promise<PickedDriveFile | null> {
+export function openGoogleDrivePicker(accessToken: string, apiKey: string, appId: string): Promise<PickedDriveFile | null> {
   return new Promise((resolve, reject) => {
     if (!window.google?.picker) {
       reject(new Error('Google Picker ยังไม่พร้อมใช้งาน'))
@@ -153,6 +161,7 @@ export function openGoogleDrivePicker(accessToken: string, apiKey: string): Prom
       .addView(view)
       .setOAuthToken(accessToken)
       .setDeveloperKey(apiKey)
+      .setAppId(appId)
       .setCallback((data: PickerResponse) => {
         if (data.action === window.google!.picker.Action.PICKED) {
           const doc = data.docs?.[0]

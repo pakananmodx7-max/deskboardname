@@ -53,6 +53,14 @@ both with Row Level Security enabled and zero policies for `anon`/
    **Application restrictions → HTTP referrers**, and list your app's
    exact origin(s) (e.g. `https://your-app.vercel.app/*`). Restrict
    **API restrictions** to just the Google Picker API.
+6. Note this project's **project number** (NOT the project ID, OAuth
+   client ID, or API key) — a plain numeric string, e.g.
+   `123456789012`. It's shown on the Cloud Console home page for the
+   project, or under **IAM & Admin → Settings**. The Google Picker
+   requires this (via `setAppId()`) for a Picker session using the
+   `drive.file` scope; without it, opening the Picker fails with a
+   generic 403 "you do not have access to this page" even though OAuth
+   and the API key are both configured correctly.
 
 ## 3. Configure Supabase Edge Function secrets
 
@@ -81,12 +89,14 @@ Add to your `.env` (or your host's environment variables — see
 
 ```
 VITE_GOOGLE_API_KEY=<the API key from step 2>
+VITE_GOOGLE_APP_ID=<the project number from step 2>
 ```
 
-This key is public by design (restricted by HTTP referrer, not secret) —
-it is the only Google-related value that reaches the browser. The OAuth
-client ID/secret and every Drive access/refresh token stay server-side in
-the Edge Functions and the `google_oauth_connections` table.
+Both values are public by design (the API key is restricted by HTTP
+referrer; the project number isn't a credential at all) — they are the
+only Google-related values that reach the browser. The OAuth client
+ID/secret and every Drive access/refresh token stay server-side in the
+Edge Functions and the `google_oauth_connections` table.
 
 ## 5. Verify
 
@@ -104,3 +114,10 @@ If step 1 fails with a Google error about a redirect URI mismatch, the
 `GOOGLE_OAUTH_REDIRECT_URI` secret does not exactly match what's
 registered in Google Cloud Console (including scheme, trailing slash,
 and path) — fix one to match the other.
+
+If step 2 fails with a 403 "We're sorry, but you do not have access to
+this page" when the Picker opens (OAuth already connected successfully),
+`VITE_GOOGLE_APP_ID` is missing or wrong — double-check it's the numeric
+project number from step 2.6, not the project ID/OAuth client ID/API
+key, and that it belongs to the same Cloud project as the OAuth client
+and API key.

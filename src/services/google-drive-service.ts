@@ -87,15 +87,21 @@ export function getDrivePickerAccessToken(): Promise<string> {
  * loads the Picker script (only actually fetches it once per page
  * load), and resolves with the chosen file or null if the teacher
  * canceled. `VITE_GOOGLE_API_KEY` is a public, HTTP-referrer-restricted
- * key (see google-picker.ts's doc comment) — missing it is a setup
- * error, surfaced clearly rather than a silent no-op.
+ * key and `VITE_GOOGLE_APP_ID` is the Google Cloud project's numeric
+ * project number (both non-secret, see google-picker.ts's doc
+ * comments) — missing either is a setup error, surfaced clearly rather
+ * than a silent no-op or a confusing Google-side 403.
  */
 export async function pickGoogleDriveFile(): Promise<PickedDriveFile | null> {
   const apiKey = import.meta.env.VITE_GOOGLE_API_KEY
   if (!apiKey) {
     throw new Error('ยังไม่ได้ตั้งค่า VITE_GOOGLE_API_KEY — โปรดตรวจสอบการตั้งค่าระบบกับผู้ดูแล')
   }
+  const appId = import.meta.env.VITE_GOOGLE_APP_ID
+  if (!appId) {
+    throw new Error('ยังไม่ได้ตั้งค่า VITE_GOOGLE_APP_ID — โปรดตรวจสอบการตั้งค่าระบบกับผู้ดูแล')
+  }
   const accessToken = await getDrivePickerAccessToken()
   await loadGooglePickerApi()
-  return openGoogleDrivePicker(accessToken, apiKey)
+  return openGoogleDrivePicker(accessToken, apiKey, appId)
 }

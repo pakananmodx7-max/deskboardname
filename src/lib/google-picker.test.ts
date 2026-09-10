@@ -40,3 +40,21 @@ describe('google-picker.ts — Picker configuration (Google Drive API Integratio
     expect(source).toMatch(/Action\.CANCEL[\s\S]*?resolve\(null\)/)
   })
 })
+
+describe('google-picker.ts — setAppId() requirement (403 fix — Google Picker requires the Cloud project number for drive.file scope)', () => {
+  const source = readSource()
+
+  it('openGoogleDrivePicker accepts an appId parameter and calls setAppId on the builder', () => {
+    expect(source).toContain('export function openGoogleDrivePicker(accessToken: string, apiKey: string, appId: string)')
+    expect(source).toContain('.setAppId(appId)')
+  })
+
+  it('setAppId is called on the SAME builder chain as setOAuthToken/setDeveloperKey, before the callback is registered', () => {
+    const fn = source.slice(source.indexOf('export function openGoogleDrivePicker'), source.indexOf('picker.setVisible(true)'))
+    expect(fn).toMatch(/setOAuthToken\(accessToken\)[\s\S]*?setDeveloperKey\(apiKey\)[\s\S]*?setAppId\(appId\)[\s\S]*?setCallback\(/)
+  })
+
+  it('the PickerBuilder ambient type declares setAppId so this compiles under strict TypeScript', () => {
+    expect(source).toContain('setAppId: (appId: string) => PickerBuilder')
+  })
+})

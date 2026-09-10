@@ -31,6 +31,19 @@ describe('google-drive-service.ts — client never handles a refresh token or cl
   })
 })
 
+describe('google-drive-service.ts — VITE_GOOGLE_APP_ID threaded the same way as VITE_GOOGLE_API_KEY (403 fix)', () => {
+  const source = readServiceSource()
+
+  it('reads VITE_GOOGLE_APP_ID and fails clearly (never silently) when it is missing, same as VITE_GOOGLE_API_KEY', () => {
+    expect(source).toContain('import.meta.env.VITE_GOOGLE_APP_ID')
+    expect(source).toMatch(/if \(!appId\) \{\s*throw new Error/)
+  })
+
+  it('passes both apiKey and appId into openGoogleDrivePicker, in that order, alongside the minted access token', () => {
+    expect(source).toContain('openGoogleDrivePicker(accessToken, apiKey, appId)')
+  })
+})
+
 describe('google-drive-service.ts — typed reauth/not-connected errors (Section 5/9)', () => {
   const source = readServiceSource()
 
