@@ -106,6 +106,57 @@ export async function getAttendance(
   return { session, records }
 }
 
+/** One attendance record with its owning session id attached — the shape
+ * a backup export needs (unlike AttendanceRecord, which is always read
+ * already scoped to one known session via getAttendance above). */
+export interface AttendanceRecordWithSession extends AttendanceRecord {
+  sessionId: string
+}
+
+/**
+ * EVERY attendance session and record ever saved for this classroom —
+ * across every date/subject/คาบ, never just one specific lookup like
+ * getAttendance above. Used only by the teacher data backup export
+ * (Settings → สำรองข้อมูล); RLS (attendance_sessions_select_own /
+ * attendance_records_select_own, 0004/0005 — unchanged, no new policy)
+ * already scopes this to sessions/records belonging to a classroom the
+ * caller owns, so this plain, unfiltered `select('*')` cannot reach
+ * another teacher's data no matter how it's called.
+ */
+export async function getAllAttendanceForClassroom(
+  classroomId: string,
+): Promise<{ sessions: AttendanceSession[]; records: AttendanceRecordWithSession[] }> {
+  const supabase = getSupabaseClient()
+
+  const { data: sessionRows, error: sessionError } = await supabase
+    .from('attendance_sessions')
+    .select('*')
+    .eq('classroom_id', classroomId)
+    .order('attendance_date', { ascending: true })
+  if (sessionError) throw sessionError
+
+  const sessions = (sessionRows as AttendanceSessionRow[]).map(mapSession)
+  if (sessions.length === 0) return { sessions: [], records: [] }
+
+  const { data: recordRows, error: recordsError } = await supabase
+    .from('attendance_records')
+    .select('attendance_session_id, student_id, status, note')
+    .in(
+      'attendance_session_id',
+      sessions.map((s) => s.id),
+    )
+  if (recordsError) throw recordsError
+
+  const records = (recordRows as (AttendanceRecordRow & { attendance_session_id: string })[]).map((row) => ({
+    sessionId: row.attendance_session_id,
+    studentId: row.student_id,
+    status: row.status,
+    note: row.note,
+  }))
+
+  return { sessions, records }
+}
+
 /**
  * Persists a full roll call in one atomic round trip via the
  * `save_attendance_session` RPC (see its comment in

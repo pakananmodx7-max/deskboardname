@@ -75,7 +75,7 @@ const STATUS_BUTTON_STYLE: Record<SubmissionStatus, string> = {
   missing: 'data-[active=true]:bg-destructive data-[active=true]:text-destructive-foreground',
 }
 
-type ScoreSaveState = 'saving' | 'saved' | 'error'
+type SaveState = 'saving' | 'saved' | 'error'
 
 function studentLabel(student: { firstName: string; lastName: string } | undefined, fallbackId: string): string {
   return student ? `${student.firstName} ${student.lastName}` : fallbackId
@@ -167,10 +167,12 @@ export function SubjectClassroomAssignmentDetailPageReal() {
    * didn't change. Also bumped after a successful paste/bulk-fill so
    * every affected cell re-reads its new value from `submissions`. */
   const [scoreResetTick, setScoreResetTick] = useState(0)
-  /** Per-student "กำลังบันทึก.../บันทึกแล้ว/เกิดข้อผิดพลาด" indicator for
-   * score entry specifically — cleared back to idle (key absent) a
-   * moment after a successful save. */
-  const [scoreSaveState, setScoreSaveState] = useState<Record<string, ScoreSaveState>>({})
+  /** Per-field "กำลังบันทึก.../บันทึกแล้ว/เกิดข้อผิดพลาด" indicator, shared
+   * across score/status/note editing — keyed `${kind}:${studentId}` (e.g.
+   * `score:s1`, `status:s1`, `note:s1`) so each field's indicator is
+   * independent even for the same student. Cleared back to idle (key
+   * absent) a moment after a successful save. */
+  const [fieldSaveState, setFieldSaveState] = useState<Record<string, SaveState>>({})
   const scoreInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const saveStateTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
 
@@ -331,33 +333,40 @@ export function SubjectClassroomAssignmentDetailPageReal() {
     return { studentId, status: 'not_submitted', score: null, note: null }
   }
 
-  function setScoreSaveStateFor(studentId: string, state: ScoreSaveState) {
-    const existingTimer = saveStateTimers.current[studentId]
+  function setFieldSaveStateFor(key: string, state: SaveState) {
+    const existingTimer = saveStateTimers.current[key]
     if (existingTimer) {
       clearTimeout(existingTimer)
-      delete saveStateTimers.current[studentId]
+      delete saveStateTimers.current[key]
     }
-    setScoreSaveState((prev) => ({ ...prev, [studentId]: state }))
+    setFieldSaveState((prev) => ({ ...prev, [key]: state }))
     if (state === 'saved') {
-      saveStateTimers.current[studentId] = setTimeout(() => {
-        setScoreSaveState((prev) => {
+      saveStateTimers.current[key] = setTimeout(() => {
+        setFieldSaveState((prev) => {
           const next = { ...prev }
-          delete next[studentId]
+          delete next[key]
           return next
         })
       }, 1500)
     }
   }
 
+  function setScoreSaveStateFor(studentId: string, state: SaveState) {
+    setFieldSaveStateFor(`score:${studentId}`, state)
+  }
+
   async function handleSetStatus(studentId: string, status: SubmissionStatus) {
+    setFieldSaveStateFor(`status:${studentId}`, 'saving')
     try {
       await setSubmissionStatus(currentAssignmentId, studentId, status)
       setSubmissions((prev) => ({
         ...prev,
         [studentId]: { ...(prev[studentId] ?? defaultSubmission(studentId)), status },
       }))
+      setFieldSaveStateFor(`status:${studentId}`, 'saved')
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกสถานะได้'))
+      setFieldSaveStateFor(`status:${studentId}`, 'error')
     }
   }
 
@@ -569,14 +578,21 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   async function handleNoteBlur(studentId: string) {
     const note = noteDrafts[studentId] ?? ''
     if (note === (submissions[studentId]?.note ?? '')) return
+    setFieldSaveStateFor(`note:${studentId}`, 'saving')
     try {
       await setSubmissionNote(currentAssignmentId, studentId, note)
       setSubmissions((prev) => ({
         ...prev,
         [studentId]: { ...(prev[studentId] ?? defaultSubmission(studentId)), note: note || null },
       }))
+      setFieldSaveStateFor(`note:${studentId}`, 'saved')
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกหมายเหตุได้'))
+      // Deliberately does NOT revert noteDrafts[studentId] — the teacher's
+      // typed value stays visible in the (controlled) input so a failed
+      // save never silently discards their edit; blurring again retries
+      // the same write.
+      setFieldSaveStateFor(`note:${studentId}`, 'error')
     }
   }
 
@@ -834,7 +850,9 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                       score: null,
                       note: null,
                     }
-                    const saveState = scoreSaveState[student.id]
+                    const scoreSaveState = fieldSaveState[`score:${student.id}`]
+                    const statusSaveState = fieldSaveState[`status:${student.id}`]
+                    const noteSaveState = fieldSaveState[`note:${student.id}`]
                     return (
                       <tr key={student.id} className="border-b border-border last:border-0">
                         <td className="px-4 py-2">
@@ -850,21 +868,31 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                           {student.firstName} {student.lastName}
                         </td>
                         <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1.5">
-                            {STATUS_ORDER.map((status) => (
-                              <button
-                                key={status}
-                                type="button"
-                                data-active={submission.status === status}
-                                onClick={() => handleSetStatus(student.id, status)}
-                                className={cn(
-                                  'rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent',
-                                  STATUS_BUTTON_STYLE[status],
-                                )}
-                              >
-                                {STATUS_LABEL[status]}
-                              </button>
-                            ))}
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex flex-wrap gap-1.5">
+                              {STATUS_ORDER.map((status) => (
+                                <button
+                                  key={status}
+                                  type="button"
+                                  data-active={submission.status === status}
+                                  onClick={() => handleSetStatus(student.id, status)}
+                                  disabled={statusSaveState === 'saving'}
+                                  className={cn(
+                                    'rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50',
+                                    STATUS_BUTTON_STYLE[status],
+                                  )}
+                                >
+                                  {STATUS_LABEL[status]}
+                                </button>
+                              ))}
+                            </div>
+                            {statusSaveState === 'saving' && (
+                              <span className="text-[11px] text-muted-foreground">กำลังบันทึก...</span>
+                            )}
+                            {statusSaveState === 'saved' && <span className="text-[11px] text-success">บันทึกแล้ว</span>}
+                            {statusSaveState === 'error' && (
+                              <span className="text-[11px] text-destructive">บันทึกไม่สำเร็จ</span>
+                            )}
                           </div>
                         </td>
                         <td className="px-3 py-2">
@@ -902,21 +930,32 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                               />
                               <span>/ {currentAssignment.maxScore}</span>
                             </div>
-                            {saveState === 'saving' && (
+                            {scoreSaveState === 'saving' && (
                               <span className="text-[11px] text-muted-foreground">กำลังบันทึก...</span>
                             )}
-                            {saveState === 'saved' && <span className="text-[11px] text-success">บันทึกแล้ว</span>}
-                            {saveState === 'error' && <span className="text-[11px] text-destructive">เกิดข้อผิดพลาด</span>}
+                            {scoreSaveState === 'saved' && <span className="text-[11px] text-success">บันทึกแล้ว</span>}
+                            {scoreSaveState === 'error' && (
+                              <span className="text-[11px] text-destructive">บันทึกไม่สำเร็จ</span>
+                            )}
                           </div>
                         </td>
                         <td className="px-3 py-2">
-                          <Input
-                            value={noteDrafts[student.id] ?? ''}
-                            onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [student.id]: e.target.value }))}
-                            onBlur={() => handleNoteBlur(student.id)}
-                            placeholder="หมายเหตุ"
-                            className="h-8 w-36"
-                          />
+                          <div className="flex flex-col gap-0.5">
+                            <Input
+                              value={noteDrafts[student.id] ?? ''}
+                              onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [student.id]: e.target.value }))}
+                              onBlur={() => handleNoteBlur(student.id)}
+                              placeholder="หมายเหตุ"
+                              className="h-8 w-36"
+                            />
+                            {noteSaveState === 'saving' && (
+                              <span className="text-[11px] text-muted-foreground">กำลังบันทึก...</span>
+                            )}
+                            {noteSaveState === 'saved' && <span className="text-[11px] text-success">บันทึกแล้ว</span>}
+                            {noteSaveState === 'error' && (
+                              <span className="text-[11px] text-destructive">บันทึกไม่สำเร็จ กรุณาลองใหม่</span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )

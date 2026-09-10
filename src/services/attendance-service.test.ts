@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -228,5 +229,38 @@ describe('buildRecordsForRoster — the roster must survive a failed/missing att
 
     expect(finalRoster).toHaveLength(0)
     expect(records).toEqual({})
+  })
+})
+
+/**
+ * getAllAttendanceForClassroom (Data Safety / Backup phase) — the one new
+ * bulk read this phase added, used only by the teacher backup export. It
+ * is a plain, unfiltered select scoped by classroom_id, relying entirely
+ * on the pre-existing attendance_sessions_select_own /
+ * attendance_records_select_own RLS policies (0004/0005 — unchanged) for
+ * isolation, so there is nothing new to verify empirically beyond "it
+ * asks Supabase for exactly this classroom's rows and shapes them
+ * correctly" — a source-level guard confirms it never re-implements or
+ * bypasses that scoping.
+ */
+describe('getAllAttendanceForClassroom — source-level safety guard (Data Safety phase)', () => {
+  const source = readFileSync(new URL('./attendance-service.ts', import.meta.url), 'utf-8')
+
+  it('scopes every query by classroom_id / the already-fetched session ids — never a table-wide, unscoped read', () => {
+    const fn = source.slice(
+      source.indexOf('export async function getAllAttendanceForClassroom'),
+      source.indexOf('export async function saveAttendance'),
+    )
+    expect(fn).toContain(".eq('classroom_id', classroomId)")
+    expect(fn).toContain(".in(")
+    expect(fn).toContain('attendance_session_id')
+  })
+
+  it('short-circuits to an empty result when the classroom has no sessions, without querying attendance_records at all', () => {
+    const fn = source.slice(
+      source.indexOf('export async function getAllAttendanceForClassroom'),
+      source.indexOf('export async function saveAttendance'),
+    )
+    expect(fn).toContain('if (sessions.length === 0) return { sessions: [], records: [] }')
   })
 })
