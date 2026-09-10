@@ -717,3 +717,42 @@ export function computeClassGradeStats(rows: StudentGradeRow[]): ClassGradeStats
     lowest: Math.min(...percentages),
   }
 }
+
+// ==================================================
+// Assignment detail page navigation — "งานอื่นในห้องนี้" switcher +
+// งานก่อนหน้า/งานถัดไป. Pure functions over the exact list
+// getAssignments(subjectId, classroomId) already returns (RLS-scoped,
+// same query the งาน tab itself uses — no new query shape), so every
+// isolation guarantee (own subject+classroom only, never another
+// teacher's) is inherited from that existing, already-verified query
+// rather than re-implemented here.
+// ==================================================
+
+/** Assignments eligible for the switcher/prev-next — active
+ * (non-archived) only, in the SAME order getAssignments already returns
+ * them (created_at ascending) — never re-sorted, so the switcher always
+ * agrees with the งาน tab's own ordering. */
+export function filterActiveAssignmentsForSwitcher(assignments: Assignment[]): Assignment[] {
+  return assignments.filter((a) => !a.isArchived)
+}
+
+/** -1 when the current assignment isn't in the (active-only) list at all
+ * — e.g. the assignment being viewed is itself archived — in which case
+ * there is deliberately no "current" mark and no previous/next. */
+export function findSwitcherIndex(activeAssignments: Assignment[], currentAssignmentId: string): number {
+  return activeAssignments.findIndex((a) => a.id === currentAssignmentId)
+}
+
+/** Null at the start of the list (or when the current assignment isn't
+ * in it) — never wraps to the last assignment. */
+export function getPreviousAssignment(activeAssignments: Assignment[], currentAssignmentId: string): Assignment | null {
+  const index = findSwitcherIndex(activeAssignments, currentAssignmentId)
+  return index > 0 ? activeAssignments[index - 1] : null
+}
+
+/** Null at the end of the list (or when the current assignment isn't in
+ * it) — never wraps to the first assignment. */
+export function getNextAssignment(activeAssignments: Assignment[], currentAssignmentId: string): Assignment | null {
+  const index = findSwitcherIndex(activeAssignments, currentAssignmentId)
+  return index !== -1 && index < activeAssignments.length - 1 ? activeAssignments[index + 1] : null
+}

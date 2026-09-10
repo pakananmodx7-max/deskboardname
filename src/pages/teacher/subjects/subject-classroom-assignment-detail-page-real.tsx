@@ -1,4 +1,4 @@
-import { ArrowLeft, Search } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -17,10 +17,12 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
 import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
 import { AssignmentResourcesSection } from '@/features/subjects-real/assignment-resources-section'
 import { SubmissionViewerDrawer } from '@/features/subjects-real/submission-viewer-drawer'
+import { buildAssignmentDetailPath, buildSubjectClassroomTabPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import {
@@ -29,8 +31,13 @@ import {
   bulkFillWouldOverwrite,
   computeGradedTally,
   deriveAssignmentRoster,
+  filterActiveAssignmentsForSwitcher,
   filterRosterByStatus,
+  findSwitcherIndex,
   getAssignmentById,
+  getAssignments,
+  getNextAssignment,
+  getPreviousAssignment,
   getSubmissionSummary,
   getSubmissions,
   mergeSubmissionsWithDefaults,
@@ -120,6 +127,19 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   const [classroomName, setClassroomName] = useState<string | null>(null)
   const [headerLoading, setHeaderLoading] = useState(true)
   const [headerError, setHeaderError] = useState<string | null>(null)
+
+  /** Every ACTIVE (non-archived) assignment in this exact subject+
+   * classroom, in the same order the งาน tab itself shows them
+   * (getAssignments' own `created_at` ascending ordering — never
+   * re-sorted here) — powers both the "งานอื่นในห้องนี้" switcher and
+   * งานก่อนหน้า/งานถัดไป. Loaded independently of the header/roster
+   * (Section 5's error-isolation convention): a failure here only
+   * disables the switcher, never blocks the rest of the page. Reuses
+   * the exact same RLS-scoped assignment-service.ts query the tab
+   * already uses — no new query shape, no N+1, no other
+   * subject/classroom ever fetched. */
+  const [siblingAssignments, setSiblingAssignments] = useState<Assignment[]>([])
+  const [siblingsError, setSiblingsError] = useState<string | null>(null)
 
   const [students, setStudents] = useState<ClassroomStudent[]>([])
   const [submissions, setSubmissions] = useState<Record<string, AssignmentSubmission>>({})
@@ -216,6 +236,22 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   }, [loadRoster])
 
   useEffect(() => {
+    if (!subjectId || !classroomId) return
+    let active = true
+    setSiblingsError(null)
+    getAssignments(subjectId, classroomId)
+      .then((rows) => {
+        if (active) setSiblingAssignments(filterActiveAssignmentsForSwitcher(rows))
+      })
+      .catch((err: unknown) => {
+        if (active) setSiblingsError(toFriendlyErrorMessage(err))
+      })
+    return () => {
+      active = false
+    }
+  }, [subjectId, classroomId])
+
+  useEffect(() => {
     const timers = saveStateTimers.current
     return () => {
       Object.values(timers).forEach(clearTimeout)
@@ -247,6 +283,25 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   // `!assignment` narrowing above into a nested function declared later
   // (handleScoreBlur, etc.), so it's re-asserted here once.
   const currentAssignment = assignment as Assignment
+
+  // งานก่อนหน้า/งานถัดไป/งานอื่นในห้องนี้ — derived from siblingAssignments
+  // (already scoped to this exact subject+classroom, active only, in the
+  // งาน tab's own order). If the currently-viewed assignment is itself
+  // archived, it simply has no entry here (currentIndex === -1) and
+  // prev/next/the switcher's "current" mark are all correctly absent —
+  // never wraps from last to first.
+  const currentSiblingIndex = findSwitcherIndex(siblingAssignments, currentAssignmentId)
+  const previousAssignment = getPreviousAssignment(siblingAssignments, currentAssignmentId)
+  const nextAssignment = getNextAssignment(siblingAssignments, currentAssignmentId)
+
+  // Same reasoning as currentAssignmentId above: TS doesn't carry the
+  // early-return narrowing into a nested function.
+  const currentSubjectId = subjectId as string
+  const currentClassroomId = classroomId as string
+
+  function goToAssignment(id: string) {
+    navigate(buildAssignmentDetailPath(currentSubjectId, currentClassroomId, id))
+  }
 
   const roster = deriveAssignmentRoster(students, submissions)
   const rosterSubmissions: Record<string, AssignmentSubmission> = {}
@@ -541,11 +596,11 @@ export function SubjectClassroomAssignmentDetailPageReal() {
       <div>
         <button
           type="button"
-          onClick={() => navigate(`/teacher/subjects/${subjectId}/classrooms/${classroomId}`)}
+          onClick={() => navigate(buildSubjectClassroomTabPath(subjectId, classroomId, 'assignments'))}
           className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" />
-          กลับไปที่ห้องเรียน
+          กลับไปหน้างาน
         </button>
 
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -560,20 +615,64 @@ export function SubjectClassroomAssignmentDetailPageReal() {
               {subjectName ?? '-'} · {classroomName ?? '-'}
             </p>
           </div>
-          <div className="flex shrink-0 gap-2">
-            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-              แก้ไขงาน
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={currentAssignment.isArchived}
-              onClick={() => setArchiveConfirmOpen(true)}
-            >
-              เก็บถาวรงาน
-            </Button>
+
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!previousAssignment}
+                onClick={() => previousAssignment && goToAssignment(previousAssignment.id)}
+                aria-label="งานก่อนหน้า"
+              >
+                <ChevronLeft className="size-3.5" />
+                งานก่อนหน้า
+              </Button>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                งานอื่นในห้องนี้:
+                <NativeSelect
+                  value={currentAssignmentId}
+                  onChange={(e) => goToAssignment(e.target.value)}
+                  className="w-auto max-w-[220px]"
+                  aria-label="งานอื่นในห้องนี้"
+                  disabled={siblingAssignments.length === 0}
+                >
+                  {currentSiblingIndex === -1 && <option value={currentAssignmentId}>{currentAssignment.title}</option>}
+                  {siblingAssignments.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.id === currentAssignmentId ? '✓ ' : ''}
+                      {a.title}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!nextAssignment}
+                onClick={() => nextAssignment && goToAssignment(nextAssignment.id)}
+                aria-label="งานถัดไป"
+              >
+                งานถัดไป
+                <ChevronRight className="size-3.5" />
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                แก้ไขงาน
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentAssignment.isArchived}
+                onClick={() => setArchiveConfirmOpen(true)}
+              >
+                เก็บถาวรงาน
+              </Button>
+            </div>
           </div>
         </div>
+        {siblingsError && <p className="mt-1 text-xs text-destructive">{siblingsError}</p>}
 
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
           <label htmlFor="assignment-max-score" className="flex items-center gap-1.5">
