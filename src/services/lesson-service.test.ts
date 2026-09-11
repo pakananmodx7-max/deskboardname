@@ -9,6 +9,7 @@ import {
   generateLessonResourceFileName,
   getYoutubeEmbedUrl,
   lessonResourceTypeLabel,
+  removeLessonResourceStorageObjects,
   reorderLessonResourcesLocally,
   reorderLessonsLocally,
   validateLessonResourceFile,
@@ -212,5 +213,78 @@ describe('getYoutubeEmbedUrl — Section 7 VIDEO UX: inline preview for a truste
 
   it('never embeds a non-https YouTube-looking URL', () => {
     expect(getYoutubeEmbedUrl('http://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBeNull()
+  })
+})
+
+// ==================================================
+// "ลบบทเรียน" (permanent delete) — source-text guards, same pattern as
+// this codebase's other network-calling authorization/wiring assertions
+// (see assignment-service.test.ts's deleteAssignmentPermanently tests).
+// ==================================================
+
+describe('getLessonsForSubject — subject-wide (every linked classroom), used only by deleteSubjectPermanently', () => {
+  const source = readFileSync(new URL('./lesson-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function getLessonsForSubject'),
+    source.indexOf('\n}\n', source.indexOf('export async function getLessonsForSubject')),
+  )
+
+  it('queries by subject_id only — never scoped to one classroom (unlike getLessons)', () => {
+    expect(fnBody).toContain("eq('subject_id', subjectId)")
+    expect(fnBody).not.toContain("eq('classroom_id'")
+  })
+})
+
+describe('removeLessonResourceStorageObjects — file resources only; a link/video (Google Drive, YouTube, ...) is never touched', () => {
+  it('is a no-op (never touches the network) for an empty resource list', async () => {
+    await expect(removeLessonResourceStorageObjects([])).resolves.toBeUndefined()
+  })
+
+  it('is a no-op for a list of only link/video resources (no filePath at all)', async () => {
+    await expect(
+      removeLessonResourceStorageObjects([resource('r1', 0), { ...resource('r2', 1), resourceType: 'video' }]),
+    ).resolves.toBeUndefined()
+  })
+
+  const source = readFileSync(new URL('./lesson-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function removeLessonResourceStorageObjects'),
+    source.indexOf('\n}\n', source.indexOf('export async function removeLessonResourceStorageObjects')),
+  )
+
+  it('never calls out to any Google/Drive API — the only network call is Supabase Storage .remove()', () => {
+    expect(fnBody).not.toMatch(/google|drive/i)
+    expect(fnBody).toContain('.storage.from(RESOURCE_BUCKET).remove(paths)')
+  })
+})
+
+describe('deleteLessonPermanently — Storage cleanup before the row delete; never calls Google Drive; scoped to ONE lesson', () => {
+  const source = readFileSync(new URL('./lesson-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function deleteLessonPermanently'),
+    source.indexOf('\n}\n', source.indexOf('export async function deleteLessonPermanently')),
+  )
+
+  it('fetches this lesson\'s own resources, then removes their Storage objects, BEFORE deleting the row', () => {
+    const resourcesFetchIndex = fnBody.indexOf('getLessonResources(lessonId)')
+    const cleanupIndex = fnBody.indexOf('removeLessonResourceStorageObjects(resources)')
+    const deleteIndex = fnBody.indexOf(".delete().eq('id', lessonId)")
+    expect(resourcesFetchIndex).toBeGreaterThan(-1)
+    expect(cleanupIndex).toBeGreaterThan(resourcesFetchIndex)
+    expect(cleanupIndex).toBeLessThan(deleteIndex)
+  })
+
+  it('reads back the deleted row via .select(\'id\') to tell "genuinely deleted" apart from "RLS silently denied it"', () => {
+    expect(fnBody).toContain(".delete().eq('id', lessonId).select('id')")
+    expect(fnBody).toContain('data.length === 0')
+  })
+
+  it('never references Google/Drive anywhere — deleting a lesson never touches the teacher\'s original Drive file', () => {
+    expect(fnBody).not.toMatch(/google|drive/i)
+  })
+
+  it('is scoped strictly to the given lessonId — never fetches/removes another lesson\'s resources', () => {
+    expect(fnBody).toContain('getLessonResources(lessonId)')
+    expect(fnBody).not.toMatch(/getLessonResources\((?!lessonId\))/)
   })
 })

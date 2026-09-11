@@ -1,5 +1,11 @@
 import { getSupabaseClient } from '@/lib/supabase'
+import { getAssignmentResources, removeResourceStorageObjects } from '@/services/assignment-resource-service'
+import { getLessonResources, getLessonsForSubject, removeLessonResourceStorageObjects } from '@/services/lesson-service'
 import { getStudentsByClassroom, mapStudent, type StudentRow } from '@/services/student-service'
+import {
+  getSubmissionResourceStoragePathsForAssignment,
+  removeSubmissionResourceStorageObjects,
+} from '@/services/submission-service'
 import type {
   CreateSubjectInput,
   Subject,
@@ -139,6 +145,114 @@ export async function archiveSubject(subjectId: string): Promise<Subject> {
 
   if (error) throw error
   return mapSubject(data as SubjectRow)
+}
+
+/**
+ * Whether this subject has ANY recorded attendance_sessions row at all
+ * (across every classroom it's linked to) — used to pre-check
+ * deleteSubjectPermanently BEFORE it touches any Storage object. See
+ * that function's own doc comment for why this must be checked first,
+ * not caught only as a database error after cleanup has already run.
+ */
+export async function hasAnySubjectAttendance(subjectId: string): Promise<boolean> {
+  const supabase = getSupabaseClient()
+  const { count, error } = await supabase
+    .from('attendance_sessions')
+    .select('id', { count: 'exact', head: true })
+    .eq('subject_id', subjectId)
+
+  if (error) throw error
+  return (count ?? 0) > 0
+}
+
+/**
+ * Permanently removes a subject AND every record that depends
+ * specifically on it — 0021's subjects_delete_own policy (ownership-only)
+ * plus the FKs already in place since 0002/0006/0015 cascade away:
+ * subject_classrooms (the LINK rows only — the classrooms themselves are
+ * a separate table with no FK pointing back at subjects, so they are
+ * NEVER deleted, matching 0002's own "unlink vs delete" distinction),
+ * topics, lessons (-> lesson_resources), and assignments
+ * (-> assignment_resources, -> assignment_submissions
+ * -> assignment_submission_resources). Also removes every Storage object
+ * those rows referenced across all three buckets (lesson-files,
+ * assignment-files, submission-files) — Storage is never covered by an
+ * FK cascade. A 'link' resource (including any Google Drive reference)
+ * is only ever a URL stored in our own database; this function removes
+ * that reference and NEVER calls out to Google Drive or any external
+ * provider to delete the teacher's original file. Never touches another
+ * subject's data, student accounts, the teacher's own profile, or any
+ * classroom's row — every query below is explicitly scoped to THIS
+ * subjectId (transitively, through this subject's own lessons/
+ * assignments) only.
+ *
+ * ATTENDANCE IS DELIBERATELY NOT DELETED: attendance_sessions.subject_id
+ * is `on delete restrict` (0004/0005) — a pre-existing, deliberate
+ * safety boundary this migration set does not touch (see
+ * 0021_lesson_subject_delete.sql's own audit comment for the full
+ * reasoning). That means a subject with ANY recorded attendance CANNOT
+ * be permanently deleted at all. This is checked FIRST, via
+ * hasAnySubjectAttendance, before any Storage object is touched — doing
+ * the check only as an after-the-fact database error (SQLSTATE 23503)
+ * would be too late: every other part of the cascade (lessons,
+ * assignments, submissions) happens in the SAME transaction as the
+ * subjects row delete, so if that delete is rejected, NONE of those
+ * rows are actually removed either — but any Storage object this
+ * function had already deleted BEFORE attempting the row delete would
+ * stay deleted regardless, orphaning files for lessons/assignments that
+ * are still fully intact in the database. Checking first avoids ever
+ * reaching that state. The `error.code === '23503'` branch below still
+ * exists as defense-in-depth for the rare race (attendance recorded in
+ * the moment between this check and the delete), never as the primary
+ * mechanism.
+ *
+ * Storage cleanup happens entirely BEFORE the subjects row delete, same
+ * ordering rule as deleteAssignmentPermanently/deleteLessonPermanently —
+ * submission-files' own delete policy is row-dependent
+ * (teacher_owns_submission), so it must run while the assignment_submissions
+ * rows it inspects still exist.
+ */
+export async function deleteSubjectPermanently(subjectId: string): Promise<void> {
+  const hasAttendance = await hasAnySubjectAttendance(subjectId)
+  if (hasAttendance) {
+    throw new Error(
+      'ไม่สามารถลบรายวิชานี้ได้ เนื่องจากมีข้อมูลการเช็คชื่อ (การเข้าเรียน) ที่บันทึกไว้สำหรับรายวิชานี้อยู่',
+    )
+  }
+
+  const supabase = getSupabaseClient()
+
+  const lessons = await getLessonsForSubject(subjectId)
+  for (const lesson of lessons) {
+    const resources = await getLessonResources(lesson.id)
+    await removeLessonResourceStorageObjects(resources)
+  }
+
+  const { data: assignmentRows, error: assignmentsError } = await supabase
+    .from('assignments')
+    .select('id')
+    .eq('subject_id', subjectId)
+  if (assignmentsError) throw assignmentsError
+
+  for (const { id: assignmentId } of assignmentRows as { id: string }[]) {
+    const resources = await getAssignmentResources(assignmentId)
+    const submissionStoragePaths = await getSubmissionResourceStoragePathsForAssignment(assignmentId)
+    await removeResourceStorageObjects(resources)
+    await removeSubmissionResourceStorageObjects(submissionStoragePaths)
+  }
+
+  const { data, error } = await supabase.from('subjects').delete().eq('id', subjectId).select('id')
+  if (error) {
+    if (error.code === '23503') {
+      throw new Error(
+        'ไม่สามารถลบรายวิชานี้ได้ เนื่องจากมีข้อมูลการเช็คชื่อ (การเข้าเรียน) ที่บันทึกไว้สำหรับรายวิชานี้อยู่',
+      )
+    }
+    throw error
+  }
+  if (!data || data.length === 0) {
+    throw new Error('ไม่สามารถลบรายวิชานี้ได้ — คุณอาจไม่มีสิทธิ์จัดการรายวิชานี้')
+  }
 }
 
 export async function linkClassroomToSubject(subjectId: string, classroomId: string): Promise<void> {

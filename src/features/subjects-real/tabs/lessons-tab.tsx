@@ -12,6 +12,7 @@ import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   archiveLesson,
   computeNextLessonSortOrder,
+  deleteLessonPermanently,
   getLessons,
   publishLesson,
   reorderLessons,
@@ -48,6 +49,7 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
   const [createOpen, setCreateOpen] = useState(false)
   const [editingLesson, setEditingLesson] = useState<Lesson | null>(null)
   const [archivingLesson, setArchivingLesson] = useState<Lesson | null>(null)
+  const [deletingLesson, setDeletingLesson] = useState<Lesson | null>(null)
   const [publishBusyId, setPublishBusyId] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
@@ -87,6 +89,18 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
       refresh()
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถเก็บถาวรบทเรียนได้'))
+    }
+  }
+
+  async function handleDeletePermanently() {
+    if (!deletingLesson) return
+    try {
+      await deleteLessonPermanently(deletingLesson.id)
+      toast(`ลบบทเรียน "${deletingLesson.title}" แล้ว`)
+      setDeletingLesson(null)
+      refresh()
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถลบบทเรียนนี้ได้'))
     }
   }
 
@@ -181,6 +195,13 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
                     actions={[
                       { key: 'edit', label: 'แก้ไข/เพิ่มสื่อการสอน', onSelect: () => setEditingLesson(lesson) },
                       { key: 'archive', label: 'เก็บถาวร', onSelect: () => setArchivingLesson(lesson) },
+                      {
+                        key: 'delete',
+                        label: 'ลบบทเรียน',
+                        destructive: true,
+                        separatorBefore: true,
+                        onSelect: () => setDeletingLesson(lesson),
+                      },
                     ]}
                   />
                 </div>
@@ -222,6 +243,18 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
           description={`เก็บถาวร "${archivingLesson.title}"?\nบทเรียนนี้จะไม่แสดงในรายการอีกต่อไป และนักเรียนจะไม่เห็นบทเรียนนี้ (สื่อการสอนยังคงอยู่ในระบบ)`}
           confirmLabel="เก็บถาวร"
           onConfirm={handleArchive}
+        />
+      )}
+
+      {deletingLesson && (
+        <ConfirmDialog
+          open={Boolean(deletingLesson)}
+          onOpenChange={(open) => !open && setDeletingLesson(null)}
+          title="ลบบทเรียนนี้?"
+          description="บทเรียนนี้และสื่อการสอนที่เกี่ยวข้องจะถูกลบถาวร และไม่สามารถกู้คืนได้"
+          confirmLabel="ลบบทเรียน"
+          destructive
+          onConfirm={handleDeletePermanently}
         />
       )}
     </div>

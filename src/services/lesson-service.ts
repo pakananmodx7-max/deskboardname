@@ -133,6 +133,23 @@ export async function getLessons(subjectId: string, classroomId: string): Promis
 }
 
 /**
+ * Every lesson for a SUBJECT, across every classroom it's linked to —
+ * unlike getLessons (always scoped to one subject+classroom pair), this
+ * is used only by subject-service.ts's deleteSubjectPermanently to find
+ * every lesson (and, through it, every lesson_resources Storage object)
+ * that a subject-wide delete needs to clean up before the subjects row
+ * itself is deleted. RLS (`lessons_select_teacher`) still scopes this to
+ * the owning teacher only.
+ */
+export async function getLessonsForSubject(subjectId: string): Promise<Lesson[]> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.from('lessons').select('*').eq('subject_id', subjectId)
+
+  if (error) throw error
+  return (data as LessonRow[]).map(mapLesson)
+}
+
+/**
  * `lessons_insert_teacher` (0015) already requires the caller to own
  * both the classroom and the subject AND that the subject is actually
  * linked to that classroom via subject_classrooms — so passing a
@@ -192,14 +209,69 @@ export async function unpublishLesson(lessonId: string): Promise<Lesson> {
 }
 
 /**
- * Lessons are never hard-deleted through the app — there is no DELETE
- * RLS policy for them (0015), matching assignments/students/subjects.
  * Archiving just flips is_archived to true; every resource stays intact
  * (and immediately becomes invisible to students too — see
- * student_can_view_lesson() in the migration).
+ * student_can_view_lesson() in the migration). This remains a fully
+ * separate, non-destructive, non-forced action from
+ * deleteLessonPermanently below — never a required detour before a
+ * teacher can permanently delete a lesson.
  */
 export async function archiveLesson(lessonId: string): Promise<Lesson> {
   return updateLesson(lessonId, { isArchived: true })
+}
+
+/**
+ * Best-effort removes every 'file' lesson_resources's underlying Storage
+ * object (in the 'lesson-files' bucket) for the given resources — a
+ * 'link'/'video' resource (including any Google Drive reference) has no
+ * Storage object at all, so it's simply skipped here; this function NEVER
+ * calls the Google Drive API and never touches the teacher's original
+ * Drive file — only this app's own Supabase Storage objects, and only
+ * ones this app itself uploaded.
+ */
+export async function removeLessonResourceStorageObjects(resources: LessonResource[]): Promise<void> {
+  const paths = resources
+    .filter((r): r is LessonResource & { filePath: string } => Boolean(r.filePath))
+    .map((r) => r.filePath)
+  if (paths.length === 0) return
+
+  const supabase = getSupabaseClient()
+  await supabase.storage.from(RESOURCE_BUCKET).remove(paths).catch(() => undefined)
+}
+
+/**
+ * Permanently removes a lesson AND its lesson_resources rows (cascade-
+ * deleted at the database level by 0021's lessons_delete_own policy plus
+ * the FK already in place since 0015) — plus every Storage object those
+ * resources referenced. A 'link'/'video' resource (Google Drive, YouTube,
+ * etc.) is only ever a URL reference in our own database; this function
+ * removes that reference (the row, via cascade) and NEVER calls out to
+ * Google Drive or any external provider to delete the original file.
+ * Never touches another lesson's resources, the subject, the classroom,
+ * or any student — every query below is explicitly scoped to THIS
+ * lessonId only.
+ *
+ * Storage cleanup happens BEFORE the row delete, matching
+ * deleteAssignmentPermanently's own established ordering rule (see that
+ * function's doc comment) — kept as one consistent rule across every
+ * permanent-delete function in this codebase rather than a bucket-by-
+ * bucket exception, even though lesson-files' own delete policy happens
+ * to be path-only (not row-dependent like submission-files').
+ *
+ * `.select('id')` chained onto the delete lets this function tell
+ * "genuinely deleted" apart from "RLS silently denied it" (the caller
+ * doesn't actually own this lesson's classroom).
+ */
+export async function deleteLessonPermanently(lessonId: string): Promise<void> {
+  const resources = await getLessonResources(lessonId)
+  await removeLessonResourceStorageObjects(resources)
+
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.from('lessons').delete().eq('id', lessonId).select('id')
+  if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('ไม่สามารถลบบทเรียนนี้ได้ — คุณอาจไม่มีสิทธิ์จัดการบทเรียนนี้')
+  }
 }
 
 /**

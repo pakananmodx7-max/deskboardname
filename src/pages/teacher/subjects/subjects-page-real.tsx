@@ -12,7 +12,12 @@ import { CreateSubjectDialog } from '@/features/subjects-real/create-subject-dia
 import { EditSubjectDialog } from '@/features/subjects-real/edit-subject-dialog'
 import { summarizeSubjectClassrooms } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { archiveSubject, getSubjectClassroomsWithCounts, getSubjects } from '@/services/subject-service'
+import {
+  archiveSubject,
+  deleteSubjectPermanently,
+  getSubjectClassroomsWithCounts,
+  getSubjects,
+} from '@/services/subject-service'
 import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
 interface SubjectSummary {
@@ -39,6 +44,7 @@ export function SubjectsPageReal() {
   const [createOpen, setCreateOpen] = useState(false)
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null)
   const [archivingSubject, setArchivingSubject] = useState<Subject | null>(null)
+  const [deletingSubject, setDeletingSubject] = useState<Subject | null>(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -70,6 +76,18 @@ export function SubjectsPageReal() {
       refresh()
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถเก็บถาวรรายวิชาได้'))
+    }
+  }
+
+  async function handleDeletePermanently() {
+    if (!deletingSubject) return
+    try {
+      await deleteSubjectPermanently(deletingSubject.id)
+      toast(`ลบรายวิชา "${deletingSubject.name}" แล้ว`)
+      setDeletingSubject(null)
+      refresh()
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถลบรายวิชานี้ได้'))
     }
   }
 
@@ -135,6 +153,13 @@ export function SubjectsPageReal() {
                             label: 'เก็บถาวร',
                             onSelect: () => setArchivingSubject(subject),
                           },
+                          {
+                            key: 'delete',
+                            label: 'ลบรายวิชา',
+                            destructive: true,
+                            separatorBefore: true,
+                            onSelect: () => setDeletingSubject(subject),
+                          },
                         ]}
                       />
                     </div>
@@ -177,6 +202,18 @@ export function SubjectsPageReal() {
           description={`เก็บถาวร "${archivingSubject.name}"?\nรายวิชาจะยังคงอยู่ในระบบ แต่จะถูกเก็บถาวร`}
           confirmLabel="เก็บถาวร"
           onConfirm={handleArchive}
+        />
+      )}
+
+      {deletingSubject && (
+        <ConfirmDialog
+          open={Boolean(deletingSubject)}
+          onOpenChange={(open) => !open && setDeletingSubject(null)}
+          title="ลบรายวิชาและข้อมูลทั้งหมด?"
+          description="การลบรายวิชาจะลบบทเรียน งาน คะแนน การส่งงาน และข้อมูลที่เกี่ยวข้องกับรายวิชานี้ออกจากระบบอย่างถาวร และไม่สามารถกู้คืนได้"
+          confirmLabel="ลบรายวิชาและข้อมูลทั้งหมด"
+          destructive
+          onConfirm={handleDeletePermanently}
         />
       )}
     </div>
