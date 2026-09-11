@@ -10,15 +10,18 @@ import { Progress } from '@/components/ui/progress'
 import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { useToast } from '@/components/ui/toast'
 import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
+import { CopyAssignmentDialog } from '@/features/subjects-real/copy-assignment-dialog'
 import { buildAssignmentDetailPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   archiveAssignment,
+  deleteAssignmentPermanently,
   getAssignments,
   getSubmissionSummary,
   getSubmissions,
+  hasAssignmentSubmissions,
 } from '@/services/assignment-service'
-import type { Assignment } from '@/types/assignment'
+import type { Assignment, AssignmentCopyOutcome } from '@/types/assignment'
 import type { Subject } from '@/types/subject'
 
 interface AssignmentsTabProps {
@@ -46,6 +49,10 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
   const [createOpen, setCreateOpen] = useState(false)
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null)
   const [archivingAssignment, setArchivingAssignment] = useState<Assignment | null>(null)
+  const [copyingAssignment, setCopyingAssignment] = useState<Assignment | null>(null)
+  const [checkingDeleteId, setCheckingDeleteId] = useState<string | null>(null)
+  const [deleteBlockedAssignment, setDeleteBlockedAssignment] = useState<Assignment | null>(null)
+  const [deletingAssignment, setDeletingAssignment] = useState<Assignment | null>(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -78,6 +85,53 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
       refresh()
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถเก็บถาวรงานได้'))
+    }
+  }
+
+  function handleCopied(outcomes: AssignmentCopyOutcome[]) {
+    const succeeded = outcomes.filter((o) => o.ok).length
+    const failed = outcomes.length - succeeded
+    if (succeeded > 0 && failed === 0) {
+      toast(`คัดลอกงานไป ${succeeded} ห้องแล้ว`)
+    } else if (succeeded > 0 && failed > 0) {
+      toast(`คัดลอกงานไป ${succeeded} ห้องสำเร็จ, ${failed} ห้องไม่สำเร็จ`)
+    } else {
+      toast('ไม่สามารถคัดลอกงานไปห้องที่เลือกได้')
+    }
+    refresh()
+  }
+
+  /**
+   * "ลบงาน" is never a single-step destructive action — it first checks
+   * whether the assignment has any dependent student data, then shows the
+   * matching dialog: a genuine "ลบงานนี้?" destructive confirm when it's
+   * safe, or a blocked-with-explanation dialog (offering "เก็บถาวรแทน")
+   * when it isn't. The database's own assignments_delete_own_no_submissions
+   * policy (0019) is what actually enforces this — this check only picks
+   * which dialog to show.
+   */
+  async function handleDeleteMenuClick(assignment: Assignment) {
+    setCheckingDeleteId(assignment.id)
+    try {
+      const hasSubmissions = await hasAssignmentSubmissions(assignment.id)
+      if (hasSubmissions) setDeleteBlockedAssignment(assignment)
+      else setDeletingAssignment(assignment)
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถตรวจสอบข้อมูลงานได้'))
+    } finally {
+      setCheckingDeleteId(null)
+    }
+  }
+
+  async function handleDeletePermanently() {
+    if (!deletingAssignment) return
+    try {
+      await deleteAssignmentPermanently(deletingAssignment.id)
+      toast(`ลบงาน "${deletingAssignment.title}" แล้ว`)
+      setDeletingAssignment(null)
+      refresh()
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถลบงานนี้ได้'))
     }
   }
 
@@ -123,11 +177,20 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
                       <RowActionsMenu
                         actions={[
                           { key: 'edit', label: 'แก้ไขงาน', onSelect: () => setEditingAssignment(assignment) },
+                          { key: 'copy', label: 'คัดลอกไปห้องอื่น', onSelect: () => setCopyingAssignment(assignment) },
                           {
                             key: 'archive',
                             label: 'เก็บถาวร',
                             onSelect: () => setArchivingAssignment(assignment),
                             disabled: assignment.isArchived,
+                          },
+                          {
+                            key: 'delete',
+                            label: 'ลบงาน',
+                            destructive: true,
+                            separatorBefore: true,
+                            disabled: checkingDeleteId === assignment.id,
+                            onSelect: () => handleDeleteMenuClick(assignment),
                           },
                         ]}
                       />
@@ -178,6 +241,41 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
           description={`เก็บถาวร "${archivingAssignment.title}"?\nงานและคะแนนของนักเรียนจะยังคงอยู่ในระบบ`}
           confirmLabel="เก็บถาวร"
           onConfirm={handleArchive}
+        />
+      )}
+
+      {copyingAssignment && (
+        <CopyAssignmentDialog
+          open={Boolean(copyingAssignment)}
+          onOpenChange={(open) => !open && setCopyingAssignment(null)}
+          assignment={copyingAssignment}
+          onCopied={handleCopied}
+        />
+      )}
+
+      {deletingAssignment && (
+        <ConfirmDialog
+          open={Boolean(deletingAssignment)}
+          onOpenChange={(open) => !open && setDeletingAssignment(null)}
+          title="ลบงานนี้?"
+          description={`"${deletingAssignment.title}" จะถูกลบออกจากระบบอย่างถาวรและไม่สามารถกู้คืนได้`}
+          confirmLabel="ลบงาน"
+          destructive
+          onConfirm={handleDeletePermanently}
+        />
+      )}
+
+      {deleteBlockedAssignment && (
+        <ConfirmDialog
+          open={Boolean(deleteBlockedAssignment)}
+          onOpenChange={(open) => !open && setDeleteBlockedAssignment(null)}
+          title="ไม่สามารถลบงานนี้ได้"
+          description={`"${deleteBlockedAssignment.title}" มีข้อมูลการส่งงานหรือคะแนนของนักเรียนอยู่แล้ว เพื่อป้องกันข้อมูลนักเรียนสูญหาย จึงไม่สามารถลบถาวรได้\n\nแนะนำให้ใช้ "เก็บถาวร" แทน`}
+          confirmLabel="เก็บถาวรแทน"
+          onConfirm={() => {
+            setArchivingAssignment(deleteBlockedAssignment)
+            setDeleteBlockedAssignment(null)
+          }}
         />
       )}
     </div>

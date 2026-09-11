@@ -317,6 +317,99 @@ export function reorderResourcesLocally(
 }
 
 /**
+ * Copies one resource onto a NEW assignment — used by "คัดลอกไปห้องอื่น"
+ * (see assignment-service.ts's copyAssignmentToClassrooms). A 'link'
+ * resource is just a fresh row (same url/mimeType/driveFileId) pointing at
+ * the new assignment — nothing to copy in Storage. A 'file' resource's
+ * underlying object is copied SERVER-SIDE (Storage's own `.copy()` — the
+ * bytes never pass through this client) to a FRESH path scoped under the
+ * target assignment's own teacherId/subjectId/classroomId/assignmentId —
+ * reusing the SOURCE path would leave the object's classroom_id path
+ * segment pointing at the SOURCE classroom, which would deny read access
+ * to a student in a DIFFERENT target classroom
+ * (assignment_files_select_student, 0013, checks that exact segment) even
+ * though the new assignment_resources row says the file belongs to them.
+ * Authorized by the SAME storage.objects policies as a normal upload
+ * (assignment_files_select_teacher on the source path,
+ * assignment_files_insert_teacher on the destination path) — both require
+ * the path's teacherId segment to equal the caller's own auth.uid(), which
+ * it always does here since the same signed-in teacher owns every valid
+ * copy target (see getAssignmentCopyTargets).
+ */
+export async function copyResourceToAssignment(
+  resource: AssignmentResource,
+  targetAssignmentId: string,
+  targetSubjectId: string,
+  targetClassroomId: string,
+): Promise<void> {
+  const supabase = getSupabaseClient()
+  const teacherId = await requireTeacherId()
+
+  if (resource.resourceType === 'link') {
+    const { error } = await supabase.from('assignment_resources').insert({
+      assignment_id: targetAssignmentId,
+      resource_type: 'link',
+      title: resource.title,
+      url: resource.url,
+      mime_type: resource.mimeType,
+      drive_file_id: resource.driveFileId,
+      sort_order: resource.sortOrder,
+      created_by: teacherId,
+    })
+    if (error) throw error
+    return
+  }
+
+  // resourceType === 'file' — the migration's own check constraint
+  // guarantees filePath is set whenever resourceType is 'file'.
+  if (!resource.filePath) return
+  const newFileName = generateResourceFileName(resource.mimeType ?? '')
+  const newPath = buildAssignmentResourcePath(teacherId, targetSubjectId, targetClassroomId, targetAssignmentId, newFileName)
+
+  const { error: copyError } = await supabase.storage.from(RESOURCE_BUCKET).copy(resource.filePath, newPath)
+  if (copyError) throw copyError
+
+  const { error } = await supabase
+    .from('assignment_resources')
+    .insert({
+      assignment_id: targetAssignmentId,
+      resource_type: 'file',
+      title: resource.title,
+      file_path: newPath,
+      mime_type: resource.mimeType,
+      sort_order: resource.sortOrder,
+      created_by: teacherId,
+    })
+    .select('*')
+    .single()
+
+  if (error) {
+    await supabase.storage.from(RESOURCE_BUCKET).remove([newPath]).catch(() => undefined)
+    throw error
+  }
+}
+
+/**
+ * Best-effort removes every 'file' resource's underlying Storage object
+ * for the given resources — used by assignment-service.ts's
+ * deleteAssignmentPermanently right AFTER the assignments row delete has
+ * already succeeded (whose own delete cascades away the
+ * assignment_resources ROWS via FK, 0013 — but never their Storage
+ * objects, which would otherwise become orphaned, unreachable objects).
+ * Never called before/instead of that delete succeeding — see the calling
+ * function's own ordering note for why.
+ */
+export async function removeResourceStorageObjects(resources: AssignmentResource[]): Promise<void> {
+  const paths = resources
+    .filter((r): r is AssignmentResource & { filePath: string } => r.resourceType === 'file' && Boolean(r.filePath))
+    .map((r) => r.filePath)
+  if (paths.length === 0) return
+
+  const supabase = getSupabaseClient()
+  await supabase.storage.from(RESOURCE_BUCKET).remove(paths).catch(() => undefined)
+}
+
+/**
  * `assignment-files` is a PRIVATE bucket (unlike the avatars bucket,
  * which is public) — every read, teacher or student, goes through a
  * short-lived signed URL gated by the caller's own RLS-checked SELECT

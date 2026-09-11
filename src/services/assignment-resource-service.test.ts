@@ -189,6 +189,60 @@ describe('addLinkResource — never touches Supabase Storage (Section 7/8/10)', 
   })
 })
 
+/**
+ * "คัดลอกไปห้องอื่น" resource copy (Section 1) — a 'link' resource is a
+ * plain new row; a 'file' resource's underlying object is copied
+ * server-side (Storage's own .copy(), never re-downloaded/re-uploaded
+ * through the client) to a FRESH path scoped under the TARGET
+ * subject/classroom/assignment, never the source's own path — reusing the
+ * source path would deny a student in a different target classroom (the
+ * path's classroom_id segment gates their Storage read access, 0013).
+ */
+describe('copyResourceToAssignment — file copy uses Storage .copy() into a fresh target-scoped path', () => {
+  const source = readFileSync(new URL('./assignment-resource-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function copyResourceToAssignment'),
+    source.indexOf('\n}\n', source.indexOf('export async function copyResourceToAssignment')),
+  )
+
+  it('a link resource is inserted as a new row referencing the target assignment, no Storage call', () => {
+    const linkBranch = fnBody.slice(0, fnBody.indexOf("resourceType === 'file'"))
+    expect(linkBranch).toContain('assignment_id: targetAssignmentId')
+    expect(linkBranch).not.toContain('.storage.')
+  })
+
+  it('a file resource is copied via storage .copy(), never .upload() (the bytes never pass through this client)', () => {
+    expect(fnBody).toContain('.storage.from(RESOURCE_BUCKET).copy(resource.filePath, newPath)')
+    expect(fnBody).not.toContain('.upload(')
+  })
+
+  it('the destination path is built from the TARGET subject/classroom/assignment, never the source resource\'s own assignmentId', () => {
+    expect(fnBody).toContain(
+      'buildAssignmentResourcePath(teacherId, targetSubjectId, targetClassroomId, targetAssignmentId, newFileName)',
+    )
+    expect(fnBody).not.toContain('resource.assignmentId')
+  })
+
+  it('a failed insert best-effort removes the just-copied object so no orphaned file survives a rejected resource', () => {
+    const cleanupSection = fnBody.slice(fnBody.indexOf('if (error) {'))
+    expect(cleanupSection).toContain('.storage.from(RESOURCE_BUCKET).remove([newPath])')
+  })
+})
+
+describe('removeResourceStorageObjects — only touches file resources, never link/submission storage', () => {
+  it('collects only file-type resources that actually have a filePath', async () => {
+    const { removeResourceStorageObjects } = await import('@/services/assignment-resource-service')
+    // A resource list with only a link (no filePath) — nothing to remove,
+    // so this must resolve without ever touching the network/Storage.
+    await expect(removeResourceStorageObjects([resource({ resourceType: 'link', filePath: null })])).resolves.toBeUndefined()
+  })
+
+  it('is a no-op (returns immediately) for an empty resource list', async () => {
+    const { removeResourceStorageObjects } = await import('@/services/assignment-resource-service')
+    await expect(removeResourceStorageObjects([])).resolves.toBeUndefined()
+  })
+})
+
 describe('reorderResourcesLocally', () => {
   it('moves a resource from one index to another and renumbers sortOrder 0..n-1', () => {
     const list = [

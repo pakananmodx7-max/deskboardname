@@ -1,6 +1,10 @@
 import { getSupabaseClient } from '@/lib/supabase'
+import { copyResourceToAssignment, getAssignmentResources, removeResourceStorageObjects } from '@/services/assignment-resource-service'
+import { getSubjectClassrooms, getSubjects } from '@/services/subject-service'
 import type {
   Assignment,
+  AssignmentCopyOutcome,
+  AssignmentCopyTarget,
   AssignmentSubmission,
   CreateAssignmentInput,
   SubmissionStatus,
@@ -164,6 +168,145 @@ export async function updateAssignment(assignmentId: string, input: UpdateAssign
  */
 export async function archiveAssignment(assignmentId: string): Promise<Assignment> {
   return updateAssignment(assignmentId, { isArchived: true })
+}
+
+// ==================================================
+// "คัดลอกไปห้องอื่น" — copy an assignment (title/description/max score/due
+// date + its resources) into one or more OTHER (subject, classroom) pairs
+// the teacher owns. Never copies assignment_submissions/scores/status/
+// reviewed state/submitted_at/topic_id — each copy is a brand-new
+// assignments row (new id) with zero submissions, behaving completely
+// independently of the source from the moment it's created. There is no
+// "online submission settings" field to copy: this schema has no
+// per-assignment toggle for it (online submission is always available,
+// governed entirely by assignment_submissions/assignment_submission_resources'
+// own RLS, not a flag on assignments) — noted here rather than silently
+// doing nothing unexplained.
+// ==================================================
+
+/**
+ * Every (subject, classroom) pair the calling teacher owns and can
+ * legally create an assignment in — i.e. exactly the set
+ * `assignments_insert_own` (0006) would already authorize: the teacher
+ * owns the subject, owns the classroom, AND that subject is linked to
+ * that classroom via subject_classrooms. This is deliberately NOT limited
+ * to "other classrooms under the current subject" — it covers every
+ * subject+classroom combination the teacher has, so "คัดลอกไปห้องอื่น" can
+ * target any of them — excluding only the exact (excludeSubjectId,
+ * excludeClassroomId) pair itself (the assignment's own current home).
+ */
+export async function getAssignmentCopyTargets(
+  excludeSubjectId: string,
+  excludeClassroomId: string,
+): Promise<AssignmentCopyTarget[]> {
+  const subjects = await getSubjects()
+  const linksBySubject = await Promise.all(subjects.map((subject) => getSubjectClassrooms(subject.id)))
+
+  const targets: AssignmentCopyTarget[] = []
+  subjects.forEach((subject, i) => {
+    for (const link of linksBySubject[i]) {
+      if (subject.id === excludeSubjectId && link.classroomId === excludeClassroomId) continue
+      targets.push({
+        subjectId: subject.id,
+        subjectName: subject.name,
+        classroomId: link.classroomId,
+        classroomName: link.classroomName ?? '',
+      })
+    }
+  })
+  return targets
+}
+
+/**
+ * Copies `source` into every target — each target is an independent
+ * create-then-attach-resources operation (same "no shared parent write
+ * needs all-or-nothing semantics" reasoning as bulkSetSubmissionStatus
+ * above), so one target failing (e.g. a resource file copy error) never
+ * rolls back or blocks any other target. `topicId` is never carried over
+ * (always null on the copy) — a topic belongs to one specific subject
+ * (0002's topics.subject_id), so copying it across a potentially
+ * different subject could silently reference the wrong subject's topic;
+ * simplest-safe is to never copy it, regardless of target.
+ */
+export async function copyAssignmentToClassrooms(
+  source: Assignment,
+  targets: AssignmentCopyTarget[],
+): Promise<AssignmentCopyOutcome[]> {
+  const resources = await getAssignmentResources(source.id)
+
+  return Promise.all(
+    targets.map(async (target): Promise<AssignmentCopyOutcome> => {
+      try {
+        const created = await createAssignment({
+          subjectId: target.subjectId,
+          classroomId: target.classroomId,
+          title: source.title,
+          description: source.description,
+          maxScore: source.maxScore,
+          dueDate: source.dueDate,
+        })
+        for (const resource of resources) {
+          await copyResourceToAssignment(resource, created.id, target.subjectId, target.classroomId)
+        }
+        return { target, ok: true }
+      } catch (err) {
+        return { target, ok: false, error: err instanceof Error ? err.message : 'ไม่สามารถคัดลอกงานได้' }
+      }
+    }),
+  )
+}
+
+// ==================================================
+// "ลบงาน" — permanent delete, allowed ONLY when the assignment has zero
+// dependent student records. See 0019_assignment_copy_delete.sql for the
+// database-level enforcement this client-side check mirrors (defense in
+// depth, not either-or — the database is the actual authority).
+// ==================================================
+
+/** Whether this assignment has ANY assignment_submissions row at all —
+ * the exact same signal 0019's assignments_delete_own_no_submissions
+ * policy checks (via assignment_has_submissions()) to decide whether a
+ * hard delete is allowed. A row only ever exists once a student has
+ * submitted or a teacher has recorded a status/score/note for them (see
+ * buildDefaultSubmissions' own doc comment) — so this is exactly "does
+ * any dependent student data exist for this assignment," not merely "is
+ * the roster non-empty." */
+export async function hasAssignmentSubmissions(assignmentId: string): Promise<boolean> {
+  const supabase = getSupabaseClient()
+  const { count, error } = await supabase
+    .from('assignment_submissions')
+    .select('id', { count: 'exact', head: true })
+    .eq('assignment_id', assignmentId)
+
+  if (error) throw error
+  return (count ?? 0) > 0
+}
+
+/**
+ * Permanently removes an assignment — only ever reachable from the UI once
+ * hasAssignmentSubmissions() has already confirmed there is nothing to
+ * lose. The database's own assignments_delete_own_no_submissions policy
+ * (0019) is the real authority: `.select('id')` chained onto the delete
+ * lets this function tell "genuinely deleted" apart from "RLS silently
+ * denied it" (e.g. a submission was recorded in the moment between the
+ * check and this call, or the caller doesn't actually own it) — a bare
+ * `.delete()` with no error is NOT proof anything was removed. Storage
+ * cleanup for the assignment's own resource files happens ONLY AFTER that
+ * success is confirmed, never before: cleaning up first and then having
+ * the delete itself get denied would orphan a still-attached resource's
+ * file out from under it.
+ */
+export async function deleteAssignmentPermanently(assignmentId: string): Promise<void> {
+  const resources = await getAssignmentResources(assignmentId)
+
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.from('assignments').delete().eq('id', assignmentId).select('id')
+  if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('ไม่สามารถลบงานนี้ได้ถาวร เนื่องจากมีข้อมูลการส่งงานของนักเรียนอยู่แล้ว กรุณาใช้ "เก็บถาวร" แทน')
+  }
+
+  await removeResourceStorageObjects(resources)
 }
 
 export async function getSubmissions(assignmentId: string): Promise<Record<string, AssignmentSubmission>> {

@@ -49,6 +49,29 @@ export interface UpdateAssignmentInput {
   isArchived?: boolean
 }
 
+/**
+ * One selectable target in "คัดลอกไปห้องอื่น" — a (subject, classroom) pair
+ * the calling teacher owns, with both names carried alongside the ids so
+ * the picker can show "subjectName · classroomName" without a second
+ * lookup (see assignment-service.ts's getAssignmentCopyTargets).
+ */
+export interface AssignmentCopyTarget {
+  subjectId: string
+  subjectName: string
+  classroomId: string
+  classroomName: string
+}
+
+/** Per-target outcome of copyAssignmentToClassrooms — a partial failure
+ * (e.g. one target's resource copy fails) never rolls back or blocks the
+ * other targets, matching this codebase's established "independent
+ * per-target writes" pattern (see bulkSetSubmissionStatus). */
+export interface AssignmentCopyOutcome {
+  target: AssignmentCopyTarget
+  ok: boolean
+  error?: string
+}
+
 export interface AssignmentSubmission {
   studentId: string
   status: SubmissionStatus

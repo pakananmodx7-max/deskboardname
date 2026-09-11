@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -575,5 +577,113 @@ describe('searchRoster — assignment detail student search', () => {
 
   it('a query matching nobody returns an empty array', () => {
     expect(searchRoster(roster, 'ไม่มีตัวตน')).toEqual([])
+  })
+})
+
+// ==================================================
+// "คัดลอกไปห้องอื่น" — source-text guards, same pattern as the rest of
+// this codebase's authorization/wiring assertions (e.g.
+// google-drive-service.test.ts), since every function below is a thin
+// network-calling wrapper with no meaningful pure logic to unit-test in
+// isolation — its correctness is the exact shape of the Supabase calls it
+// makes, which is what these assertions pin down.
+// ==================================================
+
+describe('getAssignmentCopyTargets — excludes only the exact current (subject, classroom) pair', () => {
+  const source = readFileSync(new URL('./assignment-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function getAssignmentCopyTargets'),
+    source.indexOf('\n}\n', source.indexOf('export async function getAssignmentCopyTargets')),
+  )
+
+  it('lists every (subject, classroom) pair via getSubjects + getSubjectClassrooms — not scoped to one subject', () => {
+    expect(fnBody).toContain('getSubjects()')
+    expect(fnBody).toContain('getSubjectClassrooms(subject.id)')
+  })
+
+  it('skips a link ONLY when BOTH subjectId and classroomId match the excluded pair — not either alone', () => {
+    expect(fnBody).toContain('if (subject.id === excludeSubjectId && link.classroomId === excludeClassroomId) continue')
+  })
+})
+
+describe('copyAssignmentToClassrooms — new independent assignment per target, never carries over submissions/scores/topic', () => {
+  const source = readFileSync(new URL('./assignment-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function copyAssignmentToClassrooms'),
+    source.indexOf('\n}\n', source.indexOf('export async function copyAssignmentToClassrooms')),
+  )
+
+  it('creates a brand-new assignment via createAssignment (a fresh DB-generated id) — never reuses source.id', () => {
+    expect(fnBody).toContain('const created = await createAssignment({')
+    expect(fnBody).not.toMatch(/id:\s*source\.id/)
+  })
+
+  it('copies only title/description/maxScore/dueDate — never topicId, never isArchived, never createdBy', () => {
+    const createCall = fnBody.slice(fnBody.indexOf('createAssignment({'), fnBody.indexOf('})', fnBody.indexOf('createAssignment({')))
+    expect(createCall).toContain('title: source.title')
+    expect(createCall).toContain('description: source.description')
+    expect(createCall).toContain('maxScore: source.maxScore')
+    expect(createCall).toContain('dueDate: source.dueDate')
+    expect(createCall).not.toContain('topicId')
+    expect(createCall).not.toContain('isArchived')
+  })
+
+  it('never references assignment_submissions, score, status, submittedAt, or reviewedAt anywhere in this function', () => {
+    expect(fnBody).not.toMatch(/assignment_submissions|\bscore\b|submittedAt|reviewedAt/)
+  })
+
+  it('copies each resource onto the NEW assignment via copyResourceToAssignment, scoped to the target subject/classroom', () => {
+    expect(fnBody).toContain('copyResourceToAssignment(resource, created.id, target.subjectId, target.classroomId)')
+  })
+
+  it('one target failing is caught independently and never aborts/rolls back the others (Promise.all of per-target try/catch)', () => {
+    expect(fnBody).toContain('Promise.all(')
+    expect(fnBody).toContain('try {')
+    expect(fnBody).toContain('} catch (err) {')
+    expect(fnBody).toContain('return { target, ok: false')
+  })
+})
+
+describe('hasAssignmentSubmissions — the exact signal 0019\'s DB policy also checks', () => {
+  const source = readFileSync(new URL('./assignment-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function hasAssignmentSubmissions'),
+    source.indexOf('\n}\n', source.indexOf('export async function hasAssignmentSubmissions')),
+  )
+
+  it('counts assignment_submissions rows for this assignment, never fetches full rows just to check existence', () => {
+    expect(fnBody).toContain("from('assignment_submissions')")
+    expect(fnBody).toContain("{ count: 'exact', head: true }")
+    expect(fnBody).toContain("eq('assignment_id', assignmentId)")
+  })
+})
+
+describe('deleteAssignmentPermanently — never assumes success from a bare delete; storage cleanup only AFTER a confirmed delete', () => {
+  const source = readFileSync(new URL('./assignment-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function deleteAssignmentPermanently'),
+    source.indexOf('\n}\n', source.indexOf('export async function deleteAssignmentPermanently')),
+  )
+
+  it('reads back the deleted row via .select(\'id\') to tell "genuinely deleted" apart from "RLS silently denied it"', () => {
+    expect(fnBody).toContain(".delete().eq('id', assignmentId).select('id')")
+    expect(fnBody).toContain('data.length === 0')
+  })
+
+  it('throws a clear Thai error recommending archive when the delete is blocked (dependent data exists)', () => {
+    expect(fnBody).toMatch(/throw new Error\(.*เก็บถาวร.*\)/)
+  })
+
+  it('fetches the resources to clean up BEFORE the delete (once the row cascades away, its resources can\'t be listed anymore)', () => {
+    const resourcesFetchIndex = fnBody.indexOf('getAssignmentResources(assignmentId)')
+    const deleteIndex = fnBody.indexOf(".delete().eq('id', assignmentId)")
+    expect(resourcesFetchIndex).toBeGreaterThan(-1)
+    expect(resourcesFetchIndex).toBeLessThan(deleteIndex)
+  })
+
+  it('removes the resource Storage objects only AFTER the delete-success check, never before it', () => {
+    const successCheckIndex = fnBody.indexOf('data.length === 0')
+    const cleanupIndex = fnBody.indexOf('removeResourceStorageObjects(resources)')
+    expect(cleanupIndex).toBeGreaterThan(successCheckIndex)
   })
 })

@@ -9,6 +9,10 @@ export interface RowAction {
   onSelect: () => void
   destructive?: boolean
   disabled?: boolean
+  /** Renders a divider directly above this action — for grouping a
+   * destructive/unrelated action (e.g. "ลบงาน") apart from the rest of
+   * the menu. */
+  separatorBefore?: boolean
 }
 
 interface RowActionsMenuProps {
@@ -71,22 +75,24 @@ export function RowActionsMenu({ actions, label = 'ตัวเลือก' }: 
           onClick={(e) => e.stopPropagation()}
         >
           {actions.map((action) => (
-            <button
-              key={action.key}
-              type="button"
-              role="menuitem"
-              disabled={action.disabled}
-              onClick={() => {
-                setOpen(false)
-                action.onSelect()
-              }}
-              className={cn(
-                'block w-full px-3 py-2 text-left text-sm hover:bg-accent disabled:pointer-events-none disabled:opacity-50',
-                action.destructive ? 'text-destructive hover:bg-destructive/10' : 'text-foreground',
-              )}
-            >
-              {action.label}
-            </button>
+            <div key={action.key}>
+              {action.separatorBefore && <div className="my-1 h-px bg-border" role="separator" />}
+              <button
+                type="button"
+                role="menuitem"
+                disabled={action.disabled}
+                onClick={() => {
+                  setOpen(false)
+                  action.onSelect()
+                }}
+                className={cn(
+                  'block w-full px-3 py-2 text-left text-sm hover:bg-accent disabled:pointer-events-none disabled:opacity-50',
+                  action.destructive ? 'text-destructive hover:bg-destructive/10' : 'text-foreground',
+                )}
+              >
+                {action.label}
+              </button>
+            </div>
           ))}
         </div>
       )}
