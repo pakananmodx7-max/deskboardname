@@ -58,3 +58,42 @@ describe('google-picker.ts — setAppId() requirement (403 fix — Google Picker
     expect(source).toContain('setAppId: (appId: string) => PickerBuilder')
   })
 })
+
+describe('google-picker.ts — setOrigin() (production 403 investigation)', () => {
+  const source = readSource()
+
+  it('calls setOrigin with the page\'s own origin, after setAppId and before the callback is registered', () => {
+    const fn = source.slice(source.indexOf('export function openGoogleDrivePicker'), source.indexOf('picker.setVisible(true)'))
+    expect(fn).toMatch(/setAppId\(appId\)[\s\S]*?setOrigin\(origin\)[\s\S]*?setCallback\(/)
+    expect(fn).toContain('const origin = window.location.origin')
+  })
+
+  it('the PickerBuilder ambient type declares setOrigin so this compiles under strict TypeScript', () => {
+    expect(source).toContain('setOrigin: (origin: string) => PickerBuilder')
+  })
+})
+
+describe('google-picker.ts — temporary SAFE diagnostics (production 403 investigation)', () => {
+  const source = readSource()
+
+  it('logs presence/length/masked-prefix/appId/origin, and which setters ran — never the full API key or access token', () => {
+    expect(source).toContain('function logPickerDiagnostics(')
+    expect(source).toContain('apiKeyPresent: Boolean(info.apiKey)')
+    expect(source).toContain('apiKeyLength: info.apiKey.length')
+    expect(source).toContain('apiKeyPrefix: info.apiKey.slice(0, 6)')
+    expect(source).toContain('accessTokenPresent: Boolean(info.accessToken)')
+    expect(source).toContain('accessTokenLength: info.accessToken.length')
+    // the full apiKey/accessToken values must never appear as a bare logged field
+    expect(source).not.toMatch(/apiKey:\s*info\.apiKey[,}]/)
+    expect(source).not.toMatch(/accessToken:\s*info\.accessToken[,}]/)
+  })
+
+  it('is called before build() with the executed flags for all four setters', () => {
+    const fn = source.slice(source.indexOf('export function openGoogleDrivePicker'), source.indexOf('picker.setVisible(true)'))
+    expect(fn).toMatch(/logPickerDiagnostics\(\{[\s\S]*?\}\)[\s\S]*?\.build\(\)/)
+    expect(fn).toContain('executed.setOAuthToken = true')
+    expect(fn).toContain('executed.setDeveloperKey = true')
+    expect(fn).toContain('executed.setAppId = true')
+    expect(fn).toContain('executed.setOrigin = true')
+  })
+})
