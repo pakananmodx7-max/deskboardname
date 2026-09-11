@@ -23,7 +23,9 @@ describe('google-drive-service.ts — client never handles a refresh token or cl
   })
 
   it('the access token minted for the Picker is only ever read from the accessToken field of the Edge Function response', () => {
-    expect(source).toContain("invokeFunction<{ accessToken: string }>('google-drive-access-token')")
+    expect(source).toContain("invokeFunction<DrivePickerAccessTokenResponse>('google-drive-access-token')")
+    expect(source).toContain('.then((r) => {')
+    expect(source).toContain('return r.accessToken')
   })
 
   it('starting the connect flow performs a full-page navigation to Google\'s own consent URL rather than embedding any credential locally', () => {
@@ -132,6 +134,62 @@ describe('google-drive-access-token — only a short-lived access token ever rea
 
   it('the JSON response never includes the refresh_token field', () => {
     expect(source).not.toMatch(/jsonResponse\(\{[^}]*refresh_token/)
+  })
+})
+
+describe('google-drive-access-token — TEMPORARY tokeninfo diagnostics (production Picker 403 investigation)', () => {
+  const source = readFunctionSource('google-drive-access-token')
+
+  it('calls fetchTokenInfo with the access token and reports aud/azp/scope/expiresIn/accessType', () => {
+    expect(source).toContain('fetchTokenInfo(accessToken)')
+    expect(source).toContain('aud: tokenInfo.aud')
+    expect(source).toContain('azp: tokenInfo.azp')
+    expect(source).toContain('scope: tokenInfo.scope')
+    expect(source).toContain('expiresIn: tokenInfo.expiresIn')
+    expect(source).toContain('accessType: tokenInfo.accessType')
+  })
+
+  it('computes whether aud/azp exactly match GOOGLE_CLIENT_ID and whether the drive.file scope is present', () => {
+    expect(source).toContain('audMatchesClientId: tokenInfo.aud === env.clientId')
+    expect(source).toContain('azpMatchesClientId: tokenInfo.azp === env.clientId')
+    expect(source).toContain('hasDriveFileScope:')
+  })
+
+  it('includes a masked client id (never the full GOOGLE_CLIENT_ID) in the diagnostics', () => {
+    expect(source).toContain('maskedClientId: maskClientId(env.clientId)')
+  })
+
+  it('never logs the access token itself anywhere in this function', () => {
+    expect(source).not.toMatch(/console\.(log|error|warn)\([^)]*\baccessToken\b/)
+  })
+})
+
+describe('_shared/google.ts — fetchTokenInfo / maskClientId (production Picker 403 investigation)', () => {
+  const source = readSharedFunctionSource('google.ts')
+
+  it('fetchTokenInfo calls Google\'s public tokeninfo endpoint and never logs anything itself', () => {
+    const fn = source.slice(source.indexOf('export async function fetchTokenInfo'), source.indexOf('export function maskClientId'))
+    expect(fn).toContain('GOOGLE_TOKENINFO_ENDPOINT')
+    expect(fn).not.toMatch(/console\.(log|error|warn)/)
+  })
+
+  it('maskClientId returns only the first 12 characters plus the constant suffix — never the full client id', () => {
+    expect(source).toContain("export function maskClientId(clientId: string): string {")
+    expect(source).toContain('clientId.slice(0, 12)')
+    expect(source).toContain('...apps.googleusercontent.com')
+  })
+})
+
+describe('google-drive-service.ts — client logs ONLY the safe tokeninfo diagnostics fields, never the access token (production Picker 403 investigation)', () => {
+  const source = readServiceSource()
+
+  it('logTokenInfoDiagnostics logs the whole diagnostics object (already server-scrubbed) and nothing else', () => {
+    expect(source).toContain('function logTokenInfoDiagnostics(')
+    expect(source).toContain("console.log('[google-drive-access-token tokeninfo diagnostics]', diagnostics)")
+  })
+
+  it('never logs the raw accessToken anywhere in this file', () => {
+    expect(source).not.toMatch(/console\.(log|error|warn)\([^)]*\baccessToken\b/)
   })
 })
 

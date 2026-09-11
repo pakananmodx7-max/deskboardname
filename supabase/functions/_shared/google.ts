@@ -137,3 +137,46 @@ export async function fetchGoogleEmail(accessToken: string): Promise<string | nu
   const data = (await response.json().catch(() => null)) as { email?: string } | null
   return data?.email ?? null
 }
+
+export const GOOGLE_TOKENINFO_ENDPOINT = 'https://oauth2.googleapis.com/tokeninfo'
+
+export interface TokenInfoDiagnostics {
+  aud: string | null
+  azp: string | null
+  scope: string | null
+  expiresIn: number | null
+  accessType: string | null
+}
+
+/**
+ * TEMPORARY diagnostic helper for the production Google Picker 403
+ * investigation. Calls Google's own public tokeninfo endpoint to report
+ * ONLY non-secret metadata about an access token — never the token
+ * itself, and this function never logs anything. Used to prove (or
+ * disprove) that the access token Picker receives was actually minted
+ * for THIS app's own OAuth client/project, by comparing the returned
+ * `aud`/`azp` against GOOGLE_CLIENT_ID. Remove once the 403 is resolved.
+ */
+export async function fetchTokenInfo(accessToken: string): Promise<TokenInfoDiagnostics | null> {
+  const response = await fetch(`${GOOGLE_TOKENINFO_ENDPOINT}?access_token=${encodeURIComponent(accessToken)}`)
+  if (!response.ok) return null
+  const data = (await response.json().catch(() => null)) as
+    | { aud?: string; azp?: string; scope?: string; expires_in?: string; access_type?: string }
+    | null
+  if (!data) return null
+  return {
+    aud: data.aud ?? null,
+    azp: data.azp ?? null,
+    scope: data.scope ?? null,
+    expiresIn: data.expires_in ? Number(data.expires_in) : null,
+    accessType: data.access_type ?? null,
+  }
+}
+
+/** Masks a Google OAuth client ID for safe display/logging — the first
+ * 12 digits plus the constant suffix, never the full value (the middle
+ * portion is the part that varies per-client and is worth withholding
+ * even though client IDs are not, strictly, secret). */
+export function maskClientId(clientId: string): string {
+  return `${clientId.slice(0, 12)}...apps.googleusercontent.com`
+}
