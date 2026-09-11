@@ -46,4 +46,14 @@ describe('MySubmissionSection — student submission UI (Sections 1/2/8/10)', ()
   it('a resource-list load failure shows its own error, independent of the rest of the page', () => {
     expect(source).toMatch(/resourcesError/)
   })
+
+  it('the section is titled "ส่งงานออนไลน์" (audit requirement 4)', () => {
+    expect(source).toContain('ส่งงานออนไลน์')
+  })
+
+  it('the status badge is derived via the ONE shared helper (deriveStudentFacingStatus), never a locally re-implemented status map', () => {
+    expect(source).toContain('deriveStudentFacingStatus(submission)')
+    expect(source).toContain('STUDENT_SUBMISSION_STATUS_LABEL[status]')
+    expect(source).toContain('STUDENT_SUBMISSION_STATUS_BADGE_VARIANT[status]')
+  })
 })

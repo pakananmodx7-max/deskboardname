@@ -19,16 +19,14 @@ import {
   getMySubjects,
   summarizeMyAttendance,
 } from '@/services/student-portal-service'
+import {
+  deriveStudentFacingStatus,
+  STUDENT_SUBMISSION_STATUS_BADGE_VARIANT,
+  STUDENT_SUBMISSION_STATUS_LABEL,
+} from '@/services/submission-service'
 import type { Lesson } from '@/types/lesson'
 import type { MyAssignment, MyAttendanceRecord, MySubject } from '@/types/student-portal'
 import { BookOpen, CalendarCheck, ClipboardList, GraduationCap } from 'lucide-react'
-
-const SUBMISSION_STATUS_LABEL: Record<string, string> = {
-  not_submitted: 'ยังไม่ส่ง',
-  submitted: 'ส่งแล้ว',
-  late: 'ส่งช้า',
-  missing: 'ขาดส่ง',
-}
 
 const ATTENDANCE_STATUS_LABEL: Record<string, string> = {
   present: 'มา',
@@ -328,31 +326,30 @@ export function StudentSubjectDetailPage() {
               <p className="px-5 py-6 text-center text-sm text-muted-foreground">ยังไม่มีงานในวิชานี้</p>
             ) : (
               <div className="divide-y divide-border">
-                {assignments.map((a) => (
-                  <div key={a.id} className="px-5 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <Link
-                          to={buildStudentAssignmentDetailPath(a.subjectId, a.id)}
-                          className="truncate text-sm font-medium hover:underline"
-                        >
-                          {a.title}
-                        </Link>
-                        {a.description && <p className="mt-0.5 truncate text-xs text-muted-foreground">{a.description}</p>}
-                        <p className="text-xs text-muted-foreground">
-                          กำหนดส่ง {a.dueDate ? formatDate(a.dueDate) : 'ไม่มีกำหนดส่ง'}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className="text-xs text-muted-foreground">{a.score !== null ? `${a.score}/${a.maxScore}` : `-/${a.maxScore}`}</span>
-                        <Badge variant={a.status === 'submitted' ? 'success' : a.status === 'not_submitted' ? 'outline' : 'warning'}>
-                          {SUBMISSION_STATUS_LABEL[a.status] ?? a.status}
-                        </Badge>
-                      </div>
+                {assignments.map((a) => {
+                  const status = deriveStudentFacingStatus(a)
+                  return (
+                    <div key={a.id} className="px-5 py-3">
+                      <Link
+                        to={buildStudentAssignmentDetailPath(a.subjectId, a.id)}
+                        className="-mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-1 hover:bg-muted/50"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{a.title}</p>
+                          {a.description && <p className="mt-0.5 truncate text-xs text-muted-foreground">{a.description}</p>}
+                          <p className="text-xs text-muted-foreground">
+                            กำหนดส่ง {a.dueDate ? formatDate(a.dueDate) : 'ไม่มีกำหนดส่ง'}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{a.score !== null ? `${a.score}/${a.maxScore}` : `-/${a.maxScore}`}</span>
+                          <Badge variant={STUDENT_SUBMISSION_STATUS_BADGE_VARIANT[status]}>{STUDENT_SUBMISSION_STATUS_LABEL[status]}</Badge>
+                        </div>
+                      </Link>
+                      <AssignmentResourcesDisclosure assignmentId={a.id} resourceCount={resourceCounts[a.id] ?? 0} />
                     </div>
-                    <AssignmentResourcesDisclosure assignmentId={a.id} resourceCount={resourceCounts[a.id] ?? 0} />
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </CardContent>

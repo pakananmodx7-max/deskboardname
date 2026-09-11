@@ -8,6 +8,11 @@ import { MySubmissionSection } from '@/features/student-portal/my-submission-sec
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { getClassroomById } from '@/services/classroom-service'
 import { getMyAssignments, getMyStudentProfile, getMySubjects } from '@/services/student-portal-service'
+import {
+  deriveStudentFacingStatus,
+  STUDENT_SUBMISSION_STATUS_BADGE_VARIANT,
+  STUDENT_SUBMISSION_STATUS_LABEL,
+} from '@/services/submission-service'
 import type { Classroom } from '@/types/classroom'
 import type { MyAssignment, MyStudentProfile, MySubject } from '@/types/student-portal'
 
@@ -21,14 +26,14 @@ function formatDate(date: string): string {
  * title/subject/classroom/due date/max score/description (all read-only,
  * same row every classmate sees), any teacher-attached resources
  * (AssignmentResourcesDisclosure, reused from 0013), and — new in this
- * feature — "ส่งงานของฉัน" (MySubmissionSection), the student's own
+ * feature — "ส่งงานออนไลน์" (MySubmissionSection), the student's own
  * submission.
  *
  * PAGE ERROR ISOLATION: subject identity, the assignment itself, and the
  * two small pieces of context MySubmissionSection needs to build a
  * storage path (the classroom's owning teacherId, and the student's own
  * id) each load independently. A failure resolving teacherId/studentId
- * only disables "ส่งงานของฉัน" specifically — title/description/due
+ * only disables "ส่งงานออนไลน์" specifically — title/description/due
  * date/max score/resources still render normally, matching Section 10's
  * "no single query may blank the whole page" requirement carried over
  * from the Subject Workspace.
@@ -127,6 +132,8 @@ export function StudentAssignmentDetailPage() {
   if (subjectError) return <p className="text-sm text-destructive">{subjectError}</p>
   if (subject === null) return <Navigate to="/student/subjects" replace />
 
+  const status = assignment ? deriveStudentFacingStatus(assignment) : null
+
   return (
     <div className="space-y-4">
       <button
@@ -149,12 +156,7 @@ export function StudentAssignmentDetailPage() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold tracking-tight">{assignment.title}</h1>
-              <Badge variant={assignment.status === 'submitted' ? 'success' : assignment.status === 'not_submitted' ? 'outline' : 'warning'}>
-                {assignment.status === 'not_submitted' && 'ยังไม่ส่ง'}
-                {assignment.status === 'submitted' && 'ส่งแล้ว'}
-                {assignment.status === 'late' && 'ส่งช้า'}
-                {assignment.status === 'missing' && 'ขาดส่ง'}
-              </Badge>
+              {status && <Badge variant={STUDENT_SUBMISSION_STATUS_BADGE_VARIANT[status]}>{STUDENT_SUBMISSION_STATUS_LABEL[status]}</Badge>}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               {subject.name} · {subject.classroomName}

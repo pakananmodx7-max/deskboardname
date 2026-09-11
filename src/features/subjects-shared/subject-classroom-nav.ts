@@ -94,7 +94,7 @@ export function buildSubjectClassroomTabPath(
 /** The one canonical place the STUDENT assignment-detail route shape is
  * built — `/student/subjects/:subjectId/assignments/:assignmentId`, used
  * by the Subject Workspace's งาน tab list to deep-link into
- * StudentAssignmentDetailPage ("ส่งงานของฉัน"). Deliberately not scoped
+ * StudentAssignmentDetailPage ("ส่งงานออนไลน์"). Deliberately not scoped
  * by classroomId in the URL (unlike the teacher route) — a student only
  * ever has ONE classroom per subject, already resolved server-side by
  * RLS, so there is nothing for a second path segment to disambiguate. */

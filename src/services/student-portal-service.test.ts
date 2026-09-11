@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -27,6 +29,7 @@ function assignment(overrides: Partial<MyAssignment> = {}): MyAssignment {
     dueDate: '2026-09-01',
     status: 'not_submitted',
     score: null,
+    reviewedAt: null,
     ...overrides,
   }
 }
@@ -250,5 +253,17 @@ describe('isOptionalTableMissingError — Postgres "undefined_table" (42P01) OR 
   it('is false for null/undefined/a non-error value', () => {
     expect(isOptionalTableMissingError(null)).toBe(false)
     expect(isOptionalTableMissingError(undefined)).toBe(false)
+  })
+})
+
+describe('getMyAssignments — reviewed_at is selected and mapped (audit requirement 8, "ตรวจแล้ว" support)', () => {
+  const source = readFileSync(new URL('./student-portal-service.ts', import.meta.url), 'utf-8')
+
+  it('selects reviewed_at from assignment_submissions alongside status/score', () => {
+    expect(source).toContain("select('assignment_id, status, score, reviewed_at')")
+  })
+
+  it('maps reviewed_at onto MyAssignment.reviewedAt (never dropped)', () => {
+    expect(source).toContain('reviewedAt: submission?.reviewed_at ?? null')
   })
 })

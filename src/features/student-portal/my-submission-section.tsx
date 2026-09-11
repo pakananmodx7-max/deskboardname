@@ -15,19 +15,22 @@ import {
   addSubmissionTextResource,
   computeNextSubmissionResourceSortOrder,
   computeSubmissionStatusOnSubmit,
+  deriveStudentFacingStatus,
   finalizeSubmission,
   getMySubmission,
   getOrCreateMySubmission,
   getSubmissionResourceSignedUrl,
   getSubmissionResources,
   removeSubmissionResource,
+  STUDENT_SUBMISSION_STATUS_BADGE_VARIANT,
+  STUDENT_SUBMISSION_STATUS_LABEL,
   submissionResourceTypeLabel,
   validateSubmissionResourceFile,
   validateSubmissionResourceTitle,
   validateSubmissionResourceUrl,
   validateSubmissionTextContent,
 } from '@/services/submission-service'
-import type { AssignmentSubmission, SubmissionStatus } from '@/types/assignment'
+import type { AssignmentSubmission } from '@/types/assignment'
 import type { SubmissionResource } from '@/types/submission'
 
 interface MySubmissionSectionProps {
@@ -38,13 +41,6 @@ interface MySubmissionSectionProps {
   studentId: string
   dueDate: string | null
   maxScore: number
-}
-
-const STATUS_LABEL: Record<SubmissionStatus, string> = {
-  not_submitted: 'ยังไม่ส่ง',
-  submitted: 'ส่งแล้ว',
-  late: 'ส่งช้า',
-  missing: 'ขาดส่ง',
 }
 
 const RESOURCE_ICON = { file: FileText, link: Link2, text: Type } as const
@@ -60,14 +56,21 @@ function displayFileName(resource: SubmissionResource): string {
 }
 
 /**
- * "ส่งงานของฉัน" — the student's own submission manager, embedded in
- * StudentAssignmentDetailPage. Supports all three resource kinds (file/
- * link/text, Section 1), resubmission (Section 2/8), and strict error
- * isolation (Section 10): attaching a resource NEVER marks the
- * assignment as submitted by itself — only the explicit "ส่งงาน" button
- * (finalizeSubmission) does that, so a failed upload can never produce a
- * false "ส่งแล้ว" state. The submission row itself is created lazily,
- * the moment the student attaches their FIRST resource (see
+ * "ส่งงานออนไลน์" — the student's own submission manager, embedded in
+ * StudentAssignmentDetailPage. Supports both required submission kinds
+ * (file upload, URL/link — plus a bonus free-text answer), unrestricted
+ * resubmission (the only rule the current schema enforces is that a
+ * student can never touch score/note/reviewed_at themselves — see
+ * 0016's enforce_submission_field_ownership trigger; resubmitting after
+ * being reviewed is otherwise always allowed, matching Section 7's
+ * "current assignment rules"), and strict error isolation (Section 10):
+ * attaching a resource NEVER marks the assignment as submitted by
+ * itself — only the explicit "ส่งงาน" button (finalizeSubmission) does
+ * that, so a failed upload can never produce a false "ส่งแล้ว" state.
+ * The status badge shows a distinct "ตรวจแล้ว" once a teacher has
+ * scored it (deriveStudentFacingStatus), never just the raw submitted/
+ * late/missing status. The submission row itself is created lazily, the
+ * moment the student attaches their FIRST resource (see
  * ensureSubmission) — merely viewing this page never creates a row.
  */
 export function MySubmissionSection({
@@ -315,7 +318,7 @@ export function MySubmissionSection({
     }
   }
 
-  const status = submission?.status ?? 'not_submitted'
+  const status = deriveStudentFacingStatus(submission)
   const hasSubmittedBefore = Boolean(submission?.submittedAt)
   const canFinalize = resources.length > 0 && !finalizing && !ensuring
 
@@ -323,10 +326,8 @@ export function MySubmissionSection({
     <div className="space-y-4 rounded-lg border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <p className="text-sm font-semibold">ส่งงานของฉัน</p>
-          <Badge variant={status === 'submitted' ? 'success' : status === 'not_submitted' ? 'outline' : 'warning'}>
-            {STATUS_LABEL[status]}
-          </Badge>
+          <p className="text-sm font-semibold">ส่งงานออนไลน์</p>
+          <Badge variant={STUDENT_SUBMISSION_STATUS_BADGE_VARIANT[status]}>{STUDENT_SUBMISSION_STATUS_LABEL[status]}</Badge>
         </div>
         <Button type="button" size="sm" onClick={handleFinalize} disabled={!canFinalize}>
           {finalizing ? 'กำลังส่ง...' : hasSubmittedBefore ? 'ส่งงานอีกครั้ง' : 'ส่งงาน'}

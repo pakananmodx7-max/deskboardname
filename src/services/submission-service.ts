@@ -172,6 +172,41 @@ export function computeSubmissionStatusOnSubmit(dueDate: string | null, submitte
   return submittedAt > dueEndOfDay ? 'late' : 'submitted'
 }
 
+/** The student-facing status set — the same four `SubmissionStatus`
+ * values PLUS 'reviewed', a pure display-time derivation (never a fifth
+ * database status) that takes priority once a teacher has recorded a
+ * score via setSubmissionScore (assignment-service.ts), which always
+ * stamps reviewed_at regardless of the underlying submitted/late status.
+ * This is the ONE shared place that derivation happens — every
+ * student-facing status badge (MySubmissionSection,
+ * StudentAssignmentDetailPage) reads it from here rather than
+ * re-implementing the same reviewedAt check. */
+export type StudentFacingSubmissionStatus = SubmissionStatus | 'reviewed'
+
+export function deriveStudentFacingStatus(submission: { status: SubmissionStatus; reviewedAt?: string | null } | null): StudentFacingSubmissionStatus {
+  if (submission?.reviewedAt) return 'reviewed'
+  return submission?.status ?? 'not_submitted'
+}
+
+export const STUDENT_SUBMISSION_STATUS_LABEL: Record<StudentFacingSubmissionStatus, string> = {
+  not_submitted: 'ยังไม่ส่ง',
+  submitted: 'ส่งแล้ว',
+  late: 'ส่งช้า',
+  missing: 'ขาดส่ง',
+  reviewed: 'ตรวจแล้ว',
+}
+
+export const STUDENT_SUBMISSION_STATUS_BADGE_VARIANT: Record<
+  StudentFacingSubmissionStatus,
+  'outline' | 'success' | 'warning' | 'default'
+> = {
+  not_submitted: 'outline',
+  submitted: 'success',
+  late: 'warning',
+  missing: 'warning',
+  reviewed: 'default',
+}
+
 /**
  * The actual "ส่งงาน" commit point — marks the submission as
  * submitted/late (never called until the student has at least one

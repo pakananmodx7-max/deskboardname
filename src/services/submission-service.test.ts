@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  deriveStudentFacingStatus,
+  STUDENT_SUBMISSION_STATUS_BADGE_VARIANT,
+  STUDENT_SUBMISSION_STATUS_LABEL,
   SUBMISSION_FILE_MAX_BYTES,
   buildSubmissionResourcePath,
   computeNextSubmissionResourceSortOrder,
@@ -48,6 +51,36 @@ describe('computeSubmissionStatusOnSubmit — before/late deadline (Section 2 re
 
   it('returns late for a submission any time AFTER the due date', () => {
     expect(computeSubmissionStatusOnSubmit('2026-09-10', new Date('2026-09-11T00:00:01'))).toBe('late')
+  })
+})
+
+describe('deriveStudentFacingStatus — the one shared "ตรวจแล้ว" derivation (audit requirement 8)', () => {
+  it('returns not_submitted for a null submission (student has never touched this assignment)', () => {
+    expect(deriveStudentFacingStatus(null)).toBe('not_submitted')
+  })
+
+  it('returns the raw status (submitted/late/missing) when reviewedAt is not set', () => {
+    expect(deriveStudentFacingStatus({ status: 'submitted', reviewedAt: null })).toBe('submitted')
+    expect(deriveStudentFacingStatus({ status: 'late', reviewedAt: null })).toBe('late')
+    expect(deriveStudentFacingStatus({ status: 'missing', reviewedAt: null })).toBe('missing')
+  })
+
+  it('returns "reviewed" once a teacher has recorded a score (reviewedAt set), regardless of the underlying status', () => {
+    expect(deriveStudentFacingStatus({ status: 'submitted', reviewedAt: '2026-09-05T00:00:00Z' })).toBe('reviewed')
+    expect(deriveStudentFacingStatus({ status: 'late', reviewedAt: '2026-09-05T00:00:00Z' })).toBe('reviewed')
+  })
+
+  it('treats a missing reviewedAt field (undefined, not just null) the same as unreviewed', () => {
+    expect(deriveStudentFacingStatus({ status: 'submitted' })).toBe('submitted')
+  })
+
+  it('every StudentFacingSubmissionStatus value has both a label and a badge variant, including the new "reviewed" state', () => {
+    const statuses = ['not_submitted', 'submitted', 'late', 'missing', 'reviewed'] as const
+    for (const status of statuses) {
+      expect(STUDENT_SUBMISSION_STATUS_LABEL[status]).toBeTruthy()
+      expect(STUDENT_SUBMISSION_STATUS_BADGE_VARIANT[status]).toBeTruthy()
+    }
+    expect(STUDENT_SUBMISSION_STATUS_LABEL.reviewed).toBe('ตรวจแล้ว')
   })
 })
 

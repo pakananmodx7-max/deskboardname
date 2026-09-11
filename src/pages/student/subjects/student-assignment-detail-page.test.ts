@@ -38,3 +38,13 @@ describe('StudentAssignmentDetailPage — page-level error isolation (Section 10
     expect(source).toContain('MySubmissionSection')
   })
 })
+
+describe('StudentAssignmentDetailPage — header status badge (audit requirement 8, "ตรวจแล้ว")', () => {
+  const source = readSource('./student-assignment-detail-page.tsx')
+
+  it('derives the header badge via the shared deriveStudentFacingStatus, never a locally re-implemented ternary', () => {
+    expect(source).toContain('deriveStudentFacingStatus(assignment)')
+    expect(source).toContain('STUDENT_SUBMISSION_STATUS_LABEL[status]')
+    expect(source).not.toMatch(/assignment\.status === 'submitted' \? 'success'/)
+  })
+})

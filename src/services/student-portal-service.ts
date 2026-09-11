@@ -113,6 +113,7 @@ interface AssignmentSubmissionRow {
   assignment_id: string
   status: SubmissionStatus
   score: number | null
+  reviewed_at: string | null
 }
 
 interface AttendanceSessionRow {
@@ -264,7 +265,7 @@ export async function getMyAssignments(subjectId?: string, classroomId?: string)
   const supabase = getSupabaseClient()
   const [assignmentsResult, submissionsResult, subjectsResult, classroomsResult] = await Promise.all([
     supabase.from('assignments').select('*').eq('is_archived', false),
-    supabase.from('assignment_submissions').select('assignment_id, status, score'),
+    supabase.from('assignment_submissions').select('assignment_id, status, score, reviewed_at'),
     supabase.from('subjects').select('id, name'),
     supabase.from('classrooms').select('id, name'),
   ])
@@ -297,6 +298,7 @@ export async function getMyAssignments(subjectId?: string, classroomId?: string)
         dueDate: a.due_date,
         status: submission?.status ?? 'not_submitted',
         score: submission?.score ?? null,
+        reviewedAt: submission?.reviewed_at ?? null,
       }
     })
     .sort((a, b) => {

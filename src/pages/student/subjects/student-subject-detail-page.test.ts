@@ -92,3 +92,25 @@ describe('No standalone flat assignment list survives — Part 4/5 sidebar simpl
     expect(source).toMatch(/path: 'assignments', element: <Navigate to="\/student\/subjects" replace \/> /)
   })
 })
+
+describe('งาน tab — the whole assignment row/card is clickable, not just the title text (audit requirement 2)', () => {
+  const source = readSourceRelativeToThisFile('./student-subject-detail-page.tsx')
+
+  it('wraps the entire title/due-date/score/badge block in one Link, not just the title', () => {
+    const tabBlock = source.slice(source.indexOf("activeTab === 'assignments'"), source.indexOf("activeTab === 'grades'"))
+    expect(tabBlock).toMatch(/<Link\s+to=\{buildStudentAssignmentDetailPath\(a\.subjectId, a\.id\)\}[\s\S]*?<\/Link>/)
+  })
+
+  it('the resource disclosure toggle stays OUTSIDE the Link — clicking it must never trigger navigation', () => {
+    const tabBlock = source.slice(source.indexOf("activeTab === 'assignments'"), source.indexOf("activeTab === 'grades'"))
+    const linkEnd = tabBlock.indexOf('</Link>')
+    const afterLink = tabBlock.slice(linkEnd)
+    expect(afterLink).toContain('<AssignmentResourcesDisclosure')
+  })
+
+  it('the status badge is derived via the shared deriveStudentFacingStatus, never a locally re-implemented ternary', () => {
+    expect(source).toContain('deriveStudentFacingStatus(a)')
+    expect(source).toContain('STUDENT_SUBMISSION_STATUS_LABEL[status]')
+    expect(source).not.toContain("a.status === 'submitted' ? 'success'")
+  })
+})

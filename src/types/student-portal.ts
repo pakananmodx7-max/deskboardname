@@ -54,6 +54,11 @@ export interface MyAssignment {
   dueDate: string | null
   status: SubmissionStatus
   score: number | null
+  /** When a teacher last recorded a score for this assignment — see
+   * AssignmentSubmission.reviewedAt. Set regardless of `status`, so the
+   * UI can show a distinct "ตรวจแล้ว" (reviewed) state even for a
+   * submission that was merely 'submitted'/'late' before grading. */
+  reviewedAt: string | null
 }
 
 /** One attendance record, from the signed-in student's own point of
