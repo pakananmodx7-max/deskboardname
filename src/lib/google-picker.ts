@@ -135,37 +135,6 @@ export function loadGooglePickerApi(): Promise<void> {
 }
 
 /**
- * TEMPORARY diagnostics for the production Picker 403 investigation
- * (Google Drive API Integration). Logs only non-secret shape
- * information — presence, length, a short masked prefix, the (non-
- * secret) appId/origin values, and which builder setters actually ran
- * — NEVER the full API key, the OAuth access token, a refresh token, a
- * client secret, or any Supabase key. Safe to leave in briefly; remove
- * once the 403 is resolved.
- */
-function logPickerDiagnostics(info: {
-  origin: string
-  appId: string
-  apiKey: string
-  accessToken: string
-  executed: { setOAuthToken: boolean; setDeveloperKey: boolean; setAppId: boolean; setOrigin: boolean }
-}): void {
-  console.log('[google-picker diagnostics]', {
-    origin: info.origin,
-    appId: info.appId,
-    apiKeyPresent: Boolean(info.apiKey),
-    apiKeyLength: info.apiKey.length,
-    apiKeyPrefix: info.apiKey.slice(0, 6),
-    accessTokenPresent: Boolean(info.accessToken),
-    accessTokenLength: info.accessToken.length,
-    setOAuthTokenExecuted: info.executed.setOAuthToken,
-    setDeveloperKeyExecuted: info.executed.setDeveloperKey,
-    setAppIdExecuted: info.executed.setAppId,
-    setOriginExecuted: info.executed.setOrigin,
-  })
-}
-
-/**
  * Opens the Picker and resolves with the single file the teacher chose,
  * or null if they closed/canceled it — never throws for a cancel, only
  * for a genuine setup failure (missing API key/app id, script load
@@ -191,22 +160,12 @@ export function openGoogleDrivePicker(accessToken: string, apiKey: string, appId
       .setIncludeFolders(false)
       .setSelectFolderEnabled(false)
 
-    const origin = window.location.origin
-    const executed = { setOAuthToken: false, setDeveloperKey: false, setAppId: false, setOrigin: false }
-
-    let builder = new window.google.picker.PickerBuilder().addView(view)
-    builder = builder.setOAuthToken(accessToken)
-    executed.setOAuthToken = true
-    builder = builder.setDeveloperKey(apiKey)
-    executed.setDeveloperKey = true
-    builder = builder.setAppId(appId)
-    executed.setAppId = true
-    builder = builder.setOrigin(origin)
-    executed.setOrigin = true
-
-    logPickerDiagnostics({ origin, appId, apiKey, accessToken, executed })
-
-    const picker = builder
+    const picker = new window.google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken(accessToken)
+      .setDeveloperKey(apiKey)
+      .setAppId(appId)
+      .setOrigin(window.location.origin)
       .setCallback((data: PickerResponse) => {
         if (data.action === window.google!.picker.Action.PICKED) {
           const doc = data.docs?.[0]

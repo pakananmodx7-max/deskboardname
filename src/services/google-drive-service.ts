@@ -75,42 +75,11 @@ export async function disconnectGoogleAccount(): Promise<void> {
   await invokeFunction('google-oauth-disconnect')
 }
 
-interface DrivePickerAccessTokenResponse {
-  accessToken: string
-  expiresAt: string
-  diagnostics?: {
-    aud: string | null
-    azp: string | null
-    scope: string | null
-    expiresIn: number | null
-    accessType: string | null
-    audMatchesClientId: boolean
-    azpMatchesClientId: boolean
-    hasDriveFileScope: boolean
-    maskedClientId: string
-  } | null
-}
-
-/**
- * TEMPORARY (production Picker 403 investigation): logs the server-side
- * tokeninfo diagnostics google-drive-access-token computed via Google's
- * own tokeninfo endpoint — proves whether the token was minted for this
- * app's own OAuth client/project. Only non-secret metadata is ever
- * present here; the access token itself is never included or logged.
- */
-function logTokenInfoDiagnostics(diagnostics: DrivePickerAccessTokenResponse['diagnostics']): void {
-  if (!diagnostics) return
-  console.log('[google-drive-access-token tokeninfo diagnostics]', diagnostics)
-}
-
 /** Short-lived, drive.file-scoped access token for the Picker only —
  * never persisted client-side beyond the single Picker session it's
  * used for. */
 export function getDrivePickerAccessToken(): Promise<string> {
-  return invokeFunction<DrivePickerAccessTokenResponse>('google-drive-access-token').then((r) => {
-    logTokenInfoDiagnostics(r.diagnostics)
-    return r.accessToken
-  })
+  return invokeFunction<{ accessToken: string }>('google-drive-access-token').then((r) => r.accessToken)
 }
 
 /**
