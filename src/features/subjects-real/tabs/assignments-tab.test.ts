@@ -33,40 +33,70 @@ describe('AssignmentsTab — card menu order (คัดลอกไปห้อ�
     const copyAction = menuBlock.slice(menuBlock.indexOf("key: 'copy'"), menuBlock.indexOf("key: 'archive'"))
     expect(copyAction).toContain('setCopyingAssignment(assignment)')
   })
+
+  it('"เก็บถาวร" stays enabled/available regardless of whether the assignment has submissions — never removed or hidden by the delete feature', () => {
+    const menuBlock = source.slice(source.indexOf('<RowActionsMenu'), source.indexOf('/>', source.indexOf('<RowActionsMenu')))
+    const archiveAction = menuBlock.slice(menuBlock.indexOf("key: 'archive'"), menuBlock.indexOf("key: 'delete'"))
+    expect(archiveAction).toContain('setArchivingAssignment(assignment)')
+    // disabled only when it's already archived, never based on submissions.
+    expect(archiveAction).toContain('disabled: assignment.isArchived')
+  })
 })
 
-describe('AssignmentsTab — delete safety: checks dependents before ever showing a destructive confirm', () => {
+describe('AssignmentsTab — delete is never blocked by submissions, only its confirmation copy changes', () => {
   const source = readSource()
-  const fn = source.slice(
+  // Both handlers are nested inside the component function (2-space
+  // indent), so their own closing brace is "  }", not "}" at column 0 —
+  // slicing to the next '\n}' would run all the way to the component's
+  // OWN closing brace at the end of the file. Bound each slice by the
+  // next sibling declaration instead.
+  const menuClickFn = source.slice(
     source.indexOf('async function handleDeleteMenuClick'),
-    source.indexOf('\n}', source.indexOf('async function handleDeleteMenuClick')),
+    source.indexOf('async function handleDeletePermanently'),
+  )
+  const deleteFn = source.slice(
+    source.indexOf('async function handleDeletePermanently'),
+    source.indexOf('\n\n  return ('),
   )
 
-  it('always calls hasAssignmentSubmissions BEFORE deciding which dialog to show', () => {
-    expect(fn).toContain('await hasAssignmentSubmissions(assignment.id)')
+  it('always calls hasAssignmentSubmissions, purely to pick which dialog copy to show', () => {
+    expect(menuClickFn).toContain('await hasAssignmentSubmissions(assignment.id)')
   })
 
-  it('routes to the destructive delete confirm ONLY when there are no submissions', () => {
-    expect(fn).toMatch(/if \(hasSubmissions\) setDeleteBlockedAssignment\(assignment\)\s*\n\s*else setDeletingAssignment\(assignment\)/)
+  it('every outcome of the check leads to the SAME deletingAssignment confirm flow — never a separate blocked dialog', () => {
+    expect(menuClickFn).toContain('setDeletingAssignment({ assignment, hasSubmissions })')
+    expect(source).not.toContain('deleteBlockedAssignment')
+    expect(source).not.toContain('เก็บถาวรแทน') // the old blocked-dialog's "archive instead" CTA
+  })
+
+  it('handleDeletePermanently is the ONLY place deleteAssignmentPermanently is called — always reachable, never conditioned on hasSubmissions', () => {
+    expect(deleteFn).toContain('await deleteAssignmentPermanently(assignment.id)')
+    expect(deleteFn).not.toContain('hasSubmissions')
   })
 })
 
-describe('AssignmentsTab — blocked-delete dialog recommends the existing "เก็บถาวร" flow instead of any new destructive path', () => {
+describe('AssignmentsTab — delete confirmation dialog: exact copy per the two required variants', () => {
   const source = readSource()
+  const dialogBlock = source.slice(source.indexOf('deletingAssignment && ('), source.indexOf('</ConfirmDialog>', source.indexOf('deletingAssignment && (')))
 
-  it('the blocked dialog\'s confirm action opens the SAME archive dialog/state the "เก็บถาวร" menu item uses — no separate cascade-delete path', () => {
-    const blockedDialog = source.slice(source.indexOf('deleteBlockedAssignment && ('), source.indexOf('</ConfirmDialog>', source.indexOf('deleteBlockedAssignment && (')))
-    expect(blockedDialog).toContain('setArchivingAssignment(deleteBlockedAssignment)')
-    expect(blockedDialog).not.toContain('deleteAssignmentPermanently')
+  it('zero-submissions variant: title "ลบงานนี้?", message "เมื่อลบแล้วจะไม่สามารถกู้คืนได้", confirm label "ลบงาน"', () => {
+    expect(dialogBlock).toContain("'ลบงานนี้?'")
+    expect(dialogBlock).toContain('เมื่อลบแล้วจะไม่สามารถกู้คืนได้')
+    expect(dialogBlock).toContain("'ลบงาน'")
   })
 
-  it('the destructive "ลบงานนี้?" confirm dialog is the ONLY caller of deleteAssignmentPermanently in this file', () => {
-    // The only call site (the import statement lists the name but never
-    // calls it with parens) — inside handleDeletePermanently.
-    const occurrences = source.split('deleteAssignmentPermanently(').length - 1
-    expect(occurrences).toBe(1)
-    const destructiveDialog = source.slice(source.indexOf('deletingAssignment && ('), source.indexOf('</ConfirmDialog>', source.indexOf('deletingAssignment && (')))
-    expect(destructiveDialog).toContain('destructive')
-    expect(destructiveDialog).toContain('onConfirm={handleDeletePermanently}')
+  it('has-submissions variant: title "ลบงานและข้อมูลนักเรียน?", message names submissions/scores/status/files, confirm label "ลบงานและข้อมูลทั้งหมด"', () => {
+    expect(dialogBlock).toContain("'ลบงานและข้อมูลนักเรียน?'")
+    expect(dialogBlock).toContain('งานนี้มีข้อมูลการส่งงานหรือคะแนนของนักเรียน')
+    expect(dialogBlock).toContain('ข้อมูลการส่งงาน คะแนน สถานะ และไฟล์งานที่เกี่ยวข้องจะถูกลบด้วย')
+    expect(dialogBlock).toContain("'ลบงานและข้อมูลทั้งหมด'")
+  })
+
+  it('the confirm button is destructive in BOTH variants', () => {
+    expect(dialogBlock).toContain('destructive')
+  })
+
+  it('both variants call the SAME onConfirm handler — one delete path, not two', () => {
+    expect(dialogBlock).toContain('onConfirm={handleDeletePermanently}')
   })
 })

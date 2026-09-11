@@ -1,6 +1,10 @@
 import { getSupabaseClient } from '@/lib/supabase'
 import { copyResourceToAssignment, getAssignmentResources, removeResourceStorageObjects } from '@/services/assignment-resource-service'
 import { getSubjectClassrooms, getSubjects } from '@/services/subject-service'
+import {
+  getSubmissionResourceStoragePathsForAssignment,
+  removeSubmissionResourceStorageObjects,
+} from '@/services/submission-service'
 import type {
   Assignment,
   AssignmentCopyOutcome,
@@ -257,20 +261,25 @@ export async function copyAssignmentToClassrooms(
 }
 
 // ==================================================
-// "ลบงาน" — permanent delete, allowed ONLY when the assignment has zero
-// dependent student records. See 0019_assignment_copy_delete.sql for the
-// database-level enforcement this client-side check mirrors (defense in
-// depth, not either-or — the database is the actual authority).
+// "ลบงาน" / "ลบงานและข้อมูลทั้งหมด" — permanent delete. Deleting an
+// assignment is ALWAYS allowed for its owning teacher, whether or not
+// students have already submitted work or received scores — 0020's
+// assignments_delete_own policy gates this on ownership alone (0019's
+// original "zero submissions only" restriction was a product decision
+// this feature reverses; see 0020_assignment_delete_allows_submissions.sql
+// for the full history). hasAssignmentSubmissions() below is used ONLY
+// to pick which confirmation dialog to show — "ลบงานนี้?" vs the
+// stronger "ลบงานและข้อมูลนักเรียน?" — never to block the delete itself.
 // ==================================================
 
 /** Whether this assignment has ANY assignment_submissions row at all —
- * the exact same signal 0019's assignments_delete_own_no_submissions
- * policy checks (via assignment_has_submissions()) to decide whether a
- * hard delete is allowed. A row only ever exists once a student has
- * submitted or a teacher has recorded a status/score/note for them (see
- * buildDefaultSubmissions' own doc comment) — so this is exactly "does
- * any dependent student data exist for this assignment," not merely "is
- * the roster non-empty." */
+ * used purely to choose the confirmation dialog's copy (a plain "ลบ
+ * งานนี้?" vs the stronger "ลบงานและข้อมูลนักเรียน?" warning that names
+ * submissions/scores/status/files). A row only ever exists once a
+ * student has submitted or a teacher has recorded a status/score/note
+ * for them (see buildDefaultSubmissions' own doc comment) — so this is
+ * exactly "does any dependent student data exist for this assignment,"
+ * not merely "is the roster non-empty." */
 export async function hasAssignmentSubmissions(assignmentId: string): Promise<boolean> {
   const supabase = getSupabaseClient()
   const { count, error } = await supabase
@@ -283,30 +292,49 @@ export async function hasAssignmentSubmissions(assignmentId: string): Promise<bo
 }
 
 /**
- * Permanently removes an assignment — only ever reachable from the UI once
- * hasAssignmentSubmissions() has already confirmed there is nothing to
- * lose. The database's own assignments_delete_own_no_submissions policy
- * (0019) is the real authority: `.select('id')` chained onto the delete
- * lets this function tell "genuinely deleted" apart from "RLS silently
- * denied it" (e.g. a submission was recorded in the moment between the
- * check and this call, or the caller doesn't actually own it) — a bare
- * `.delete()` with no error is NOT proof anything was removed. Storage
- * cleanup for the assignment's own resource files happens ONLY AFTER that
- * success is confirmed, never before: cleaning up first and then having
- * the delete itself get denied would orphan a still-attached resource's
- * file out from under it.
+ * Permanently removes an assignment AND every record that depends
+ * specifically on it: assignment_resources, assignment_submissions
+ * (status/score/reviewed state), and assignment_submission_resources —
+ * cascade-deleted at the database level by 0020's assignments_delete_own
+ * policy plus the FKs already in place since 0006/0013/0016. Also
+ * removes every Storage object those rows referenced, in BOTH the
+ * 'assignment-files' and 'submission-files' buckets — Storage is never
+ * covered by an FK cascade, so it is this function's job. Never touches
+ * another assignment's resources, another student's submissions, the
+ * classroom/subject/student rows themselves, or any other assignment's
+ * Storage objects — every query below is explicitly scoped to THIS
+ * assignmentId only.
+ *
+ * ORDERING IS SECURITY-CRITICAL, not just tidiness: `assignment_files_
+ * delete_teacher` and `submission_files_delete_teacher` (0013/0016) each
+ * authorize a Storage delete by re-deriving "do I own this" from the
+ * STILL-EXISTING assignment_resources / assignment_submissions row
+ * behind the object's path. Deleting the assignments row FIRST would
+ * cascade those rows away before Storage cleanup could run — at that
+ * point the ownership check would find nothing and RLS would deny every
+ * subsequent Storage delete, permanently orphaning the files. So: fetch
+ * every resource/path first (while every row backing the ownership check
+ * still exists), remove the Storage objects, and ONLY THEN delete the
+ * assignments row.
+ *
+ * `.select('id')` chained onto the delete lets this function tell
+ * "genuinely deleted" apart from "RLS silently denied it" (the caller
+ * doesn't actually own this assignment's classroom) — a bare `.delete()`
+ * with no error is NOT proof anything was removed.
  */
 export async function deleteAssignmentPermanently(assignmentId: string): Promise<void> {
   const resources = await getAssignmentResources(assignmentId)
+  const submissionStoragePaths = await getSubmissionResourceStoragePathsForAssignment(assignmentId)
+
+  await removeResourceStorageObjects(resources)
+  await removeSubmissionResourceStorageObjects(submissionStoragePaths)
 
   const supabase = getSupabaseClient()
   const { data, error } = await supabase.from('assignments').delete().eq('id', assignmentId).select('id')
   if (error) throw error
   if (!data || data.length === 0) {
-    throw new Error('ไม่สามารถลบงานนี้ได้ถาวร เนื่องจากมีข้อมูลการส่งงานของนักเรียนอยู่แล้ว กรุณาใช้ "เก็บถาวร" แทน')
+    throw new Error('ไม่สามารถลบงานนี้ได้ — คุณอาจไม่มีสิทธิ์จัดการงานนี้')
   }
-
-  await removeResourceStorageObjects(resources)
 }
 
 export async function getSubmissions(assignmentId: string): Promise<Record<string, AssignmentSubmission>> {

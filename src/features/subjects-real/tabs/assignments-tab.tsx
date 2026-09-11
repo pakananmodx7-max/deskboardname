@@ -33,9 +33,11 @@ interface AssignmentsTabProps {
  * Real, Supabase-backed assignments list — strictly scoped to
  * subjectId+classroomId (assignment-service.ts's getAssignments never
  * merges another linked classroom's assignments, even ones with a
- * matching title). This is now the primary place assignments are
- * created/edited/archived — see docs/DATABASE.md "Assignment delete
- * strategy" for why archiving, not deleting.
+ * matching title). The primary place assignments are created, edited,
+ * copied to another classroom, archived, or permanently deleted — both
+ * "เก็บถาวร" (reversible) and "ลบงาน" (permanent, allowed even with
+ * existing submissions/scores — see deleteAssignmentPermanently) are
+ * always available side by side, never one forced in place of the other.
  */
 export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
   const { toast } = useToast()
@@ -51,8 +53,7 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
   const [archivingAssignment, setArchivingAssignment] = useState<Assignment | null>(null)
   const [copyingAssignment, setCopyingAssignment] = useState<Assignment | null>(null)
   const [checkingDeleteId, setCheckingDeleteId] = useState<string | null>(null)
-  const [deleteBlockedAssignment, setDeleteBlockedAssignment] = useState<Assignment | null>(null)
-  const [deletingAssignment, setDeletingAssignment] = useState<Assignment | null>(null)
+  const [deletingAssignment, setDeletingAssignment] = useState<{ assignment: Assignment; hasSubmissions: boolean } | null>(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -102,20 +103,20 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
   }
 
   /**
-   * "ลบงาน" is never a single-step destructive action — it first checks
-   * whether the assignment has any dependent student data, then shows the
-   * matching dialog: a genuine "ลบงานนี้?" destructive confirm when it's
-   * safe, or a blocked-with-explanation dialog (offering "เก็บถาวรแทน")
-   * when it isn't. The database's own assignments_delete_own_no_submissions
-   * policy (0019) is what actually enforces this — this check only picks
-   * which dialog to show.
+   * "ลบงาน" always permanently deletes once confirmed — deletion is never
+   * blocked by existing submissions/scores (see assignment-service.ts's
+   * deleteAssignmentPermanently). This only checks whether the assignment
+   * has any dependent student data so the RIGHT confirmation copy shows:
+   * a plain "ลบงานนี้?" when there's nothing to lose, or the stronger
+   * "ลบงานและข้อมูลนักเรียน?" warning (naming submissions/scores/status/
+   * files) when there is. "เก็บถาวร" stays a fully separate, optional
+   * action — never forced as an alternative to deleting.
    */
   async function handleDeleteMenuClick(assignment: Assignment) {
     setCheckingDeleteId(assignment.id)
     try {
       const hasSubmissions = await hasAssignmentSubmissions(assignment.id)
-      if (hasSubmissions) setDeleteBlockedAssignment(assignment)
-      else setDeletingAssignment(assignment)
+      setDeletingAssignment({ assignment, hasSubmissions })
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถตรวจสอบข้อมูลงานได้'))
     } finally {
@@ -125,9 +126,10 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
 
   async function handleDeletePermanently() {
     if (!deletingAssignment) return
+    const { assignment } = deletingAssignment
     try {
-      await deleteAssignmentPermanently(deletingAssignment.id)
-      toast(`ลบงาน "${deletingAssignment.title}" แล้ว`)
+      await deleteAssignmentPermanently(assignment.id)
+      toast(`ลบงาน "${assignment.title}" แล้ว`)
       setDeletingAssignment(null)
       refresh()
     } catch (err) {
@@ -257,25 +259,15 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
         <ConfirmDialog
           open={Boolean(deletingAssignment)}
           onOpenChange={(open) => !open && setDeletingAssignment(null)}
-          title="ลบงานนี้?"
-          description={`"${deletingAssignment.title}" จะถูกลบออกจากระบบอย่างถาวรและไม่สามารถกู้คืนได้`}
-          confirmLabel="ลบงาน"
+          title={deletingAssignment.hasSubmissions ? 'ลบงานและข้อมูลนักเรียน?' : 'ลบงานนี้?'}
+          description={
+            deletingAssignment.hasSubmissions
+              ? 'งานนี้มีข้อมูลการส่งงานหรือคะแนนของนักเรียน\nหากลบงาน ข้อมูลการส่งงาน คะแนน สถานะ และไฟล์งานที่เกี่ยวข้องจะถูกลบด้วย\nและไม่สามารถกู้คืนได้'
+              : 'เมื่อลบแล้วจะไม่สามารถกู้คืนได้'
+          }
+          confirmLabel={deletingAssignment.hasSubmissions ? 'ลบงานและข้อมูลทั้งหมด' : 'ลบงาน'}
           destructive
           onConfirm={handleDeletePermanently}
-        />
-      )}
-
-      {deleteBlockedAssignment && (
-        <ConfirmDialog
-          open={Boolean(deleteBlockedAssignment)}
-          onOpenChange={(open) => !open && setDeleteBlockedAssignment(null)}
-          title="ไม่สามารถลบงานนี้ได้"
-          description={`"${deleteBlockedAssignment.title}" มีข้อมูลการส่งงานหรือคะแนนของนักเรียนอยู่แล้ว เพื่อป้องกันข้อมูลนักเรียนสูญหาย จึงไม่สามารถลบถาวรได้\n\nแนะนำให้ใช้ "เก็บถาวร" แทน`}
-          confirmLabel="เก็บถาวรแทน"
-          onConfirm={() => {
-            setArchivingAssignment(deleteBlockedAssignment)
-            setDeleteBlockedAssignment(null)
-          }}
         />
       )}
     </div>

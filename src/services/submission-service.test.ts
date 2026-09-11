@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
   deriveStudentFacingStatus,
+  removeSubmissionResourceStorageObjects,
   STUDENT_SUBMISSION_STATUS_BADGE_VARIANT,
   STUDENT_SUBMISSION_STATUS_LABEL,
   SUBMISSION_FILE_MAX_BYTES,
@@ -156,5 +159,39 @@ describe('submissionResourceTypeLabel', () => {
     expect(submissionResourceTypeLabel('file')).toBe('ไฟล์')
     expect(submissionResourceTypeLabel('link')).toBe('ลิงก์')
     expect(submissionResourceTypeLabel('text')).toBe('ข้อความ')
+  })
+})
+
+// ==================================================
+// Whole-assignment permanent delete support ("ลบงานและข้อมูลทั้งหมด") —
+// used only by assignment-service.ts's deleteAssignmentPermanently.
+// ==================================================
+
+describe('getSubmissionResourceStoragePathsForAssignment — scoped strictly to ONE assignment\'s submissions', () => {
+  const source = readFileSync(new URL('./submission-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function getSubmissionResourceStoragePathsForAssignment'),
+    source.indexOf('\n}\n', source.indexOf('export async function getSubmissionResourceStoragePathsForAssignment')),
+  )
+
+  it('first finds every submission row for this exact assignment_id (never a bare fetch of all submissions)', () => {
+    expect(fnBody).toContain("from('assignment_submissions')")
+    expect(fnBody).toContain("eq('assignment_id', assignmentId)")
+  })
+
+  it('then collects only NON-null storage_path values from assignment_submission_resources scoped to those submission ids', () => {
+    expect(fnBody).toContain("from('assignment_submission_resources')")
+    expect(fnBody).toContain("in('assignment_submission_id', submissionIds)")
+    expect(fnBody).toContain("not('storage_path', 'is', null)")
+  })
+
+  it('returns an empty list (never queries assignment_submission_resources at all) when the assignment has zero submissions', () => {
+    expect(fnBody).toContain('if (submissionIds.length === 0) return []')
+  })
+})
+
+describe('removeSubmissionResourceStorageObjects — best-effort cleanup, never touches an unrelated assignment\'s files', () => {
+  it('is a no-op (never touches the network) for an empty path list', async () => {
+    await expect(removeSubmissionResourceStorageObjects([])).resolves.toBeUndefined()
   })
 })

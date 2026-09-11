@@ -518,3 +518,60 @@ export async function cleanupSubmissionResourceFile(resource: SubmissionResource
   if (error) throw error
   return mapResource(data as SubmissionResourceRow)
 }
+
+// ==================================================
+// Whole-assignment permanent delete support ("ลบงาน" / "ลบงานและข้อมูล
+// ทั้งหมด" in the teacher assignment card menu — see
+// assignment-service.ts's deleteAssignmentPermanently, the only caller of
+// both functions below). Scoped by assignment_id, never by submissionId,
+// so a single call covers every student's submission on one assignment —
+// but never reaches another assignment's submissions.
+// ==================================================
+
+/**
+ * Every Storage path (submission-files bucket) for every resource across
+ * EVERY student's submission on this one assignment — used to clean up
+ * Storage BEFORE the assignment (and therefore its submissions) is
+ * permanently deleted. Scoped by assignment_id via
+ * assignment_submissions' own teacher-owner RLS
+ * (assignment_submissions_select_own, 0006) — never reaches another
+ * assignment's or another teacher's submissions.
+ */
+export async function getSubmissionResourceStoragePathsForAssignment(assignmentId: string): Promise<string[]> {
+  const supabase = getSupabaseClient()
+  const { data: submissions, error: submissionsError } = await supabase
+    .from('assignment_submissions')
+    .select('id')
+    .eq('assignment_id', assignmentId)
+  if (submissionsError) throw submissionsError
+
+  const submissionIds = (submissions as { id: string }[]).map((s) => s.id)
+  if (submissionIds.length === 0) return []
+
+  const { data: resources, error: resourcesError } = await supabase
+    .from('assignment_submission_resources')
+    .select('storage_path')
+    .in('assignment_submission_id', submissionIds)
+    .not('storage_path', 'is', null)
+  if (resourcesError) throw resourcesError
+
+  return (resources as { storage_path: string | null }[])
+    .map((r) => r.storage_path)
+    .filter((path): path is string => Boolean(path))
+}
+
+/**
+ * Best-effort removes Storage objects at the given submission-files
+ * paths — used only by assignment-service.ts's deleteAssignmentPermanently,
+ * and only ever called BEFORE that function deletes the assignments row.
+ * Calling this AFTER the row delete would fail silently: the
+ * submission_files_delete_teacher storage.objects policy (0016)
+ * re-derives "do I own this object" from the assignment_submissions row
+ * still existing behind its path, and that row is exactly what a
+ * cascading assignments delete removes.
+ */
+export async function removeSubmissionResourceStorageObjects(paths: string[]): Promise<void> {
+  if (paths.length === 0) return
+  const supabase = getSupabaseClient()
+  await supabase.storage.from(RESOURCE_BUCKET).remove(paths).catch(() => undefined)
+}

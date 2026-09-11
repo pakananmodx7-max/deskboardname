@@ -644,7 +644,7 @@ describe('copyAssignmentToClassrooms — new independent assignment per target, 
   })
 })
 
-describe('hasAssignmentSubmissions — the exact signal 0019\'s DB policy also checks', () => {
+describe('hasAssignmentSubmissions — used only to pick confirmation copy, never to block deletion', () => {
   const source = readFileSync(new URL('./assignment-service.ts', import.meta.url), 'utf-8')
   const fnBody = source.slice(
     source.indexOf('export async function hasAssignmentSubmissions'),
@@ -658,32 +658,54 @@ describe('hasAssignmentSubmissions — the exact signal 0019\'s DB policy also c
   })
 })
 
-describe('deleteAssignmentPermanently — never assumes success from a bare delete; storage cleanup only AFTER a confirmed delete', () => {
+describe('deleteAssignmentPermanently — deletes regardless of submissions; Storage cleanup happens BEFORE the row delete, never after', () => {
   const source = readFileSync(new URL('./assignment-service.ts', import.meta.url), 'utf-8')
   const fnBody = source.slice(
     source.indexOf('export async function deleteAssignmentPermanently'),
     source.indexOf('\n}\n', source.indexOf('export async function deleteAssignmentPermanently')),
   )
 
-  it('reads back the deleted row via .select(\'id\') to tell "genuinely deleted" apart from "RLS silently denied it"', () => {
+  it('never checks hasAssignmentSubmissions or otherwise conditions the delete on whether submissions exist', () => {
+    expect(fnBody).not.toContain('hasAssignmentSubmissions')
+    expect(fnBody).not.toMatch(/if\s*\(.*[Ss]ubmission/)
+  })
+
+  it('reads back the deleted row via .select(\'id\') to tell "genuinely deleted" apart from "RLS silently denied it" (authorization only)', () => {
     expect(fnBody).toContain(".delete().eq('id', assignmentId).select('id')")
     expect(fnBody).toContain('data.length === 0')
   })
 
-  it('throws a clear Thai error recommending archive when the delete is blocked (dependent data exists)', () => {
-    expect(fnBody).toMatch(/throw new Error\(.*เก็บถาวร.*\)/)
+  it('the only failure path is an authorization error — never a "recommend archive instead" message', () => {
+    expect(fnBody).not.toMatch(/เก็บถาวร/)
+    expect(fnBody).toMatch(/throw new Error\(.*ไม่สามารถลบงานนี้ได้.*\)/)
   })
 
-  it('fetches the resources to clean up BEFORE the delete (once the row cascades away, its resources can\'t be listed anymore)', () => {
+  it('fetches assignment_resources AND every submission-file Storage path BEFORE deleting the row (once cascaded away, neither can be listed anymore)', () => {
     const resourcesFetchIndex = fnBody.indexOf('getAssignmentResources(assignmentId)')
+    const submissionPathsFetchIndex = fnBody.indexOf('getSubmissionResourceStoragePathsForAssignment(assignmentId)')
     const deleteIndex = fnBody.indexOf(".delete().eq('id', assignmentId)")
     expect(resourcesFetchIndex).toBeGreaterThan(-1)
+    expect(submissionPathsFetchIndex).toBeGreaterThan(-1)
     expect(resourcesFetchIndex).toBeLessThan(deleteIndex)
+    expect(submissionPathsFetchIndex).toBeLessThan(deleteIndex)
   })
 
-  it('removes the resource Storage objects only AFTER the delete-success check, never before it', () => {
+  it('removes BOTH assignment-files and submission-files Storage objects BEFORE the row delete, never after (the delete-success check comes last)', () => {
+    const assignmentFilesCleanupIndex = fnBody.indexOf('removeResourceStorageObjects(resources)')
+    const submissionFilesCleanupIndex = fnBody.indexOf('removeSubmissionResourceStorageObjects(submissionStoragePaths)')
+    const deleteCallIndex = fnBody.indexOf(".delete().eq('id', assignmentId)")
     const successCheckIndex = fnBody.indexOf('data.length === 0')
-    const cleanupIndex = fnBody.indexOf('removeResourceStorageObjects(resources)')
-    expect(cleanupIndex).toBeGreaterThan(successCheckIndex)
+    expect(assignmentFilesCleanupIndex).toBeGreaterThan(-1)
+    expect(submissionFilesCleanupIndex).toBeGreaterThan(-1)
+    expect(assignmentFilesCleanupIndex).toBeLessThan(deleteCallIndex)
+    expect(submissionFilesCleanupIndex).toBeLessThan(deleteCallIndex)
+    expect(assignmentFilesCleanupIndex).toBeLessThan(successCheckIndex)
+    expect(submissionFilesCleanupIndex).toBeLessThan(successCheckIndex)
+  })
+
+  it('every fetch/cleanup call is scoped by assignmentId only — never touches another assignment\'s data', () => {
+    expect(fnBody).toContain('getAssignmentResources(assignmentId)')
+    expect(fnBody).toContain('getSubmissionResourceStoragePathsForAssignment(assignmentId)')
+    expect(fnBody).not.toMatch(/getAssignmentResources\((?!assignmentId\))/)
   })
 })
