@@ -1,16 +1,12 @@
 import {
-  Award,
   BarChart3,
   Bot,
-  CalendarCheck,
-  ClipboardList,
   FileText,
   Home,
   ListChecks,
   Plus,
   School,
   Settings,
-  Users,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -66,14 +62,23 @@ export type NavEntry = NavLink | NavGroup | NavSection
  * more than just classroom management), not a feature that belongs to
  * any one module — see hermes-agent-page.tsx's own doc comment.
  *
- * No top-level "Attendance", "Assignments", or "Grades" item on
- * purpose — all three always belong to a specific subject + classroom
- * (never a standalone, classroom-less concept), so their sidebar
- * entries below point at the SAME existing "please pick a subject first"
- * redirect pages every old bookmark to /teacher/attendance,
- * /teacher/assignments, or /teacher/grades already lands on (see
- * router.tsx) — nothing new was built for them, and nothing about how
- * attendance/assignments/grades actually work changed.
+ * The classroom module keeps only 4 sidebar children now — ภาพรวม,
+ * ห้องเรียน, รายวิชา, รายงาน. นักเรียน, งานและการบ้าน, เช็กชื่อ, and
+ * คะแนนและการประเมิน are NOT deleted features: they moved from being
+ * their own sidebar destinations into tabs of each classroom's own
+ * workspace (ห้องเรียน → เลือกห้อง → [ภาพรวม | นักเรียน | งานและการบ้าน |
+ * เช็กชื่อ | คะแนนและการประเมิน] — see classroom-detail-page-real.tsx),
+ * since all four are things a teacher does FOR one specific classroom,
+ * never as a classroom-less, sidebar-wide concept. รายวิชา and รายงาน
+ * stay top-level on purpose: one subject can span multiple classrooms
+ * (and carries its own Google Drive materials/config), and reports can
+ * aggregate across every classroom — neither fits inside a single
+ * classroom's workspace.
+ *
+ * The old /teacher/students, /teacher/assignments, /teacher/attendance,
+ * and /teacher/grades routes are untouched (still real, reachable
+ * pages/redirects — see router.tsx) so no bookmark breaks; they're just
+ * no longer linked from this sidebar.
  */
 export const navItems: NavEntry[] = [
   { type: 'link', label: 'หน้าหลัก', to: '/teacher/dashboard', icon: Home },
@@ -89,11 +94,7 @@ export const navItems: NavEntry[] = [
         children: [
           { type: 'link', label: 'ภาพรวม', to: '/teacher/classroom-management', icon: Home },
           { type: 'link', label: 'ห้องเรียน', to: '/teacher/classrooms', icon: School },
-          { type: 'link', label: 'นักเรียน', to: '/teacher/students', icon: Users },
           { type: 'link', label: 'รายวิชา', to: '/teacher/subjects', icon: FileText },
-          { type: 'link', label: 'งานและการบ้าน', to: '/teacher/assignments', icon: ClipboardList },
-          { type: 'link', label: 'เช็กชื่อ', to: '/teacher/attendance', icon: CalendarCheck },
-          { type: 'link', label: 'คะแนนและการประเมิน', to: '/teacher/grades', icon: Award },
           { type: 'link', label: 'รายงาน', to: '/teacher/reports', icon: BarChart3 },
         ],
       },
@@ -121,8 +122,8 @@ export function flattenNavLinks(entries: NavEntry[] = navItems): NavLink[] {
 }
 
 /** True when `pathname` is exactly one of `group`'s children's `to`, or a
- * sub-path of one (e.g. "/teacher/students/requests" still counts as
- * "นักเรียน" being active) — used to auto-expand the module and
+ * sub-path of one (e.g. "/teacher/classrooms/:id" still counts as
+ * "ห้องเรียน" being active) — used to auto-expand the module and
  * highlight it even when the URL was typed/bookmarked directly rather
  * than reached by clicking through the sidebar. */
 export function isGroupActive(group: NavGroup, pathname: string): boolean {

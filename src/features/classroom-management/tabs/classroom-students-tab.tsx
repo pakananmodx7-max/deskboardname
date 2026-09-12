@@ -1,5 +1,6 @@
-import { Plus, Upload } from 'lucide-react'
+import { Plus, Upload, UserCheck } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -138,6 +139,16 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">{loading ? 'กำลังโหลด...' : `${students.length} คน`}</p>
         <div className="flex flex-wrap gap-2">
+          {/* Account-link-request review moved off the sidebar along with
+           * the rest of "นักเรียน" (see nav-items.ts) — this link keeps it
+           * reachable from the one tab a teacher already thinks of as
+           * "students," reusing the exact same route/page, not a new one. */}
+          <Button variant="outline" asChild>
+            <Link to="/teacher/students/requests">
+              <UserCheck className="size-4" />
+              คำขอเชื่อมบัญชี
+            </Link>
+          </Button>
           <Button variant="outline" onClick={() => setImportOpen(true)}>
             <Upload className="size-4" />
             Import Students

@@ -1,29 +1,65 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Navigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
+import { EditClassroomDialog } from '@/features/classroom-management/edit-classroom-dialog'
 import { ClassroomOverviewTab } from '@/features/classroom-management/tabs/classroom-overview-tab'
 import { ClassroomStudentsTab } from '@/features/classroom-management/tabs/classroom-students-tab'
-import { EditClassroomDialog } from '@/features/classroom-management/edit-classroom-dialog'
+import { AssignmentsTab } from '@/features/subjects-real/tabs/assignments-tab'
+import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
+import { GradesTab } from '@/features/subjects-real/tabs/grades-tab'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { archiveClassroom, getClassroomById, reactivateClassroom } from '@/services/classroom-service'
 import { getStudentsByClassroom } from '@/services/student-service'
+import { getClassroomSubjects } from '@/services/subject-service'
 import type { Classroom } from '@/types/classroom'
+import type { Subject } from '@/types/subject'
 
-type TabKey = 'overview' | 'students'
+type TabKey = 'overview' | 'students' | 'assignments' | 'attendance' | 'grades'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
+  { key: 'assignments', label: 'งานและการบ้าน' },
+  { key: 'attendance', label: 'เช็กชื่อ' },
+  { key: 'grades', label: 'คะแนนและการประเมิน' },
 ]
+
+/** The 3 tabs that need a subject to render — assignments/attendance/
+ * grades are always subject+classroom scoped in this schema (see
+ * AssignmentsTab/AttendanceTab/GradesTab's own props), never a bare
+ * classroom-less concept, so this workspace can't show them until it
+ * knows WHICH of the classroom's linked subjects the teacher means. */
+const SUBJECT_SCOPED_TABS: ReadonlySet<TabKey> = new Set(['assignments', 'attendance', 'grades'])
 
 function isTabKey(value: string | null): value is TabKey {
   return TABS.some((tab) => tab.key === value)
 }
 
+/**
+ * Requirement (Classroom Workspace consolidation): งานและการบ้าน,
+ * เช็กชื่อ, and คะแนนและการประเมิน are no longer their own sidebar
+ * destinations — they're tabs here, reached via ห้องเรียน → เลือกห้อง.
+ * Each renders the EXACT SAME AssignmentsTab/AttendanceTab/GradesTab
+ * components /teacher/subjects/:subjectId/classrooms/:classroomId
+ * already uses (same services, same mutations — nothing duplicated),
+ * just entered from the classroom side instead of the subject side.
+ *
+ * A classroom can be linked to more than one subject (e.g. a homeroom
+ * taught Math AND Science by the same teacher), and assignments/
+ * attendance/grades are always scoped to one specific subject — there is
+ * no classroom-wide "all subjects' assignments merged together" concept
+ * anywhere else in this app either. So when getClassroomSubjects finds
+ * more than one linked subject, a small selector lets the teacher pick
+ * which subject's data these 3 tabs show; with exactly one linked
+ * subject (the common case) it's chosen automatically and the selector
+ * never appears.
+ */
 export function ClassroomDetailPageReal() {
   const { classroomId } = useParams<{ classroomId: string }>()
   const { toast } = useToast()
@@ -39,6 +75,11 @@ export function ClassroomDetailPageReal() {
   const [error, setError] = useState<string | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [archiving, setArchiving] = useState(false)
+
+  const [linkedSubjects, setLinkedSubjects] = useState<Subject[]>([])
+  const [subjectsLoading, setSubjectsLoading] = useState(true)
+  const [subjectsError, setSubjectsError] = useState<string | null>(null)
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null)
 
   const loadStudentCount = useCallback((id: string) => {
     getStudentsByClassroom(id)
@@ -67,6 +108,30 @@ export function ClassroomDetailPageReal() {
     }
   }, [classroomId, loadStudentCount])
 
+  useEffect(() => {
+    if (!classroomId) return
+    let active = true
+    setSubjectsLoading(true)
+    setSubjectsError(null)
+
+    getClassroomSubjects(classroomId)
+      .then((subjects) => {
+        if (!active) return
+        setLinkedSubjects(subjects)
+        setSelectedSubjectId((prev) => (prev && subjects.some((s) => s.id === prev) ? prev : (subjects[0]?.id ?? null)))
+      })
+      .catch((err: unknown) => {
+        if (active) setSubjectsError(toFriendlyErrorMessage(err))
+      })
+      .finally(() => {
+        if (active) setSubjectsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [classroomId])
+
   if (!classroomId) {
     return <Navigate to="/teacher/classrooms" replace />
   }
@@ -84,6 +149,7 @@ export function ClassroomDetailPageReal() {
   // sees a guaranteed-defined classroom instead of the original
   // possibly-null/undefined type.
   const currentClassroom = classroom
+  const selectedSubject = linkedSubjects.find((s) => s.id === selectedSubjectId) ?? null
 
   async function handleToggleArchive() {
     setArchiving(true)
@@ -98,6 +164,35 @@ export function ClassroomDetailPageReal() {
     } finally {
       setArchiving(false)
     }
+  }
+
+  function renderSubjectScopedTab(tab: 'assignments' | 'attendance' | 'grades') {
+    if (subjectsLoading) return <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
+    if (subjectsError) return <p className="text-sm text-destructive">{subjectsError}</p>
+
+    if (linkedSubjects.length === 0) {
+      return (
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
+            <p className="text-sm font-medium">ห้องเรียนนี้ยังไม่ได้เชื่อมกับรายวิชาใด</p>
+            <p className="max-w-sm text-sm text-muted-foreground">
+              เชื่อมห้องเรียนนี้กับรายวิชาก่อน จึงจะมอบหมายงาน เช็กชื่อ หรือให้คะแนนได้
+            </p>
+            <Button asChild>
+              <Link to="/teacher/subjects">ไปที่รายวิชา</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )
+    }
+
+    if (!selectedSubject) return null
+
+    if (tab === 'assignments') return <AssignmentsTab subject={selectedSubject} classroomId={currentClassroom.id} />
+    if (tab === 'attendance') {
+      return <AttendanceTab subject={selectedSubject} classroomId={currentClassroom.id} classroomName={currentClassroom.name} />
+    }
+    return <GradesTab subject={selectedSubject} classroomId={currentClassroom.id} classroomName={currentClassroom.name} />
   }
 
   return (
@@ -119,7 +214,21 @@ export function ClassroomDetailPageReal() {
                 .join(' · ') || '-'}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {SUBJECT_SCOPED_TABS.has(activeTab) && linkedSubjects.length > 1 && (
+              <NativeSelect
+                value={selectedSubjectId ?? ''}
+                onChange={(e) => setSelectedSubjectId(e.target.value)}
+                className="w-auto"
+                aria-label="เลือกรายวิชา"
+              >
+                {linkedSubjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            )}
             <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
               แก้ไข
             </Button>
@@ -151,6 +260,9 @@ export function ClassroomDetailPageReal() {
       <div>
         {activeTab === 'overview' && <ClassroomOverviewTab classroom={classroom} studentCount={studentCount} />}
         {activeTab === 'students' && <ClassroomStudentsTab classroom={classroom} />}
+        {activeTab === 'assignments' && renderSubjectScopedTab('assignments')}
+        {activeTab === 'attendance' && renderSubjectScopedTab('attendance')}
+        {activeTab === 'grades' && renderSubjectScopedTab('grades')}
       </div>
 
       <EditClassroomDialog open={editOpen} onOpenChange={setEditOpen} classroom={classroom} onUpdated={setClassroom} />

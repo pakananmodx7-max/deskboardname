@@ -65,15 +65,11 @@ describe('navItems — ระบบจัดการชั้นเรียน
     expect(classroomManagementGroup).toBeTruthy()
   })
 
-  it('contains exactly these 8 children, in this order', () => {
+  it('contains exactly these 4 children, in this order', () => {
     expect(classroomManagementGroup?.children.map((child) => child.to)).toEqual([
       '/teacher/classroom-management',
       '/teacher/classrooms',
-      '/teacher/students',
       '/teacher/subjects',
-      '/teacher/assignments',
-      '/teacher/attendance',
-      '/teacher/grades',
       '/teacher/reports',
     ])
   })
@@ -82,13 +78,16 @@ describe('navItems — ระบบจัดการชั้นเรียน
     expect(classroomManagementGroup?.children.map((child) => child.label)).toEqual([
       'ภาพรวม',
       'ห้องเรียน',
-      'นักเรียน',
       'รายวิชา',
-      'งานและการบ้าน',
-      'เช็กชื่อ',
-      'คะแนนและการประเมิน',
       'รายงาน',
     ])
+  })
+
+  it('no longer has its own sidebar entries for นักเรียน/งานและการบ้าน/เช็กชื่อ/คะแนนและการประเมิน — moved into each Classroom Workspace\'s tabs instead', () => {
+    const labels = classroomManagementGroup?.children.map((child) => child.label) ?? []
+    for (const removedLabel of ['นักเรียน', 'งานและการบ้าน', 'เช็กชื่อ', 'คะแนนและการประเมิน']) {
+      expect(labels).not.toContain(removedLabel)
+    }
   })
 })
 
@@ -114,6 +113,13 @@ describe('navItems — removed/relocated destinations no longer appear as standa
       expect(topLevelLinks.some((item) => item.to === path)).toBe(false)
     }
   })
+
+  it('no sidebar entry anywhere for นักเรียน/งานและการบ้าน/เช็กชื่อ/คะแนนและการประเมิน — each moved into each Classroom Workspace\'s own tabs, not deleted', () => {
+    expect(flat.some((item) => item.to === '/teacher/students')).toBe(false)
+    expect(flat.some((item) => item.to === '/teacher/assignments')).toBe(false)
+    expect(flat.some((item) => item.to === '/teacher/attendance')).toBe(false)
+    expect(flat.some((item) => item.to === '/teacher/grades')).toBe(false)
+  })
 })
 
 describe('flattenNavLinks — every real destination is reachable exactly once', () => {
@@ -122,7 +128,7 @@ describe('flattenNavLinks — every real destination is reachable exactly once',
     expect(flat.some((item) => item.to === '/teacher/hermes')).toBe(true)
     expect(flat.some((item) => item.to === '/teacher/settings')).toBe(true)
     expect(flat.some((item) => item.to === '/teacher/dashboard')).toBe(true)
-    expect(flat.some((item) => item.to === '/teacher/students')).toBe(true)
+    expect(flat.some((item) => item.to === '/teacher/classrooms')).toBe(true)
   })
 
   it('produces no duplicate `to` targets', () => {
@@ -135,17 +141,18 @@ describe('flattenNavLinks — every real destination is reachable exactly once',
 describe('isGroupActive', () => {
   it('is true for the group\'s own overview path and any child path', () => {
     if (!classroomManagementGroup) throw new Error('group not found')
-    expect(isGroupActive(classroomManagementGroup, '/teacher/students')).toBe(true)
+    expect(isGroupActive(classroomManagementGroup, '/teacher/classrooms')).toBe(true)
     expect(isGroupActive(classroomManagementGroup, '/teacher/reports')).toBe(true)
   })
 
   it('is true for a sub-path of a child (e.g. a bookmarked deep link)', () => {
     if (!classroomManagementGroup) throw new Error('group not found')
-    expect(isGroupActive(classroomManagementGroup, '/teacher/students/requests')).toBe(true)
+    expect(isGroupActive(classroomManagementGroup, '/teacher/classrooms/some-id')).toBe(true)
   })
 
   it('is false for an unrelated path', () => {
     if (!classroomManagementGroup) throw new Error('group not found')
     expect(isGroupActive(classroomManagementGroup, '/teacher/hermes')).toBe(false)
+    expect(isGroupActive(classroomManagementGroup, '/teacher/students')).toBe(false)
   })
 })

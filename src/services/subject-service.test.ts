@@ -26,6 +26,31 @@ describe('subject-service.ts — no circular import with assignment-service.ts',
   })
 })
 
+describe('getClassroomSubjects — reverse of getSubjectClassrooms, backs the Classroom Workspace tabs', () => {
+  const source = readSource()
+  const fnBody = source.slice(
+    source.indexOf('export async function getClassroomSubjects'),
+    source.indexOf('\n}\n', source.indexOf('export async function getClassroomSubjects')),
+  )
+
+  it('queries the same subject_classrooms join table as getSubjectClassrooms, filtered by classroom_id instead of subject_id', () => {
+    expect(fnBody).toContain("from('subject_classrooms')")
+    expect(fnBody).toContain("eq('classroom_id', classroomId)")
+  })
+
+  it('selects the full subject row via the join, never a separate per-subject fetch (no N+1)', () => {
+    expect(fnBody).toContain("select('subjects(*)')")
+  })
+
+  it('maps rows through the same mapSubject used everywhere else, not a duplicated mapper', () => {
+    expect(fnBody).toContain('mapSubject(row.subjects)')
+  })
+
+  it('surfaces query errors instead of swallowing them', () => {
+    expect(fnBody).toContain('if (error) throw error')
+  })
+})
+
 describe('countSubjectAttendanceSessions — the signal the subjects page uses for the stronger delete confirmation', () => {
   const source = readSource()
   const fnBody = source.slice(

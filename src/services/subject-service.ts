@@ -290,6 +290,28 @@ export async function getSubjectClassroomsWithCounts(subjectId: string): Promise
 }
 
 /**
+ * The reverse of getSubjectClassrooms: every subject linked to a given
+ * classroom — used by the Classroom Workspace's งานและการบ้าน/เช็กชื่อ/
+ * คะแนนและการประเมิน tabs (see classroom-detail-page-real.tsx) to decide
+ * which subject's AssignmentsTab/AttendanceTab/GradesTab to render for
+ * this classroom (auto-selected when there's exactly one; the teacher
+ * picks when there's more than one — a classroom can be linked to
+ * several subjects, e.g. Math and Science for the same ป.1/1). Same
+ * subject_classrooms join table and RLS as getSubjectClassrooms, just
+ * filtered and selected from the other side.
+ */
+export async function getClassroomSubjects(classroomId: string): Promise<Subject[]> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('subject_classrooms')
+    .select('subjects(*)')
+    .eq('classroom_id', classroomId)
+
+  if (error) throw error
+  return (data as unknown as { subjects: SubjectRow }[]).map((row) => mapSubject(row.subjects))
+}
+
+/**
  * Whether this subject has ever recorded attendance for this specific
  * classroom — the safeguard check before letting a teacher unlink a
  * classroom from a subject (see EditSubjectDialog). Unlinking never
