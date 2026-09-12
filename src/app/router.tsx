@@ -26,6 +26,7 @@ import { AttendanceRedirectPage } from '@/pages/teacher/attendance/attendance-re
 import { ClassroomDetailPage } from '@/pages/teacher/classrooms/classroom-detail-page'
 import { ClassroomsPage } from '@/pages/teacher/classrooms/classrooms-page'
 import { DashboardPage } from '@/pages/teacher/dashboard/dashboard-page'
+import { AgentToolsDevPage } from '@/pages/teacher/dev/agent-tools-dev-page'
 import { GradesRedirectPage } from '@/pages/teacher/grades/grades-redirect-page'
 import { IntegrationsPage } from '@/pages/teacher/integrations/integrations-page'
 import { ReportsPage } from '@/pages/teacher/reports/reports-page'
@@ -118,6 +119,15 @@ const router = createBrowserRouter([
       { path: 'ai', element: <AiPage /> },
       { path: 'integrations', element: <IntegrationsPage /> },
       { path: 'settings', element: <SettingsPage /> },
+      // TEMPORARY developer-only diagnostic panel for the Teacher Agent
+      // Tool Layer (supabase/functions/teacher-agent-tools) — reachable
+      // only by URL, deliberately NOT added to nav-items.ts (whose own
+      // test pins the sidebar to an exact 9-item list). Still fully
+      // gated by the surrounding <ProtectedRoute>/<TeacherLayout>
+      // above: an unauthenticated or student-role session never reaches
+      // it, same as every real teacher page. Remove this route once the
+      // Teacher Agent Tool Layer has a real (non-diagnostic) UI.
+      { path: 'dev/agent-tools', element: <AgentToolsDevPage /> },
     ],
   },
   {
