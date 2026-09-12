@@ -17,12 +17,18 @@ export interface CreatedServer {
 }
 
 /**
- * Builds the MCP server and registers exactly the 5 read tools from
- * tool-schemas.ts — nothing else. Each tool's handler does nothing but
- * call the Edge Function through `client` and translate its response
- * into an MCP CallToolResult; no business logic (ownership checks,
- * argument validation beyond the zod shape Hermes itself will already
- * enforce before sending, response shaping) lives here.
+ * Builds the MCP server and registers exactly the 8 tools from
+ * tool-schemas.ts (5 read + 3 write) — nothing else, and this loop
+ * itself never distinguishes read from write: whether a given tool
+ * mutates data is entirely a property of tool-schemas.ts's own
+ * `annotations`/description for that entry, not of anything here. Each
+ * tool's handler does nothing but call the Edge Function through
+ * `client` and translate its response into an MCP CallToolResult; no
+ * business logic (ownership checks, argument validation beyond the zod
+ * shape Hermes itself will already enforce before sending, response
+ * shaping) lives here — a write tool's actual mutation happens entirely
+ * inside the already-deployed, already-authenticated teacher-agent-tools
+ * Edge Function, exactly like every read.
  */
 export function createServer(client: EdgeFunctionClient): CreatedServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION })
@@ -31,7 +37,7 @@ export function createServer(client: EdgeFunctionClient): CreatedServer {
   for (const [name, schema] of Object.entries(toolSchemas)) {
     registeredTools[name] = server.registerTool(
       name,
-      { description: schema.description, inputSchema: schema.input },
+      { description: schema.description, inputSchema: schema.input, annotations: schema.annotations },
       async (args: Record<string, unknown>) => {
         try {
           const result = await client.callTool(name, args)

@@ -5,7 +5,7 @@ import { ConfigError, loadConfig } from './config.js'
 import { EdgeFunctionClient } from './edge-function-client.js'
 import { logError, logInfo } from './logger.js'
 import { createServer } from './server.js'
-import { READ_TOOL_NAMES } from './tool-schemas.js'
+import { ALL_TOOL_NAMES, READ_TOOL_NAMES, WRITE_TOOL_NAMES } from './tool-schemas.js'
 import { TeacherAuthError, TeacherSession } from './teacher-session.js'
 
 /**
@@ -38,7 +38,11 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport()
   await server.connect(transport)
 
-  logInfo(`connected over stdio — registered ${READ_TOOL_NAMES.length} read tools: ${READ_TOOL_NAMES.join(', ')}`)
+  logInfo(
+    `connected over stdio — registered ${ALL_TOOL_NAMES.length} tools: ` +
+      `${READ_TOOL_NAMES.length} read (${READ_TOOL_NAMES.join(', ')}), ` +
+      `${WRITE_TOOL_NAMES.length} write (${WRITE_TOOL_NAMES.join(', ')})`,
+  )
 }
 
 main().catch((err) => {

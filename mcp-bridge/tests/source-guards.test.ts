@@ -62,18 +62,32 @@ describe('credential safety — the service-role key is structurally unreachable
   })
 })
 
-describe('write tools are structurally absent, not just unregistered', () => {
-  it('the write tool names appear ONLY inside tool-schemas.ts\'s own EXCLUDED_WRITE_TOOL_NAMES reference list (and its doc comment) — never in server.ts, index.ts, or anywhere a tool actually gets registered or called', () => {
-    for (const file of sourceFiles) {
-      if (!file.content.match(/create_assignment|copy_assignment_to_classrooms|mark_attendance_bulk/)) continue
-      expect(file.name).toBe('tool-schemas.ts')
-    }
+describe('write tools are registered ONLY through tool-schemas.ts + server.ts\'s generic loop — no bespoke write path exists', () => {
+  it('the 3 write tool names are declared exactly once each, inside tool-schemas.ts\'s toolSchemas object (their only definition site)', () => {
     const toolSchemasCode = sourceFiles.find((f) => f.name === 'tool-schemas.ts')!.code
-    const codeOutsideExclusionList = toolSchemasCode.replace(
-      /export const EXCLUDED_WRITE_TOOL_NAMES = \[[\s\S]*?\] as const/,
-      '',
-    )
-    expect(codeOutsideExclusionList).not.toMatch(/create_assignment|copy_assignment_to_classrooms|mark_attendance_bulk/)
+    for (const writeTool of ['create_assignment', 'copy_assignment_to_classrooms', 'mark_attendance_bulk']) {
+      expect(toolSchemasCode).toContain(`  ${writeTool}: {`)
+    }
+  })
+
+  it('no source file other than tool-schemas.ts references a write tool by name — server.ts/index.ts stay generic, with no bespoke "if it\'s a write tool" branch', () => {
+    for (const file of sourceFiles) {
+      if (file.name === 'tool-schemas.ts') continue
+      expect(file.code).not.toMatch(/create_assignment|copy_assignment_to_classrooms|mark_attendance_bulk/)
+    }
+  })
+
+  it('server.ts registers tools via one generic loop over toolSchemas — no separate registerTool call, no read/write branch', () => {
+    const serverCode = sourceFiles.find((f) => f.name === 'server.ts')!.code
+    const registerToolCalls = serverCode.match(/registerTool\(/g) ?? []
+    expect(registerToolCalls).toHaveLength(1) // one call site, inside the for..of loop
+    expect(serverCode).toContain('for (const [name, schema] of Object.entries(toolSchemas))')
+  })
+
+  it('no source file contains a delete/destroy tool name — the Edge Function has no such capability to expose', () => {
+    for (const file of sourceFiles) {
+      expect(file.code).not.toMatch(/delete_assignment|delete_subject|delete_lesson|delete_classroom|delete_student/)
+    }
   })
 })
 

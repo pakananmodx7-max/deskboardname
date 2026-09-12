@@ -1,29 +1,62 @@
 # teacher-agent-mcp-bridge
 
 A **local** MCP (Model Context Protocol) stdio server that exposes the
-already-deployed production `teacher-agent-tools` Supabase Edge Function's
-**READ tools only** to an MCP client such as Hermes.
+already-deployed production `teacher-agent-tools` Supabase Edge
+Function's 5 read tools and 3 safe write tools to an MCP client such as
+Hermes.
 
 It runs entirely on the teacher's own machine (this is what makes it a
 "bridge," not a hosted service), talks to Supabase Auth to sign in as a
 real teacher, and calls the Edge Function over plain HTTPS. It never
 touches the database directly, never holds a `service_role` key, and
-never adds or changes any business rule — every actual answer (which
-classrooms this teacher owns, attendance rates, missing submissions,
-etc.) comes from the Edge Function and the Row Level Security policies
-behind it, exactly as it does for the real web app.
+never adds or changes any business rule — every actual answer or write
+(which classrooms this teacher owns, attendance rates, missing
+submissions, creating an assignment, copying one, recording attendance)
+comes from the Edge Function and the Row Level Security policies behind
+it, exactly as it does for the real web app.
 
 ## What this is not
 
 - Not a new Supabase Edge Function, and it does not modify the deployed
   one.
 - Not a database or RLS change.
-- Not a write-capable tool layer. Only 5 read tools are registered:
-  `list_classrooms`, `list_assignments`, `get_missing_submissions`,
-  `get_classroom_summary`, `get_student_summary`. The 3 write tools that
-  already exist on the Edge Function (`create_assignment`,
-  `copy_assignment_to_classrooms`, `mark_attendance_bulk`) are
-  deliberately not exposed here yet.
+- Not a place that reimplements any argument-validation or ownership
+  rule. Every tool's argument shape is mirrored field-for-field from
+  `supabase/functions/teacher-agent-tools/tools/{read,write}-tools.ts`,
+  but the Edge Function remains the sole authority: a request this
+  bridge's own zod schema let through can still be refused server-side
+  (`invalid_arguments`, `forbidden`, `not_found`) exactly as if the
+  bridge had forwarded it as-is — because that is exactly what happens.
+- Not a place with a delete/destroy tool — none exists on the Edge
+  Function, so none is exposed here.
+
+## Tools exposed (8 total)
+
+**Read (5)** — `list_classrooms`, `list_assignments`,
+`get_missing_submissions`, `get_classroom_summary`, `get_student_summary`.
+
+**Write (3)** — `create_assignment`, `copy_assignment_to_classrooms`,
+`mark_attendance_bulk`. Each of these **mutates real production data**
+through the same production Edge Function every read tool uses:
+
+- Their MCP tool description is prefixed with
+  `[WRITE — mutates production data]`, ahead of the exact upstream
+  description, so an agent reading the tool list sees which tools can
+  change data before ever calling one.
+- Each carries standard MCP annotations (`readOnlyHint: false`,
+  `destructiveHint: false` — nothing here can delete anything,
+  `idempotentHint`) any MCP-aware client can use to decide whether to
+  confirm with the user before calling one. `mark_attendance_bulk` is
+  idempotent (it upserts); `create_assignment` and
+  `copy_assignment_to_classrooms` are not (each call creates new rows).
+- `mark_attendance_bulk` preserves the Edge Function's exact allowed
+  status values (`present`, `late`, `leave`, `absent`) and its required
+  `classroomId`/`date`/`updates` shape — nothing here invents a
+  different vocabulary.
+- Ownership/authorization is still enforced entirely server-side: a
+  classroom, assignment, or subject the calling teacher doesn't own is
+  refused by the Edge Function's own RLS-scoped checks, not by anything
+  in this bridge.
 
 ## How authentication works
 
