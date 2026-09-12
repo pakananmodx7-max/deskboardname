@@ -1,45 +1,35 @@
-import { CheckCircle2, Loader2, Plug } from 'lucide-react'
+import { Plug } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { useToast } from '@/components/ui/toast'
+import { GoogleDriveConnectionCard } from '@/features/google-drive/google-drive-connection-card'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import {
-  completeGoogleConnect,
-  disconnectGoogleAccount,
-  getGoogleConnectionStatus,
-  startGoogleConnect,
-  type GoogleConnectionStatus,
-} from '@/services/google-drive-service'
-
-type LoadState = 'loading' | 'ready' | 'error'
-
-function formatThaiDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
-}
+import { useToast } from '@/components/ui/toast'
+import { completeGoogleConnect } from '@/services/google-drive-service'
 
 /**
- * Google Drive API Integration, Section 13: connect/reconnect/disconnect
- * controls for the teacher's own Google account. This page IS the OAuth
+ * Google Drive API Integration, Section 13: this page IS the OAuth
  * redirect_uri Google sends the browser back to (registered exactly as
  * `<origin>/teacher/integrations` in Google Cloud Console — see
  * docs/GOOGLE_DRIVE_SETUP.md) — on mount it checks its own URL for
  * `?code=&state=` left there by that redirect, completes the connect
  * flow if present, then strips those params from the URL so a page
  * refresh never re-submits the same one-time code.
+ *
+ * No longer linked from the sidebar (see nav-items.ts) — Google Drive's
+ * connection status/connect/disconnect controls now also render inline
+ * on the Subject detail page (see subjects-real/tabs/overview-tab.tsx),
+ * via the SAME GoogleDriveConnectionCard used below, so a teacher rarely
+ * needs to visit this URL directly. It stays reachable (and this exact
+ * route is untouched) purely because Google's own redirect_uri is fixed
+ * at this path.
  */
 export function IntegrationsPage() {
   const { toast } = useToast()
   const navigate = useNavigate()
 
-  const [state, setState] = useState<LoadState>('loading')
-  const [status, setStatus] = useState<GoogleConnectionStatus | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [connecting, setConnecting] = useState(false)
-  const [disconnectOpen, setDisconnectOpen] = useState(false)
+  const [callbackError, setCallbackError] = useState<string | null>(null)
+  const [refreshSignal, setRefreshSignal] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -48,22 +38,18 @@ export function IntegrationsPage() {
       const params = new URLSearchParams(window.location.search)
       const code = params.get('code')
       const oauthState = params.get('state')
+      if (!code || !oauthState) return
 
       try {
-        if (code && oauthState) {
-          await completeGoogleConnect(code, oauthState)
-          navigate('/teacher/integrations', { replace: true })
-          if (active) toast('เชื่อมต่อบัญชี Google สำเร็จแล้ว')
-        }
-        const result = await getGoogleConnectionStatus()
+        await completeGoogleConnect(code, oauthState)
+        navigate('/teacher/integrations', { replace: true })
         if (active) {
-          setStatus(result)
-          setState('ready')
+          toast('เชื่อมต่อบัญชี Google สำเร็จแล้ว')
+          setRefreshSignal((n) => n + 1)
         }
       } catch (err) {
         if (active) {
-          setError(toFriendlyErrorMessage(err, 'ไม่สามารถโหลดสถานะการเชื่อมต่อ Google ได้'))
-          setState('error')
+          setCallbackError(toFriendlyErrorMessage(err, 'ไม่สามารถโหลดสถานะการเชื่อมต่อ Google ได้'))
         }
       }
     }
@@ -77,30 +63,6 @@ export function IntegrationsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function handleConnect() {
-    setConnecting(true)
-    setError(null)
-    try {
-      await startGoogleConnect()
-      // startGoogleConnect navigates the whole page away to Google — no
-      // further state update happens here on success.
-    } catch (err) {
-      setConnecting(false)
-      setError(toFriendlyErrorMessage(err, 'ไม่สามารถเริ่มเชื่อมต่อ Google ได้'))
-    }
-  }
-
-  async function handleDisconnect() {
-    try {
-      await disconnectGoogleAccount()
-      setStatus({ connected: false, email: null, scope: null, connectedAt: null })
-      setDisconnectOpen(false)
-      toast('ตัดการเชื่อมต่อบัญชี Google แล้ว')
-    } catch (err) {
-      toast(toFriendlyErrorMessage(err, 'ไม่สามารถตัดการเชื่อมต่อ Google ได้'))
-    }
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -113,69 +75,9 @@ export function IntegrationsPage() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Google Drive</CardTitle>
-          <CardDescription>
-            เชื่อมต่อบัญชี Google ของคุณเพื่อเลือกไฟล์ (PDF, Google เอกสาร, Google สไลด์, รูปภาพ ฯลฯ) จาก Google Drive
-            เมื่อเพิ่มสื่อการสอนหรือใบงาน — แอปนี้จะเข้าถึงเฉพาะไฟล์ที่คุณเลือกด้วยตนเองเท่านั้น ไม่สามารถดูหรือแก้ไขไฟล์อื่นใน Drive ของคุณได้
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {state === 'loading' && (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              กำลังตรวจสอบสถานะการเชื่อมต่อ...
-            </p>
-          )}
+      {callbackError && <p className="text-sm text-destructive">{callbackError}</p>}
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
-
-          {state !== 'loading' && status?.connected && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 rounded-md border bg-success/5 px-3 py-2.5 text-sm">
-                <CheckCircle2 className="size-4 shrink-0 text-success" />
-                <div>
-                  <p className="font-medium">เชื่อมต่อแล้ว</p>
-                  <p className="text-muted-foreground">
-                    บัญชี: {status.email ?? 'ไม่ทราบอีเมล'}
-                    {status.connectedAt && ` · เชื่อมต่อเมื่อ ${formatThaiDate(status.connectedAt)}`}
-                  </p>
-                </div>
-              </div>
-              <Button type="button" variant="outline" onClick={() => setDisconnectOpen(true)}>
-                ตัดการเชื่อมต่อ
-              </Button>
-            </div>
-          )}
-
-          {state !== 'loading' && status && !status.connected && (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">ยังไม่ได้เชื่อมต่อบัญชี Google</p>
-              <Button type="button" onClick={handleConnect} disabled={connecting}>
-                {connecting ? 'กำลังเชื่อมต่อ...' : 'เชื่อมต่อ Google Drive'}
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>เร็ว ๆ นี้</CardTitle>
-          <CardDescription>Google Sheets API, LINE และ Hermes Agent จะพร้อมใช้งานในเฟสถัดไป</CardDescription>
-        </CardHeader>
-      </Card>
-
-      <ConfirmDialog
-        open={disconnectOpen}
-        onOpenChange={setDisconnectOpen}
-        title="ตัดการเชื่อมต่อ Google Drive?"
-        description="คุณจะไม่สามารถเลือกไฟล์จาก Google Drive ได้จนกว่าจะเชื่อมต่อใหม่อีกครั้ง สื่อการสอน/ใบงานที่เพิ่มไปแล้วจะยังคงอยู่ตามปกติ"
-        confirmLabel="ตัดการเชื่อมต่อ"
-        destructive
-        onConfirm={handleDisconnect}
-      />
+      <GoogleDriveConnectionCard refreshSignal={refreshSignal} />
     </div>
   )
 }

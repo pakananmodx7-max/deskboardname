@@ -2,6 +2,7 @@ import { BookOpen, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { Card, CardContent } from '@/components/ui/card'
+import { GoogleDriveConnectionCard } from '@/features/google-drive/google-drive-connection-card'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { getTopics } from '@/services/topic-service'
@@ -102,6 +103,17 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
           )}
         </CardContent>
       </Card>
+
+      <div className="space-y-2">
+        <div>
+          <p className="text-sm font-semibold">การเชื่อมต่อและสื่อการสอน</p>
+          <p className="text-xs text-muted-foreground">
+            เชื่อมต่อบัญชี Google แล้วเพิ่มสื่อการสอน สไลด์ วิดีโอ เอกสาร หรือลิงก์อื่น ๆ ได้จากแท็บ &ldquo;บทเรียน&rdquo;
+            และ &ldquo;งาน&rdquo; ของห้องเรียนนี้
+          </p>
+        </div>
+        <GoogleDriveConnectionCard />
+      </div>
     </div>
   )
 }
