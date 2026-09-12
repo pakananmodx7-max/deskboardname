@@ -26,41 +26,49 @@ describe('subject-service.ts — no circular import with assignment-service.ts',
   })
 })
 
-describe('hasAnySubjectAttendance — the exact signal deleteSubjectPermanently pre-checks', () => {
+describe('countSubjectAttendanceSessions — the signal the subjects page uses for the stronger delete confirmation', () => {
   const source = readSource()
   const fnBody = source.slice(
-    source.indexOf('export async function hasAnySubjectAttendance'),
-    source.indexOf('\n}\n', source.indexOf('export async function hasAnySubjectAttendance')),
+    source.indexOf('export async function countSubjectAttendanceSessions'),
+    source.indexOf('\n}\n', source.indexOf('export async function countSubjectAttendanceSessions')),
   )
 
-  it('counts attendance_sessions rows for this subject, never fetches full rows just to check existence', () => {
+  it('counts attendance_sessions rows for this subject, never fetches full rows just to count', () => {
     expect(fnBody).toContain("from('attendance_sessions')")
     expect(fnBody).toContain("{ count: 'exact', head: true }")
     expect(fnBody).toContain("eq('subject_id', subjectId)")
   })
+
+  it('the old "refuse when attendance exists" guard is gone — attendance no longer blocks subject deletion', () => {
+    expect(source).not.toContain('hasAnySubjectAttendance')
+    expect(source).not.toContain("error.code === '23503'")
+  })
 })
 
-describe('deleteSubjectPermanently — attendance is checked FIRST, before any Storage object is touched', () => {
+describe('deleteSubjectPermanently — attendance is deleted WITH the subject through 0022\'s ownership-checked RPC', () => {
   const source = readSource()
   const fnBody = source.slice(
     source.indexOf('export async function deleteSubjectPermanently'),
     source.indexOf('\n}\n', source.indexOf('export async function deleteSubjectPermanently')),
   )
 
-  it('calls hasAnySubjectAttendance as the very first thing, before fetching any lessons/assignments/resources', () => {
-    const attendanceCheckIndex = fnBody.indexOf('await hasAnySubjectAttendance(subjectId)')
-    const lessonsFetchIndex = fnBody.indexOf('getLessonsForSubject(subjectId)')
-    const assignmentsFetchIndex = fnBody.indexOf("from('assignments')")
-    expect(attendanceCheckIndex).toBeGreaterThan(-1)
-    expect(attendanceCheckIndex).toBeLessThan(lessonsFetchIndex)
-    expect(attendanceCheckIndex).toBeLessThan(assignmentsFetchIndex)
+  it('does the actual delete through the delete_subject_permanently RPC (attendance + subject in ONE transaction), never a raw client-side delete of attendance or subjects', () => {
+    expect(fnBody).toContain("supabase.rpc('delete_subject_permanently', { p_subject_id: subjectId })")
+    expect(fnBody).not.toMatch(/\.from\('attendance_sessions'\)[\s\S]{0,80}\.delete\(/)
+    expect(fnBody).not.toMatch(/\.from\('attendance_records'\)[\s\S]{0,80}\.delete\(/)
+    expect(fnBody).not.toMatch(/\.from\('subjects'\)[\s\S]{0,80}\.delete\(/)
   })
 
-  it('throws immediately (never proceeds to cleanup) when attendance exists — a clear Thai message naming attendance', () => {
-    const guardClause = fnBody.slice(0, fnBody.indexOf('const supabase = getSupabaseClient()'))
-    expect(guardClause).toContain('if (hasAttendance) {')
-    expect(guardClause).toContain('throw new Error(')
-    expect(guardClause).toMatch(/เช็คชื่อ|การเข้าเรียน/)
+  it('refuses (RLS-checked ownership read) BEFORE touching any Storage object when the caller does not own the subject', () => {
+    const ownershipReadIndex = fnBody.indexOf(".from('subjects')")
+    const ownershipGuardIndex = fnBody.indexOf('if (!owned) {')
+    const lessonsFetchIndex = fnBody.indexOf('getLessonsForSubject(subjectId)')
+    const assignmentsFetchIndex = fnBody.indexOf("from('assignments')")
+    expect(ownershipReadIndex).toBeGreaterThan(-1)
+    expect(ownershipGuardIndex).toBeGreaterThan(ownershipReadIndex)
+    expect(ownershipGuardIndex).toBeLessThan(lessonsFetchIndex)
+    expect(ownershipGuardIndex).toBeLessThan(assignmentsFetchIndex)
+    expect(fnBody.slice(ownershipGuardIndex, lessonsFetchIndex)).toContain('throw new Error(')
   })
 
   it('cleans up lesson resources for EVERY lesson under this subject (across every linked classroom), before assignments', () => {
@@ -72,7 +80,7 @@ describe('deleteSubjectPermanently — attendance is checked FIRST, before any S
     expect(lessonCleanupIndex).toBeLessThan(assignmentsQueryIndex)
   })
 
-  it('cleans up BOTH assignment-files and submission-files Storage for every assignment under this subject', () => {
+  it('still cleans up BOTH assignment-files and submission-files Storage for every assignment under this subject (existing lesson/assignment/submission cleanup unchanged)', () => {
     expect(fnBody).toContain('removeResourceStorageObjects(resources)')
     expect(fnBody).toContain('removeSubmissionResourceStorageObjects(submissionStoragePaths)')
     expect(fnBody).toContain('getSubmissionResourceStoragePathsForAssignment(assignmentId)')
@@ -82,20 +90,16 @@ describe('deleteSubjectPermanently — attendance is checked FIRST, before any S
     expect(fnBody).toContain("eq('subject_id', subjectId)")
   })
 
-  it('all Storage cleanup happens BEFORE the subjects row delete, never after', () => {
+  it('all Storage cleanup happens BEFORE the RPC (which cascades the assignment_submissions rows submission-files\' delete policy depends on), never after', () => {
     const lastCleanupIndex = fnBody.lastIndexOf('removeSubmissionResourceStorageObjects(submissionStoragePaths)')
-    const deleteIndex = fnBody.indexOf(".from('subjects').delete().eq('id', subjectId)")
+    const rpcIndex = fnBody.indexOf("rpc('delete_subject_permanently'")
     expect(lastCleanupIndex).toBeGreaterThan(-1)
-    expect(lastCleanupIndex).toBeLessThan(deleteIndex)
+    expect(lastCleanupIndex).toBeLessThan(rpcIndex)
   })
 
-  it('reads back the deleted row via .select(\'id\') to tell "genuinely deleted" apart from "RLS silently denied it"', () => {
-    expect(fnBody).toContain(".from('subjects').delete().eq('id', subjectId).select('id')")
-    expect(fnBody).toContain('data.length === 0')
-  })
-
-  it('catches a foreign-key-violation (23503, e.g. a race where attendance was recorded after the pre-check) with the same clear Thai message, as defense-in-depth only', () => {
-    expect(fnBody).toContain("error.code === '23503'")
+  it('surfaces the RPC error (42501 for a non-owner) instead of swallowing it', () => {
+    const afterRpc = fnBody.slice(fnBody.indexOf("rpc('delete_subject_permanently'"))
+    expect(afterRpc).toContain('if (error) throw error')
   })
 
   it('never deletes classrooms, students, or another subject\'s rows — no delete/remove call targets those tables', () => {
@@ -105,5 +109,68 @@ describe('deleteSubjectPermanently — attendance is checked FIRST, before any S
 
   it('never references Google/Drive anywhere — deleting a subject never touches any teacher\'s original Drive file', () => {
     expect(fnBody).not.toMatch(/google|drive/i)
+  })
+})
+
+// ==================================================
+// 0022_subject_delete_with_attendance.sql — the RPC the service above
+// calls. Source-text guards on the migration itself, so the database-side
+// safety properties are pinned down alongside the client ones.
+// ==================================================
+
+describe('0022_subject_delete_with_attendance.sql — delete_subject_permanently RPC', () => {
+  const migration = readFileSync(
+    new URL('../../supabase/migrations/0022_subject_delete_with_attendance.sql', import.meta.url),
+    'utf-8',
+  )
+  const fn = migration.slice(
+    migration.indexOf('create or replace function public.delete_subject_permanently'),
+    migration.indexOf('$$;', migration.indexOf('create or replace function public.delete_subject_permanently')),
+  )
+
+  it('is SECURITY DEFINER with a pinned search_path (the established 0013/0015/0016/0019 helper pattern)', () => {
+    expect(fn).toContain('security definer')
+    expect(fn).toContain('set search_path = public, pg_temp')
+  })
+
+  it('enforces teacher ownership INSIDE the function (auth.uid() = subjects.teacher_id) and raises 42501 otherwise — the database is the authorization boundary', () => {
+    expect(fn).toContain('where s.id = p_subject_id and s.teacher_id = auth.uid()')
+    expect(fn).toContain("errcode = '42501'")
+    expect(fn).toContain("errcode = '28000'")
+  })
+
+  it('deletes ONLY attendance_sessions whose subject_id is this subject, then the subject — in that order, in one function (one transaction)', () => {
+    const attendanceDeleteIndex = fn.indexOf('delete from public.attendance_sessions\n  where subject_id = p_subject_id;')
+    const subjectDeleteIndex = fn.indexOf('delete from public.subjects\n  where id = p_subject_id and teacher_id = auth.uid();')
+    expect(attendanceDeleteIndex).toBeGreaterThan(-1)
+    expect(subjectDeleteIndex).toBeGreaterThan(attendanceDeleteIndex)
+    // ownership check happens before either delete
+    expect(fn.indexOf("errcode = '42501'")).toBeLessThan(attendanceDeleteIndex)
+  })
+
+  it('never deletes students, classrooms, profiles, or attendance_records directly (records go only via the 0004 cascade of THIS subject\'s sessions)', () => {
+    expect(fn).not.toMatch(/delete from public\.(students|classrooms|profiles|attendance_records|classroom_students)/)
+  })
+
+  it('does NOT change attendance_sessions.subject_id\'s ON DELETE RESTRICT and adds NO general DELETE policy on attendance tables', () => {
+    expect(migration).not.toMatch(/alter table public\.attendance_(sessions|records)/)
+    expect(migration).not.toMatch(/on delete cascade\s*;/)
+    expect(migration).not.toMatch(/create policy[^;]*on public\.attendance_(sessions|records)/)
+  })
+
+  it('is executable by authenticated only — revoked from public and anon', () => {
+    expect(migration).toContain('revoke all on function public.delete_subject_permanently(uuid) from public;')
+    expect(migration).toContain('revoke all on function public.delete_subject_permanently(uuid) from anon;')
+    expect(migration).toContain('grant execute on function public.delete_subject_permanently(uuid) to authenticated;')
+  })
+
+  it('does not touch the already-applied 0019/0020/0021 objects — no DROP/ALTER of any policy, table, or function; it only CREATEs its own RPC', () => {
+    const statements = migration
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n')
+    expect(statements).not.toMatch(/drop (policy|function|table|index|trigger)/i)
+    expect(statements).not.toMatch(/alter (policy|table|function)/i)
+    expect(statements).not.toMatch(/subjects_delete_own|lessons_delete_own|assignments_delete_own/)
   })
 })

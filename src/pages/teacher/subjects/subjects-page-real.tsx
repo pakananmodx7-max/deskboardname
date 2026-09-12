@@ -14,6 +14,7 @@ import { summarizeSubjectClassrooms } from '@/features/subjects-shared/subject-c
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   archiveSubject,
+  countSubjectAttendanceSessions,
   deleteSubjectPermanently,
   getSubjectClassroomsWithCounts,
   getSubjects,
@@ -44,7 +45,8 @@ export function SubjectsPageReal() {
   const [createOpen, setCreateOpen] = useState(false)
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null)
   const [archivingSubject, setArchivingSubject] = useState<Subject | null>(null)
-  const [deletingSubject, setDeletingSubject] = useState<Subject | null>(null)
+  const [deletingSubject, setDeletingSubject] = useState<{ subject: Subject; attendanceSessionCount: number } | null>(null)
+  const [checkingDeleteId, setCheckingDeleteId] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -79,11 +81,32 @@ export function SubjectsPageReal() {
     }
   }
 
+  /**
+   * Opens the permanent-delete confirmation. Same shape as the assignment
+   * tab's handleDeleteMenuClick: this is NOT the delete itself and NOT an
+   * authorization check (the database enforces ownership inside
+   * deleteSubjectPermanently's RPC) — it only counts this subject's
+   * เช็คชื่อ sessions so the dialog can say, in concrete terms, that
+   * attendance history will be permanently deleted too when there is any.
+   */
+  async function handleDeleteMenuClick(subject: Subject) {
+    setCheckingDeleteId(subject.id)
+    try {
+      const attendanceSessionCount = await countSubjectAttendanceSessions(subject.id)
+      setDeletingSubject({ subject, attendanceSessionCount })
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถตรวจสอบข้อมูลรายวิชาได้'))
+    } finally {
+      setCheckingDeleteId(null)
+    }
+  }
+
   async function handleDeletePermanently() {
     if (!deletingSubject) return
+    const { subject } = deletingSubject
     try {
-      await deleteSubjectPermanently(deletingSubject.id)
-      toast(`ลบรายวิชา "${deletingSubject.name}" แล้ว`)
+      await deleteSubjectPermanently(subject.id)
+      toast(`ลบรายวิชา "${subject.name}" แล้ว`)
       setDeletingSubject(null)
       refresh()
     } catch (err) {
@@ -158,7 +181,8 @@ export function SubjectsPageReal() {
                             label: 'ลบรายวิชา',
                             destructive: true,
                             separatorBefore: true,
-                            onSelect: () => setDeletingSubject(subject),
+                            disabled: checkingDeleteId === subject.id,
+                            onSelect: () => handleDeleteMenuClick(subject),
                           },
                         ]}
                       />
@@ -210,7 +234,11 @@ export function SubjectsPageReal() {
           open={Boolean(deletingSubject)}
           onOpenChange={(open) => !open && setDeletingSubject(null)}
           title="ลบรายวิชาและข้อมูลทั้งหมด?"
-          description="การลบรายวิชาจะลบบทเรียน งาน คะแนน การส่งงาน และข้อมูลที่เกี่ยวข้องกับรายวิชานี้ออกจากระบบอย่างถาวร และไม่สามารถกู้คืนได้"
+          description={
+            deletingSubject.attendanceSessionCount > 0
+              ? `รายวิชานี้มีข้อมูลการเช็คชื่อ (การเข้าเรียน) ที่บันทึกไว้ ${deletingSubject.attendanceSessionCount} ครั้ง\nการลบรายวิชาจะลบบทเรียน งาน คะแนน การส่งงาน ประวัติการเช็คชื่อของรายวิชานี้ และข้อมูลที่เกี่ยวข้องออกจากระบบอย่างถาวร และไม่สามารถกู้คืนได้\nข้อมูลนักเรียน ห้องเรียน และการเช็คชื่อของรายวิชาอื่นจะไม่ถูกลบ`
+              : 'การลบรายวิชาจะลบบทเรียน งาน คะแนน การส่งงาน ประวัติการเช็คชื่อของรายวิชานี้ และข้อมูลที่เกี่ยวข้องออกจากระบบอย่างถาวร และไม่สามารถกู้คืนได้'
+          }
           confirmLabel="ลบรายวิชาและข้อมูลทั้งหมด"
           destructive
           onConfirm={handleDeletePermanently}
