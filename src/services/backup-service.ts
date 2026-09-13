@@ -125,7 +125,7 @@ export function buildManifestTable(generatedAt: string, teacherEmail: string | n
   ]
   return {
     title: 'ข้อมูลสำรอง',
-    subtitle: 'สร้างโดยระบบ AI Classroom Management',
+    subtitle: 'สร้างโดยระบบ KrunameClass',
     headers: ['field', 'value'],
     rows,
   }
