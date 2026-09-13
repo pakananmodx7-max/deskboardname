@@ -62,8 +62,8 @@ function DemoHeader({ onOpenMobileMenu }: HeaderProps) {
 
       <div className="flex flex-1 items-center gap-3 sm:gap-4">
         <div className="hidden shrink-0 leading-tight lg:block">
-          <h1 className="text-base font-bold tracking-tight">ระบบการจัดการชั้นเรียน</h1>
-          <p className="text-[12px] leading-tight text-muted-foreground">จัดทำโดยครูเนม</p>
+          <h1 className="text-base font-bold tracking-tight">KrunameClass</h1>
+          <p className="text-[12px] leading-tight text-muted-foreground">ระบบจัดการห้องเรียน</p>
         </div>
 
         <div className="hidden h-6 w-px bg-border lg:block" />
@@ -137,8 +137,8 @@ function RealHeader({ onOpenMobileMenu }: HeaderProps) {
 
       <div className="flex flex-1 items-center gap-3 sm:gap-4">
         <div className="shrink-0 leading-tight">
-          <h1 className="text-base font-bold tracking-tight">ระบบการจัดการชั้นเรียน</h1>
-          <p className="hidden text-[12px] leading-tight text-muted-foreground sm:block">จัดทำโดยครูเนม</p>
+          <h1 className="text-base font-bold tracking-tight">KrunameClass</h1>
+          <p className="hidden text-[12px] leading-tight text-muted-foreground sm:block">ระบบจัดการห้องเรียน</p>
         </div>
       </div>
 

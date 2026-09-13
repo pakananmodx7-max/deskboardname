@@ -306,3 +306,31 @@ describe('getDashboardFollowUpSummary — follow-up rules exactly match Reports 
     expect(functionBody).not.toMatch(/>=\s*\d/)
   })
 })
+
+describe('optional classroomId scoping — additive, backward-compatible (powers the Classroom Workspace worklist)', () => {
+  const source = readSourceRelativeToThisFile('./dashboard-service.ts')
+
+  it('getTodaySubjectAttendanceStatus accepts an optional classroomId and filters by it after the same 3 queries', () => {
+    expect(source).toContain('export async function getTodaySubjectAttendanceStatus(classroomId?: string)')
+    const fnBody = source.slice(
+      source.indexOf('export async function getTodaySubjectAttendanceStatus'),
+      source.indexOf('\nexport ', source.indexOf('export async function getTodaySubjectAttendanceStatus') + 1),
+    )
+    expect(fnBody).toContain('!classroomId || link.classroom_id === classroomId')
+  })
+
+  it('getAssignmentActionItems accepts an optional classroomId and filters by it after the same fetch', () => {
+    expect(source).toContain('export async function getAssignmentActionItems(classroomId?: string)')
+    const fnBody = source.slice(
+      source.indexOf('export async function getAssignmentActionItems'),
+      source.indexOf('\nconst ATTENTION_PAST_WINDOW_DAYS'),
+    )
+    expect(fnBody).toContain('if (classroomId && a.classroom_id !== classroomId) continue')
+  })
+
+  it('getDashboardFollowUpSummary accepts an optional classroomId and filters the computed rows by it', () => {
+    expect(source).toContain('export async function getDashboardFollowUpSummary(classroomId?: string)')
+    const fnBody = source.slice(source.indexOf('export async function getDashboardFollowUpSummary'))
+    expect(fnBody).toContain("classroomId ? rows.filter((row) => row.classroomId === classroomId) : rows")
+  })
+})

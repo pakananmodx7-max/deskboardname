@@ -22,7 +22,7 @@ interface QuickAction {
 // guessing context that isn't known yet — see the Dashboard Control
 // Center report's Section 7 note.
 const actions: QuickAction[] = [
-  { label: 'เช็คชื่อ', icon: CalendarCheck, to: '/teacher/subjects' },
+  { label: 'เช็กชื่อ', icon: CalendarCheck, to: '/teacher/subjects' },
   { label: 'สร้างงาน', icon: FilePlus, to: '/teacher/subjects' },
   { label: 'กรอกคะแนน', icon: PencilLine, to: '/teacher/subjects' },
   { label: 'เพิ่มนักเรียน', icon: UserPlus, to: '/teacher/students' },

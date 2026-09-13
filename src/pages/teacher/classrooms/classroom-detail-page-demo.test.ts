@@ -11,7 +11,7 @@ describe('ClassroomDetailPageDemo — Classroom Workspace tabs (demo mirror)', (
 
   it('has exactly these 5 tabs, in this order', () => {
     const labels = [...source.matchAll(/label:\s*'([^']+)'/g)].map((m) => m[1])
-    expect(labels).toEqual(['ภาพรวม', 'นักเรียน', 'งานและการบ้าน', 'เช็กชื่อ', 'คะแนนและการประเมิน'])
+    expect(labels).toEqual(['ภาพรวม', 'นักเรียน', 'งาน', 'เช็กชื่อ', 'คะแนน'])
   })
 
   it('reuses the demo-subjects tab components rather than duplicating logic', () => {

@@ -32,4 +32,11 @@ describe('HomePageReal — personal command center (Requirement 6)', () => {
   it('includes the Hermes summary card', () => {
     expect(source).toContain('<HermesSummaryCard')
   })
+
+  it('leads with the unified worklist (same component Classroom Management ภาพรวม uses) — same data, one shared shape', () => {
+    expect(source).toContain('<WorklistCard')
+    expect(source).toContain('attendanceToWorklistItems(attendanceItems)')
+    expect(source).toContain('assignmentsToWorklistItems(assignmentItems)')
+    expect(source).toContain('followUpToWorklistItems(followUpRows)')
+  })
 })

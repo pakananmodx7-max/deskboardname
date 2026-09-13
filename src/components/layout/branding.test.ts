@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-const MAIN_TITLE = 'ระบบการจัดการชั้นเรียน'
-const SUBTITLE = 'จัดทำโดยครูเนม'
+const MAIN_TITLE = 'KrunameClass'
+const SUBTITLE = 'ระบบจัดการห้องเรียน'
 
 function readSource(relativeToThisFile: string): string {
   return readFileSync(new URL(relativeToThisFile, import.meta.url), 'utf-8')
@@ -12,13 +12,16 @@ function readSource(relativeToThisFile: string): string {
 /**
  * Teacher sidebar, student sidebar, the top header (both real and demo
  * variants), the auth shell (login/signup/forgot/reset), and the role
- * choice page all used to show the English "AI Classroom" label. This
- * guards the rebrand: every one of those surfaces must show the new Thai
- * main title + subtitle, and none may still show the old English label
+ * choice page used to show a placeholder Thai name ("ระบบการจัดการชั้นเรียน" /
+ * "จัดทำโดยครูเนม") left over from an earlier rebrand, while the browser
+ * tab and the backup-export subtitle already said "KrunameClass" —
+ * three different names shown across the same app. This guards the
+ * unification: every one of those surfaces must show the current
+ * "KrunameClass" name, and none may still show the old placeholder
  * (the feature-specific "AI Classroom Assistant" name on the AI page is
  * a different, deliberately untouched concern — see ai-page.tsx).
  */
-describe('Branding — "AI Classroom" replaced with Thai branding everywhere it appeared', () => {
+describe('Branding — one name, "KrunameClass", everywhere it appears', () => {
   const sources: [label: string, path: string][] = [
     ['teacher sidebar', './sidebar.tsx'],
     ['student sidebar', './student-sidebar.tsx'],
@@ -28,10 +31,12 @@ describe('Branding — "AI Classroom" replaced with Thai branding everywhere it 
   ]
 
   for (const [label, path] of sources) {
-    it(`${label} shows the new main title and subtitle, and no longer says "AI Classroom"`, () => {
+    it(`${label} shows KrunameClass and its subtitle, and no longer shows the old placeholder name`, () => {
       const source = readSource(path)
       expect(source).toContain(MAIN_TITLE)
       expect(source).toContain(SUBTITLE)
+      expect(source).not.toContain('ระบบการจัดการชั้นเรียน')
+      expect(source).not.toContain('จัดทำโดยครูเนม')
       expect(source).not.toContain('AI Classroom')
     })
   }

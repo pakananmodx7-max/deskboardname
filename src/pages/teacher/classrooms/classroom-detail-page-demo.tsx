@@ -18,9 +18,9 @@ type TabKey = 'overview' | 'students' | 'assignments' | 'attendance' | 'grades'
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
-  { key: 'assignments', label: 'งานและการบ้าน' },
+  { key: 'assignments', label: 'งาน' },
   { key: 'attendance', label: 'เช็กชื่อ' },
-  { key: 'grades', label: 'คะแนนและการประเมิน' },
+  { key: 'grades', label: 'คะแนน' },
 ]
 
 const SUBJECT_SCOPED_TABS: ReadonlySet<TabKey> = new Set(['assignments', 'attendance', 'grades'])
@@ -76,13 +76,19 @@ export function ClassroomDetailPageDemo() {
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 z-10 -mx-4 space-y-4 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-3 pt-1">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">{classroom.name}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">{students.length} คน</p>
-          </div>
-          {SUBJECT_SCOPED_TABS.has(activeTab) && linkedSubjects.length > 1 && (
+      <div className="sticky top-0 z-10 -mx-4 space-y-3 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
+        {/* Identity row — see classroom-detail-page-real.tsx for the
+         * three-row rationale (identity/actions/scope never share a row). */}
+        <div className="pt-1">
+          <h1 className="text-xl font-semibold tracking-tight">{classroom.name}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{students.length} คน</p>
+        </div>
+
+        {/* Scope row — only appears with a real choice, only ever affects
+         * งาน/เช็กชื่อ/คะแนน below. */}
+        {SUBJECT_SCOPED_TABS.has(activeTab) && linkedSubjects.length > 1 && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">รายวิชา:</span>
             <NativeSelect
               value={selectedSubjectId ?? ''}
               onChange={(e) => setSelectedSubjectId(e.target.value)}
@@ -95,8 +101,8 @@ export function ClassroomDetailPageDemo() {
                 </option>
               ))}
             </NativeSelect>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="flex gap-1 overflow-x-auto">
           {TABS.map((tab) => (

@@ -93,8 +93,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <GraduationCap className="size-5" />
         </div>
         <div className="min-w-0 leading-tight">
-          <p className="truncate text-sm font-bold tracking-tight">ระบบการจัดการชั้นเรียน</p>
-          <p className="truncate text-xs text-muted-foreground">จัดทำโดยครูเนม</p>
+          <p className="truncate text-sm font-bold tracking-tight">KrunameClass</p>
+          <p className="truncate text-xs text-muted-foreground">ระบบจัดการห้องเรียน</p>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       <div className="border-t border-border px-5 py-4 text-xs text-muted-foreground">
-        ระบบการจัดการชั้นเรียน
+        KrunameClass
         <br />
         v0.1.0 — Prototype
       </div>

@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { Disclosure } from '@/components/ui/disclosure'
 import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { useToast } from '@/components/ui/toast'
 import { CreateSubjectDialog } from '@/features/subjects-real/create-subject-dialog'
@@ -69,6 +70,75 @@ export function SubjectsPageReal() {
     refresh()
   }, [refresh])
 
+  function renderCard({ subject, links }: SubjectSummary) {
+    const summary = summarizeSubjectClassrooms(links)
+    const classroomNames = links.map((link) => link.classroomName).filter((name): name is string => Boolean(name))
+
+    return (
+      <Card
+        key={subject.id}
+        className="cursor-pointer transition-shadow hover:shadow-md"
+        onClick={() => navigate(`/teacher/subjects/${subject.id}`)}
+      >
+        <CardHeader>
+          <div className="flex items-start justify-between gap-2">
+            <CardTitle className="text-base">{subject.name}</CardTitle>
+            <div className="flex items-center gap-1">
+              {subject.subjectCode && <Badge variant="outline">{subject.subjectCode}</Badge>}
+              <RowActionsMenu
+                actions={[
+                  {
+                    key: 'open',
+                    label: 'เปิดรายวิชา',
+                    onSelect: () => navigate(`/teacher/subjects/${subject.id}`),
+                  },
+                  {
+                    key: 'edit',
+                    label: 'แก้ไขรายวิชา',
+                    onSelect: () => setEditingSubject(subject),
+                  },
+                  {
+                    key: 'archive',
+                    label: 'เก็บถาวร',
+                    onSelect: () => setArchivingSubject(subject),
+                  },
+                  {
+                    key: 'delete',
+                    label: 'ลบรายวิชา',
+                    destructive: true,
+                    separatorBefore: true,
+                    disabled: checkingDeleteId === subject.id,
+                    onSelect: () => handleDeleteMenuClick(subject),
+                  },
+                ]}
+              />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            {summary.totalClassrooms} ห้องเรียน · {summary.totalStudents} คน
+          </p>
+          {classroomNames.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Users className="size-3.5 shrink-0" />
+              {classroomNames.map((name) => (
+                <Badge key={name} variant="secondary">
+                  {name}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="flex items-center gap-1.5">
+              <Users className="size-3.5 shrink-0" />
+              <span>-</span>
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    )
+  }
+
   async function handleArchive() {
     if (!archivingSubject) return
     try {
@@ -114,12 +184,17 @@ export function SubjectsPageReal() {
     }
   }
 
+  const activeSummaries = summaries.filter((s) => s.subject.isActive)
+  const archivedSummaries = summaries.filter((s) => !s.subject.isActive)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">รายวิชา</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{loading ? 'กำลังโหลด...' : `${summaries.length} รายวิชา`}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {loading ? 'กำลังโหลด...' : `${activeSummaries.length} รายวิชา`}
+          </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="size-4" />
@@ -140,68 +215,19 @@ export function SubjectsPageReal() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {summaries.map(({ subject, links }) => {
-            const summary = summarizeSubjectClassrooms(links)
-            const classroomNames = links
-              .map((link) => link.classroomName)
-              .filter(Boolean)
-              .join(' · ')
+        <>
+          {activeSummaries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">ไม่มีรายวิชาที่ใช้งานอยู่</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{activeSummaries.map(renderCard)}</div>
+          )}
 
-            return (
-              <Card
-                key={subject.id}
-                className="cursor-pointer transition-shadow hover:shadow-md"
-                onClick={() => navigate(`/teacher/subjects/${subject.id}`)}
-              >
-                <CardHeader>
-                  <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-base">{subject.name}</CardTitle>
-                    <div className="flex items-center gap-1">
-                      {subject.subjectCode && <Badge variant="outline">{subject.subjectCode}</Badge>}
-                      <RowActionsMenu
-                        actions={[
-                          {
-                            key: 'open',
-                            label: 'เปิดรายวิชา',
-                            onSelect: () => navigate(`/teacher/subjects/${subject.id}`),
-                          },
-                          {
-                            key: 'edit',
-                            label: 'แก้ไขรายวิชา',
-                            onSelect: () => setEditingSubject(subject),
-                          },
-                          {
-                            key: 'archive',
-                            label: 'เก็บถาวร',
-                            onSelect: () => setArchivingSubject(subject),
-                          },
-                          {
-                            key: 'delete',
-                            label: 'ลบรายวิชา',
-                            destructive: true,
-                            separatorBefore: true,
-                            disabled: checkingDeleteId === subject.id,
-                            onSelect: () => handleDeleteMenuClick(subject),
-                          },
-                        ]}
-                      />
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-1 text-sm text-muted-foreground">
-                  <p>
-                    {summary.totalClassrooms} ห้องเรียน · {summary.totalStudents} คน
-                  </p>
-                  <p className="flex items-center gap-1.5">
-                    <Users className="size-3.5 shrink-0" />
-                    <span>{classroomNames || '-'}</span>
-                  </p>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
+          {archivedSummaries.length > 0 && (
+            <Disclosure summary={`เก็บถาวร (${archivedSummaries.length})`}>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{archivedSummaries.map(renderCard)}</div>
+            </Disclosure>
+          )}
+        </>
       )}
 
       <CreateSubjectDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={() => refresh()} />

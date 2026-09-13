@@ -6,6 +6,33 @@ function readSource(): string {
   return readFileSync(new URL('./subjects-page-real.tsx', import.meta.url), 'utf-8')
 }
 
+describe('SubjectsPageReal — archived subjects tucked into a disclosure', () => {
+  const source = readSource()
+
+  it('splits subjects into active and archived groups by isActive', () => {
+    expect(source).toContain('s.subject.isActive')
+    expect(source).toContain('!s.subject.isActive')
+  })
+
+  it('renders archived subjects inside a labeled Disclosure, not the main grid', () => {
+    expect(source).toContain('<Disclosure summary={`เก็บถาวร (${archivedSummaries.length})`}>')
+  })
+
+  it('the header count reflects active subjects only', () => {
+    expect(source).toContain('${activeSummaries.length} รายวิชา')
+  })
+})
+
+describe('SubjectsPageReal — classroom chips (matches the chip on the Classrooms list)', () => {
+  const source = readSource()
+
+  it('renders one chip per linked classroom instead of a joined name string', () => {
+    expect(source).toContain('classroomNames.map((name) =>')
+    expect(source).toContain('variant="secondary"')
+    expect(source).not.toContain(".join(' · ')")
+  })
+})
+
 describe('SubjectsPageReal — "ลบรายวิชา" (permanent delete) menu item', () => {
   const source = readSource()
 

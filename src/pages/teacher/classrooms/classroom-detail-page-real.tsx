@@ -25,9 +25,9 @@ type TabKey = 'overview' | 'students' | 'assignments' | 'attendance' | 'grades'
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
-  { key: 'assignments', label: 'งานและการบ้าน' },
+  { key: 'assignments', label: 'งาน' },
   { key: 'attendance', label: 'เช็กชื่อ' },
-  { key: 'grades', label: 'คะแนนและการประเมิน' },
+  { key: 'grades', label: 'คะแนน' },
 ]
 
 /** The 3 tabs that need a subject to render — assignments/attendance/
@@ -197,46 +197,56 @@ export function ClassroomDetailPageReal() {
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 z-10 -mx-4 space-y-4 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-3 pt-1">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{classroom.name}</h1>
-              {!classroom.isActive && <Badge variant="outline">เก็บถาวร</Badge>}
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {[
-                classroom.gradeLevel,
-                classroom.academicYear && `ปีการศึกษา ${classroom.academicYear}`,
-                classroom.semester && `ภาคเรียนที่ ${classroom.semester}`,
-              ]
-                .filter(Boolean)
-                .join(' · ') || '-'}
-            </p>
+      <div className="sticky top-0 z-10 -mx-4 space-y-3 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
+        {/* Identity row — name and archived state only, never reshapes
+         * around anything else (see the header-crowding finding this
+         * three-row split fixes). */}
+        <div className="pt-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold tracking-tight">{classroom.name}</h1>
+            {!classroom.isActive && <Badge variant="outline">เก็บถาวร</Badge>}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {SUBJECT_SCOPED_TABS.has(activeTab) && linkedSubjects.length > 1 && (
-              <NativeSelect
-                value={selectedSubjectId ?? ''}
-                onChange={(e) => setSelectedSubjectId(e.target.value)}
-                className="w-auto"
-                aria-label="เลือกรายวิชา"
-              >
-                {linkedSubjects.map((subject) => (
-                  <option key={subject.id} value={subject.id}>
-                    {subject.name}
-                  </option>
-                ))}
-              </NativeSelect>
-            )}
-            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-              แก้ไข
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleToggleArchive} disabled={archiving}>
-              {classroom.isActive ? 'เก็บถาวร' : 'เปิดใช้งานอีกครั้ง'}
-            </Button>
-          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {[
+              classroom.gradeLevel,
+              classroom.academicYear && `ปีการศึกษา ${classroom.academicYear}`,
+              classroom.semester && `ภาคเรียนที่ ${classroom.semester}`,
+            ]
+              .filter(Boolean)
+              .join(' · ') || '-'}
+          </p>
         </div>
+
+        {/* Actions row — classroom-level actions only. */}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+            แก้ไข
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleToggleArchive} disabled={archiving}>
+            {classroom.isActive ? 'เก็บถาวร' : 'เปิดใช้งานอีกครั้ง'}
+          </Button>
+        </div>
+
+        {/* Scope row — only appears when a choice actually exists (more
+         * than one linked subject), and only ever affects งาน/เช็กชื่อ/
+         * คะแนน below — labeled so that's never ambiguous. */}
+        {SUBJECT_SCOPED_TABS.has(activeTab) && linkedSubjects.length > 1 && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">รายวิชา:</span>
+            <NativeSelect
+              value={selectedSubjectId ?? ''}
+              onChange={(e) => setSelectedSubjectId(e.target.value)}
+              className="w-auto"
+              aria-label="เลือกรายวิชา"
+            >
+              {linkedSubjects.map((subject) => (
+                <option key={subject.id} value={subject.id}>
+                  {subject.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
 
         <div className="flex gap-1 overflow-x-auto">
           {TABS.map((tab) => (

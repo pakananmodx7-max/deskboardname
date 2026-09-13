@@ -1,13 +1,10 @@
 import { AlertTriangle, BookOpen, School, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
-import { QuickActions } from '@/components/dashboard/quick-actions'
-import { StatCard } from '@/components/dashboard/stat-card'
-import { AssignmentActionCard } from '@/features/dashboard-real/assignment-action-card'
-import { DashboardFollowUpCard } from '@/features/dashboard-real/dashboard-followup-card'
+import { StatStrip } from '@/components/dashboard/stat-strip'
+import { WorklistCard } from '@/components/dashboard/worklist-card'
+import { attendanceToWorklistItems, assignmentsToWorklistItems, followUpToWorklistItems } from '@/features/dashboard-shared/worklist'
 import { RecentActivityCard } from '@/features/dashboard-real/recent-activity-card'
-import { TodayAttendanceCard } from '@/features/dashboard-real/today-attendance-card'
-import { UpcomingAssignmentsCard } from '@/features/dashboard-real/upcoming-assignments-card'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   getAssignmentActionItems,
@@ -15,8 +12,6 @@ import {
   getDashboardOverview,
   getRecentActivity,
   getTodaySubjectAttendanceStatus,
-  selectAssignmentsNeedingAttention,
-  selectUpcomingAssignments,
   type AssignmentActionItem,
   type DashboardOverview,
   type RecentActivityItem,
@@ -25,16 +20,25 @@ import {
 import type { FollowUpRow } from '@/types/report'
 
 /**
- * /teacher/dashboard — the Control Center. Real Supabase data only, no
- * demo/mock fallback anywhere (see dashboard-service.ts). Every section
- * below loads and fails INDEPENDENTLY: the assignment action center and
- * upcoming list share one fetch (they're both derived views over the
- * exact same assignment data, by design — not an N+1 fallback), but a
- * failure there never blanks Today's Attendance, Follow-up, or Recent
- * Activity, and vice versa. No decorative/fabricated metric appears
- * anywhere on this page — a metric that cannot be reliably computed from
- * real data is simply not shown (see the Control Center report for what
- * was deliberately left out and why).
+ * /teacher/dashboard's real content, now reused at /teacher/classroom-
+ * management as "ภาพรวม" (see classroom-overview-page.tsx). Real
+ * Supabase data only, no demo/mock fallback anywhere (see
+ * dashboard-service.ts).
+ *
+ * Requirement C1 (UX audit → implementation plan): the old page stacked
+ * six independently-loading cards (Quick Actions, Today's Attendance,
+ * Assignment Action Center, Follow-up, Upcoming, Recent Activity) —
+ * four of Quick Actions' six buttons pointed at the identical URL
+ * regardless of label, and Assignment Action + Upcoming both read the
+ * same underlying assignment data split two ways. Quick Actions and
+ * Upcoming are retired; Today's Attendance, Assignment Action, and
+ * Follow-up are merged into ONE WorklistCard ("what needs a decision
+ * right now"), reusing the exact same deep-link targets each separate
+ * card already used (see worklist.ts) — nothing about where a click
+ * lands changed, only that the three lists now render as one. Recent
+ * Activity is kept (it's a log of the past, not an overlapping to-do
+ * list, and nothing in the audit found it redundant) but demoted to a
+ * secondary position under the worklist.
  */
 export function DashboardPageReal() {
   const [overview, setOverview] = useState<DashboardOverview | null>(null)
@@ -110,8 +114,13 @@ export function DashboardPageReal() {
     loadActivity()
   }, [loadOverview, loadAttendance, loadAssignments, loadFollowUp, loadActivity])
 
-  const needingAttention = selectAssignmentsNeedingAttention(assignmentItems)
-  const upcoming = selectUpcomingAssignments(assignmentItems)
+  const worklistLoading = attendanceLoading || assignmentLoading || followUpLoading
+  const worklistError = attendanceError || assignmentError || followUpError
+  const worklistItems = [
+    ...attendanceToWorklistItems(attendanceItems),
+    ...assignmentsToWorklistItems(assignmentItems),
+    ...followUpToWorklistItems(followUpRows),
+  ]
 
   return (
     <div className="space-y-6">
@@ -122,43 +131,29 @@ export function DashboardPageReal() {
 
       {overviewError && <p className="text-sm text-destructive">{overviewError}</p>}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="นักเรียนทั้งหมด"
-          value={overviewLoading ? '-' : `${overview?.studentCount ?? 0} คน`}
-          icon={Users}
-        />
-        <StatCard
-          label="ห้องเรียนทั้งหมด"
-          value={overviewLoading ? '-' : `${overview?.activeClassroomCount ?? 0} ห้อง`}
-          icon={School}
-        />
-        <StatCard
-          label="รายวิชาที่สอน"
-          value={overviewLoading ? '-' : `${overview?.subjectCount ?? 0} วิชา`}
-          icon={BookOpen}
-        />
-        <StatCard
-          label="นักเรียนที่ควรติดตาม"
-          value={followUpLoading ? '-' : `${followUpRows.length} คน`}
-          icon={AlertTriangle}
-          tone={!followUpLoading && followUpRows.length > 0 ? 'warning' : 'default'}
-        />
-      </div>
+      <StatStrip
+        items={[
+          { label: 'นักเรียนทั้งหมด', value: overviewLoading ? '-' : `${overview?.studentCount ?? 0} คน`, icon: Users },
+          { label: 'ห้องเรียนทั้งหมด', value: overviewLoading ? '-' : `${overview?.activeClassroomCount ?? 0} ห้อง`, icon: School },
+          { label: 'รายวิชาที่สอน', value: overviewLoading ? '-' : `${overview?.subjectCount ?? 0} วิชา`, icon: BookOpen },
+          {
+            label: 'นักเรียนที่ควรติดตาม',
+            value: followUpLoading ? '-' : `${followUpRows.length} คน`,
+            icon: AlertTriangle,
+            tone: !followUpLoading && followUpRows.length > 0 ? 'warning' : 'default',
+          },
+        ]}
+      />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <div className="space-y-4 xl:col-span-2">
-          <QuickActions />
-          <TodayAttendanceCard loading={attendanceLoading} error={attendanceError} items={attendanceItems} />
-          <AssignmentActionCard loading={assignmentLoading} error={assignmentError} items={needingAttention} />
-        </div>
+      <WorklistCard
+        title="สิ่งที่ต้องจัดการ"
+        loading={worklistLoading}
+        error={worklistError}
+        items={worklistItems}
+        emptyMessage="ไม่มีสิ่งที่ต้องจัดการในตอนนี้"
+      />
 
-        <div className="space-y-4">
-          <DashboardFollowUpCard loading={followUpLoading} error={followUpError} rows={followUpRows} />
-          <UpcomingAssignmentsCard loading={assignmentLoading} error={assignmentError} items={upcoming} />
-          <RecentActivityCard loading={activityLoading} error={activityError} items={activityItems} />
-        </div>
-      </div>
+      <RecentActivityCard loading={activityLoading} error={activityError} items={activityItems} />
     </div>
   )
 }

@@ -22,7 +22,12 @@ describe('HermesAgentPage — Agent Control Center (Requirement 5)', () => {
 
   it('never claims a live Online/Offline connection status', () => {
     expect(source).not.toMatch(/Online|Offline|เชื่อมต่อแล้ว|กำลังทำงานอยู่/)
-    expect(source).toContain('ไม่สามารถตรวจสอบได้จากหน้านี้')
+    expect(source).toContain('ไม่สามารถรายงานสถานะ Agent, Telegram หรือ MCP bridge แบบเรียลไทม์ได้')
+  })
+
+  it('collapses the honesty statement into one sentence rather than repeating it per row (C4)', () => {
+    const occurrences = (source.match(/ไม่สามารถรายงานสถานะ/g) ?? []).length
+    expect(occurrences).toBe(1)
   })
 
   it('lists the real, static tool set shared with the Home page summary — not invented tool names', () => {
@@ -34,6 +39,28 @@ describe('HermesAgentPage — Agent Control Center (Requirement 5)', () => {
     expect(source).not.toContain('getRecentActivity()')
     expect(source).not.toMatch(/<RecentActivityCard|<RecentActivity\b/)
     expect(source).toContain('ไม่มีข้อมูลกิจกรรมที่ยืนยันได้ว่ามาจาก Hermes')
+  })
+
+  it('leads every capability row with its plain-language label, never the raw MCP tool identifier (C4)', () => {
+    expect(source).toContain('<p className="font-medium">{tool.label}</p>')
+  })
+
+  it('tucks the raw tool identifiers behind a collapsed technical disclosure, not the main capability list', () => {
+    expect(source).toContain('<Disclosure summary="รายละเอียดทางเทคนิค (ชื่อเครื่องมือ MCP)">')
+  })
+
+  it('groups capabilities in plain language — "ตอบได้" (read) vs "ทำแทนได้" (write) — not just "read/write tools"', () => {
+    expect(source).toContain('สิ่งที่ Hermes ตอบได้')
+    expect(source).toContain('สิ่งที่ Hermes ทำแทนได้')
+  })
+
+  it('no longer shows the quick-links card — it only repeated destinations already permanent in the sidebar', () => {
+    expect(source).not.toContain('ทางลัด')
+    expect(source).not.toContain('/teacher/classroom-management"')
+  })
+
+  it('never adds a Telegram link/URL — none exists in this codebase, so the launch action stays omitted, not hardcoded', () => {
+    expect(source).not.toMatch(/https?:\/\/t\.me|telegram\.me|เปิด Telegram/i)
   })
 
   it('never renders an actual secret value — only the static safety statement that none is shown', () => {

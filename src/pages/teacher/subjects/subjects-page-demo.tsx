@@ -44,8 +44,7 @@ export function SubjectsPageDemo() {
             const assignmentCount = subjectAssignments.filter((a) => a.subjectId === subject.id).length
             const classroomNames = subject.classroomIds
               .map((id) => classrooms.find((c) => c.id === id)?.name)
-              .filter(Boolean)
-              .join(', ')
+              .filter((name): name is string => Boolean(name))
 
             return (
               <Card
@@ -60,7 +59,15 @@ export function SubjectsPageDemo() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm text-muted-foreground">
-                  <p>{classroomNames}</p>
+                  {classroomNames.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {classroomNames.map((name) => (
+                        <Badge key={name} variant="secondary">
+                          {name}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex items-center gap-4">
                     <span className="flex items-center gap-1.5">
                       <Users className="size-3.5" />

@@ -49,8 +49,8 @@ function StudentSidebarContent({
           <GraduationCap className="size-5" />
         </div>
         <div className="min-w-0 leading-tight">
-          <p className="truncate text-sm font-bold tracking-tight">ระบบการจัดการชั้นเรียน</p>
-          <p className="truncate text-xs text-muted-foreground">จัดทำโดยครูเนม</p>
+          <p className="truncate text-sm font-bold tracking-tight">KrunameClass</p>
+          <p className="truncate text-xs text-muted-foreground">ระบบจัดการห้องเรียน</p>
         </div>
       </div>
 

@@ -20,8 +20,8 @@ export function AuthShell({ title, description, children, footer }: AuthShellPro
             <GraduationCap className="size-5" />
           </div>
           <div className="leading-tight">
-            <h1 className="text-lg font-bold tracking-tight">ระบบการจัดการชั้นเรียน</h1>
-            <p className="text-xs text-muted-foreground">จัดทำโดยครูเนม</p>
+            <h1 className="text-lg font-bold tracking-tight">KrunameClass</h1>
+            <p className="text-xs text-muted-foreground">ระบบจัดการห้องเรียน</p>
           </div>
         </div>
 

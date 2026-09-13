@@ -16,12 +16,17 @@ describe('Subject-Classroom workspace tabs — Topics removed, real and demo in 
     expect(DEMO_TABS.some((tab) => tab.label === 'หัวข้อ')).toBe(false)
   })
 
-  it('real workspace is exactly ภาพรวม/นักเรียน/เช็คชื่อ/งาน/คะแนน, in that order', () => {
+  it('real workspace is exactly ภาพรวม/นักเรียน/เช็กชื่อ/งาน/คะแนน, in that order', () => {
     expect(REAL_TABS.map((tab) => tab.key)).toEqual(expectedKeys)
   })
 
   it('demo workspace matches the real workspace’s tab set exactly', () => {
     expect(DEMO_TABS.map((tab) => tab.key)).toEqual(REAL_TABS.map((tab) => tab.key))
     expect(DEMO_TABS.map((tab) => tab.label)).toEqual(REAL_TABS.map((tab) => tab.label))
+  })
+
+  it('attendance is spelled "เช็กชื่อ" — the same spelling the Classroom Workspace tab uses, never "เช็คชื่อ"', () => {
+    const attendanceTab = REAL_TABS.find((tab) => tab.key === 'attendance')
+    expect(attendanceTab?.label).toBe('เช็กชื่อ')
   })
 })

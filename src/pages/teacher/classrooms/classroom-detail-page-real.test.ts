@@ -11,7 +11,7 @@ describe('ClassroomDetailPageReal — Classroom Workspace tabs (ห้องเ�
 
   it('has exactly these 5 tabs, in this order', () => {
     const labels = [...source.matchAll(/label:\s*'([^']+)'/g)].map((m) => m[1])
-    expect(labels).toEqual(['ภาพรวม', 'นักเรียน', 'งานและการบ้าน', 'เช็กชื่อ', 'คะแนนและการประเมิน'])
+    expect(labels).toEqual(['ภาพรวม', 'นักเรียน', 'งาน', 'เช็กชื่อ', 'คะแนน'])
   })
 
   it('reuses the exact same AssignmentsTab/AttendanceTab/GradesTab used by the subject workspace — no duplicated assignment/attendance/grade logic', () => {
@@ -35,5 +35,12 @@ describe('ClassroomDetailPageReal — Classroom Workspace tabs (ห้องเ�
 
   it('shows an honest empty state (not a crash or fabricated data) when no subject is linked yet', () => {
     expect(source).toContain('ห้องเรียนนี้ยังไม่ได้เชื่อมกับรายวิชาใด')
+  })
+
+  it('splits the header into 3 independent rows — identity, actions, and a labeled scope row — instead of one crowded flex row', () => {
+    expect(source).toContain('Identity row')
+    expect(source).toContain('Actions row')
+    expect(source).toContain('Scope row')
+    expect(source).toContain('รายวิชา:')
   })
 })

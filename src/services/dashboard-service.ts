@@ -139,8 +139,12 @@ export function buildTodayAttendanceStatuses(
 
 /** Fetches today's status for every active subject+classroom link in
  * exactly 3 queries total, regardless of how many pairs exist (classroom/
- * subject/link lookup, today's sessions, today's records) — no N+1. */
-export async function getTodaySubjectAttendanceStatus(): Promise<TodayAttendanceStatus[]> {
+ * subject/link lookup, today's sessions, today's records) — no N+1.
+ * Pass `classroomId` to scope the result to one classroom (used by the
+ * Classroom Workspace's own ภาพรวม tab) — filtered client-side after the
+ * same 3 queries, never a separate narrower query, so the two callers
+ * can never see different underlying data. */
+export async function getTodaySubjectAttendanceStatus(classroomId?: string): Promise<TodayAttendanceStatus[]> {
   const supabase = getSupabaseClient()
   const today = toIso(new Date())
 
@@ -156,6 +160,7 @@ export async function getTodaySubjectAttendanceStatus(): Promise<TodayAttendance
 
   const pairs: SubjectClassroomPair[] = (linksResult.data as { subject_id: string; classroom_id: string }[])
     .filter((link) => activeClassroomById.has(link.classroom_id) && activeSubjectById.has(link.subject_id))
+    .filter((link) => !classroomId || link.classroom_id === classroomId)
     .map((link) => ({
       subjectId: link.subject_id,
       subjectName: activeSubjectById.get(link.subject_id)!.name,
@@ -254,8 +259,10 @@ export function computeAssignmentActionItem(
 /** Every non-archived assignment in an active classroom, with its
  * submission summary — 3 queries total (assignments, classroom rosters
  * via getClassroomsWithStudentCounts, all submissions in one `in(...)`
- * call), never one round trip per assignment. */
-export async function getAssignmentActionItems(): Promise<AssignmentActionItem[]> {
+ * call), never one round trip per assignment. Pass `classroomId` to
+ * scope to one classroom (filtered client-side after the same fetch —
+ * see getTodaySubjectAttendanceStatus's doc comment for why). */
+export async function getAssignmentActionItems(classroomId?: string): Promise<AssignmentActionItem[]> {
   const supabase = getSupabaseClient()
 
   const [assignmentsResult, subjects, classroomsWithCounts] = await Promise.all([
@@ -301,6 +308,7 @@ export async function getAssignmentActionItems(): Promise<AssignmentActionItem[]
     // getClassroomsWithStudentCounts already.
     const classroom = classroomById.get(a.classroom_id)
     if (!classroom) continue
+    if (classroomId && a.classroom_id !== classroomId) continue
 
     items.push(
       computeAssignmentActionItem(
@@ -371,14 +379,19 @@ export function selectUpcomingAssignments(items: AssignmentActionItem[], now: Da
 // drift apart.
 // ==================================================
 
-export async function getDashboardFollowUpSummary(): Promise<FollowUpRow[]> {
+/** Pass `classroomId` to scope to one classroom's follow-up rows (used
+ * by the Classroom Workspace's own ภาพรวม tab) — filtered client-side
+ * after the same report calls Reports itself uses, never a separate
+ * narrower query. */
+export async function getDashboardFollowUpSummary(classroomId?: string): Promise<FollowUpRow[]> {
   const filters = getDefaultReportFilters()
   const [attendanceRows, missingRows, gradeGroups] = await Promise.all([
     getAttendanceSummaryReport(filters),
     getMissingAssignmentReport(filters),
     getGradeSummaryReport(filters),
   ])
-  return computeFollowUpReport(attendanceRows, missingRows, gradeGroups)
+  const rows = computeFollowUpReport(attendanceRows, missingRows, gradeGroups)
+  return classroomId ? rows.filter((row) => row.classroomId === classroomId) : rows
 }
 
 // ==================================================

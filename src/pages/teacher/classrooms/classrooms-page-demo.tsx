@@ -1,6 +1,7 @@
 import { School, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDemoClassroom } from '@/demo/demo-context'
 
@@ -12,7 +13,7 @@ import { useDemoClassroom } from '@/demo/demo-context'
  * demo-only mutation UI that was never part of the interactive demo spec.
  */
 export function ClassroomsPageDemo() {
-  const { classrooms } = useDemoClassroom()
+  const { classrooms, subjects } = useDemoClassroom()
   const navigate = useNavigate()
 
   return (
@@ -33,23 +34,35 @@ export function ClassroomsPageDemo() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {classrooms.map((classroom) => (
-            <Card
-              key={classroom.id}
-              className="cursor-pointer transition-shadow hover:shadow-md"
-              onClick={() => navigate(`/teacher/classrooms/${classroom.id}`)}
-            >
-              <CardHeader>
-                <CardTitle className="text-base">{classroom.name}</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <Users className="size-3.5" />
-                  {classroom.studentIds.length} คน
-                </span>
-              </CardContent>
-            </Card>
-          ))}
+          {classrooms.map((classroom) => {
+            const subjectNames = subjects.filter((s) => s.classroomIds.includes(classroom.id)).map((s) => s.name)
+            return (
+              <Card
+                key={classroom.id}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+                onClick={() => navigate(`/teacher/classrooms/${classroom.id}`)}
+              >
+                <CardHeader>
+                  <CardTitle className="text-base">{classroom.name}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <Users className="size-3.5" />
+                    {classroom.studentIds.length} คน
+                  </span>
+                  {subjectNames.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {subjectNames.map((name) => (
+                        <Badge key={name} variant="secondary">
+                          {name}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
     </div>

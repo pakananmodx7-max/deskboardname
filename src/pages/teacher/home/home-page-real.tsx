@@ -1,15 +1,22 @@
 import { FileText, ListChecks, School } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
+import { WorklistCard } from '@/components/dashboard/worklist-card'
+import { attendanceToWorklistItems, assignmentsToWorklistItems, followUpToWorklistItems } from '@/features/dashboard-shared/worklist'
 import { HermesSummaryCard } from '@/features/home/hermes-summary-card'
 import { ModuleSummaryCard } from '@/features/home/module-summary-card'
 import { useAuth } from '@/lib/auth-context'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
+  getAssignmentActionItems,
   getDashboardFollowUpSummary,
   getDashboardOverview,
+  getTodaySubjectAttendanceStatus,
+  type AssignmentActionItem,
   type DashboardOverview,
+  type TodayAttendanceStatus,
 } from '@/services/dashboard-service'
+import type { FollowUpRow } from '@/types/report'
 
 /**
  * /teacher/dashboard — the NEW global "หน้าหลัก" (Requirement 6: a
@@ -22,6 +29,11 @@ import {
  * classroom overview page already uses (getDashboardOverview,
  * getDashboardFollowUpSummary) — nothing is hardcoded, and nothing here
  * re-implements those queries.
+ *
+ * Requirement C1 (UX audit → implementation plan): leads with the same
+ * unified worklist ("things needing a decision," across every
+ * classroom) that Classroom Management's own ภาพรวม shows — one
+ * component, reused, rather than a second, differently-shaped summary.
  */
 export function HomePageReal() {
   const { profile } = useAuth()
@@ -29,7 +41,25 @@ export function HomePageReal() {
   const [overview, setOverview] = useState<DashboardOverview | null>(null)
   const [overviewLoading, setOverviewLoading] = useState(true)
   const [overviewError, setOverviewError] = useState<string | null>(null)
-  const [followUpCount, setFollowUpCount] = useState<number | null>(null)
+
+  const [attendanceItems, setAttendanceItems] = useState<TodayAttendanceStatus[]>([])
+  const [assignmentItems, setAssignmentItems] = useState<AssignmentActionItem[]>([])
+  const [followUpRows, setFollowUpRows] = useState<FollowUpRow[]>([])
+  const [worklistLoading, setWorklistLoading] = useState(true)
+  const [worklistError, setWorklistError] = useState<string | null>(null)
+
+  const loadWorklist = useCallback(() => {
+    setWorklistLoading(true)
+    setWorklistError(null)
+    return Promise.all([getTodaySubjectAttendanceStatus(), getAssignmentActionItems(), getDashboardFollowUpSummary()])
+      .then(([attendance, assignments, followUp]) => {
+        setAttendanceItems(attendance)
+        setAssignmentItems(assignments)
+        setFollowUpRows(followUp)
+      })
+      .catch((err: unknown) => setWorklistError(toFriendlyErrorMessage(err)))
+      .finally(() => setWorklistLoading(false))
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -44,22 +74,20 @@ export function HomePageReal() {
         if (active) setOverviewLoading(false)
       })
 
-    getDashboardFollowUpSummary()
-      .then((rows) => {
-        if (active) setFollowUpCount(rows.length)
-      })
-      .catch(() => {
-        // Follow-up count is a secondary "footer" detail on the module
-        // card — a failure here shouldn't block the rest of the Home
-        // page, so it's silently left as null (card just omits it).
-      })
+    loadWorklist()
 
     return () => {
       active = false
     }
-  }, [])
+  }, [loadWorklist])
 
   const greetingName = profile?.displayName || profile?.email || 'ครู'
+  const followUpCount = followUpRows.length
+  const worklistItems = [
+    ...attendanceToWorklistItems(attendanceItems),
+    ...assignmentsToWorklistItems(assignmentItems),
+    ...followUpToWorklistItems(followUpRows),
+  ]
 
   return (
     <div className="space-y-6">
@@ -69,6 +97,14 @@ export function HomePageReal() {
       </div>
 
       {overviewError && <p className="text-sm text-destructive">{overviewError}</p>}
+
+      <WorklistCard
+        title="สิ่งที่ต้องจัดการวันนี้"
+        loading={worklistLoading}
+        error={worklistError}
+        items={worklistItems}
+        emptyMessage="ไม่มีสิ่งที่ต้องจัดการในตอนนี้"
+      />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <ModuleSummaryCard
@@ -81,9 +117,7 @@ export function HomePageReal() {
             { label: 'นักเรียน', value: overviewLoading ? '-' : `${overview?.studentCount ?? 0}` },
             { label: 'รายวิชา', value: overviewLoading ? '-' : `${overview?.subjectCount ?? 0}` },
           ]}
-          description={
-            followUpCount !== null && followUpCount > 0 ? `มีนักเรียน ${followUpCount} คนที่ควรติดตาม` : undefined
-          }
+          description={followUpCount > 0 ? `มีนักเรียน ${followUpCount} คนที่ควรติดตาม` : undefined}
         />
         <ModuleSummaryCard
           icon={FileText}

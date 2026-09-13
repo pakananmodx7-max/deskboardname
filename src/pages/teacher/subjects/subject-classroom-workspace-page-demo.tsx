@@ -21,7 +21,7 @@ type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments'
 export const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
-  { key: 'attendance', label: 'เช็คชื่อ' },
+  { key: 'attendance', label: 'เช็กชื่อ' },
   { key: 'lessons', label: 'บทเรียน' },
   { key: 'assignments', label: 'งาน' },
   { key: 'grades', label: 'คะแนน' },
