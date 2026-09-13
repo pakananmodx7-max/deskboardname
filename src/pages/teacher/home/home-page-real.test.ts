@@ -23,21 +23,32 @@ describe('HomePageReal — personal command center (Requirement 6)', () => {
     expect(source).not.toMatch(/value:\s*['"`]\d+['"`]/)
   })
 
-  it('shows ระบบเอกสาร and งานและเตือนความจำ as coming-soon placeholders', () => {
-    expect(source).toContain('ระบบเอกสาร')
-    expect(source).toContain('งานและเตือนความจำ')
-    expect(source.match(/badge="เร็ว ๆ นี้"/g)?.length).toBe(2)
-  })
-
   it('includes the Hermes summary card', () => {
     expect(source).toContain('<HermesSummaryCard')
   })
+})
 
-  it('leads with the unified worklist (same component Classroom Management ภาพรวม uses) — same data, one shared shape', () => {
-    expect(source).toContain('<WorklistCard')
-    expect(source).toContain('attendanceToWorklistItems(attendanceItems)')
-    expect(source).toContain('assignmentsToWorklistItems(assignmentItems)')
-    expect(source).toContain('followUpToWorklistItems(followUpRows)')
+describe('HomePageReal — KrunameClass visual redesign no longer dominated by the old worklist', () => {
+  const source = readSource()
+  const jsxOnly = source.slice(source.indexOf('return ('))
+
+  it('does not render the long "สิ่งที่ต้องจัดการ" WorklistCard here — it stays on Classroom Management → ภาพรวม instead', () => {
+    expect(jsxOnly).not.toContain('<WorklistCard')
+    expect(jsxOnly).not.toContain('สิ่งที่ต้องจัดการวันนี้')
+  })
+
+  it('does not render the "coming soon" module teaser cards (no real data behind them)', () => {
+    expect(jsxOnly).not.toContain('<ModuleSummaryCard')
+    expect(jsxOnly).not.toContain('ระบบเอกสาร')
+    expect(jsxOnly).not.toContain('งานและเตือนความจำ')
+  })
+
+  it('the 4 stat cards are the first thing in the main column, right after the hero — never behind a long list', () => {
+    const mainColumnStart = source.indexOf('xl:col-span-2')
+    const firstStatCard = source.indexOf('<StatCard')
+    const firstDashboardSection = source.indexOf('<DashboardSection')
+    expect(firstStatCard).toBeGreaterThan(mainColumnStart)
+    expect(firstStatCard).toBeLessThan(firstDashboardSection)
   })
 })
 
@@ -73,7 +84,7 @@ describe('HomePageReal — visual redesign (welcome hero, stat cards, charts, ac
     expect(source).toContain('getClassroomListItems')
   })
 
-  it('feeds the upcoming assignments rail from the same assignmentItems the worklist already loaded', () => {
+  it('feeds the upcoming assignments rail from the same assignmentItems already loaded for the follow-up stat', () => {
     expect(source).toContain('selectUpcomingAssignments(assignmentItems)')
     expect(source).toContain('<UpcomingAssignmentsCard')
   })

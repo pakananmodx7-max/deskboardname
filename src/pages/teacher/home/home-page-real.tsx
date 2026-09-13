@@ -1,4 +1,4 @@
-import { AlertTriangle, BookOpen, FileText, ListChecks, School, Users } from 'lucide-react'
+import { AlertTriangle, BookOpen, School, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { BarChart, type BarChartDatum } from '@/components/dashboard/bar-chart'
@@ -6,13 +6,10 @@ import { DashboardSection } from '@/components/dashboard/dashboard-section'
 import { DonutChart, type DonutSegment } from '@/components/dashboard/donut-chart'
 import { EmptyState } from '@/components/dashboard/empty-state'
 import { StatCard } from '@/components/dashboard/stat-card'
-import { WorklistCard } from '@/components/dashboard/worklist-card'
 import { RecentActivityCard } from '@/features/dashboard-real/recent-activity-card'
 import { UpcomingAssignmentsCard } from '@/features/dashboard-real/upcoming-assignments-card'
-import { attendanceToWorklistItems, assignmentsToWorklistItems, followUpToWorklistItems } from '@/features/dashboard-shared/worklist'
 import { ClassroomListCard } from '@/features/home/classroom-list-card'
 import { HermesSummaryCard } from '@/features/home/hermes-summary-card'
-import { ModuleSummaryCard } from '@/features/home/module-summary-card'
 import { useAuth } from '@/lib/auth-context'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
@@ -23,14 +20,12 @@ import {
   getDashboardOverview,
   getRecentActivity,
   getTodayAttendanceSummary,
-  getTodaySubjectAttendanceStatus,
   selectUpcomingAssignments,
   type AssignmentActionItem,
   type ClassroomListItem,
   type ClassroomWithStudentCount,
   type DashboardOverview,
   type RecentActivityItem,
-  type TodayAttendanceStatus,
 } from '@/services/dashboard-service'
 import type { AttendanceSummary } from '@/types/attendance'
 import type { FollowUpRow } from '@/types/report'
@@ -60,7 +55,10 @@ function buildClassroomBarData(classrooms: ClassroomWithStudentCount[]): BarChar
  * 6: a personal command center, not a classroom-specific one). This is a
  * DIFFERENT page from the old /teacher/dashboard content, which moved,
  * unchanged, to /teacher/classroom-management (see
- * classroom-overview-page.tsx) and is now "ระบบจัดการชั้นเรียน → ภาพรวม".
+ * classroom-overview-page.tsx) and is now "ระบบจัดการชั้นเรียน → ภาพรวม" —
+ * that page keeps its own full "สิ่งที่ต้องจัดการวันนี้" WorklistCard, so
+ * removing it from here (see the KrunameClass visual redesign below)
+ * loses no functionality; it stays one click away.
  *
  * Every widget here reads through an existing dashboard-service.ts query
  * (nothing new invented for this redesign except getClassroomListItems
@@ -68,6 +66,14 @@ function buildClassroomBarData(classrooms: ClassroomWithStudentCount[]): BarChar
  * tables) — no mock/demo data, no hardcoded teacher/student numbers. A
  * data source that doesn't exist (system/storage status, a global
  * current-semester value) is simply omitted rather than fabricated.
+ *
+ * Layout matches the approved KrunameClass dashboard reference: hero,
+ * then 4 stat cards, bar chart, donut chart, recent activity, and the
+ * classroom list all lead the main column — the old long
+ * "สิ่งที่ต้องจัดการ" list and the "coming soon" module teaser cards were
+ * deliberately dropped from THIS page so they no longer dominate/clutter
+ * it (the worklist survives on Classroom Management → ภาพรวม above; the
+ * module teasers carried no real data to begin with).
  */
 export function HomePageReal() {
   const { profile } = useAuth()
@@ -76,11 +82,10 @@ export function HomePageReal() {
   const [overviewLoading, setOverviewLoading] = useState(true)
   const [overviewError, setOverviewError] = useState<string | null>(null)
 
-  const [attendanceItems, setAttendanceItems] = useState<TodayAttendanceStatus[]>([])
   const [assignmentItems, setAssignmentItems] = useState<AssignmentActionItem[]>([])
   const [followUpRows, setFollowUpRows] = useState<FollowUpRow[]>([])
-  const [worklistLoading, setWorklistLoading] = useState(true)
-  const [worklistError, setWorklistError] = useState<string | null>(null)
+  const [assignmentsLoading, setAssignmentsLoading] = useState(true)
+  const [assignmentsError, setAssignmentsError] = useState<string | null>(null)
 
   const [classroomsWithCounts, setClassroomsWithCounts] = useState<ClassroomWithStudentCount[]>([])
   const [classroomsLoading, setClassroomsLoading] = useState(true)
@@ -98,17 +103,16 @@ export function HomePageReal() {
   const [activityLoading, setActivityLoading] = useState(true)
   const [activityError, setActivityError] = useState<string | null>(null)
 
-  const loadWorklist = useCallback(() => {
-    setWorklistLoading(true)
-    setWorklistError(null)
-    return Promise.all([getTodaySubjectAttendanceStatus(), getAssignmentActionItems(), getDashboardFollowUpSummary()])
-      .then(([attendance, assignments, followUp]) => {
-        setAttendanceItems(attendance)
+  const loadAssignmentsAndFollowUp = useCallback(() => {
+    setAssignmentsLoading(true)
+    setAssignmentsError(null)
+    return Promise.all([getAssignmentActionItems(), getDashboardFollowUpSummary()])
+      .then(([assignments, followUp]) => {
         setAssignmentItems(assignments)
         setFollowUpRows(followUp)
       })
-      .catch((err: unknown) => setWorklistError(toFriendlyErrorMessage(err)))
-      .finally(() => setWorklistLoading(false))
+      .catch((err: unknown) => setAssignmentsError(toFriendlyErrorMessage(err)))
+      .finally(() => setAssignmentsLoading(false))
   }, [])
 
   useEffect(() => {
@@ -119,7 +123,7 @@ export function HomePageReal() {
       .catch((err: unknown) => active && setOverviewError(toFriendlyErrorMessage(err)))
       .finally(() => active && setOverviewLoading(false))
 
-    loadWorklist()
+    loadAssignmentsAndFollowUp()
 
     getClassroomsWithStudentCounts()
       .then((result) => active && setClassroomsWithCounts(result))
@@ -144,15 +148,10 @@ export function HomePageReal() {
     return () => {
       active = false
     }
-  }, [loadWorklist])
+  }, [loadAssignmentsAndFollowUp])
 
   const greetingName = profile?.displayName || profile?.email || 'ครู'
   const followUpCount = followUpRows.length
-  const worklistItems = [
-    ...attendanceToWorklistItems(attendanceItems),
-    ...assignmentsToWorklistItems(assignmentItems),
-    ...followUpToWorklistItems(followUpRows),
-  ]
   const upcomingAssignments = selectUpcomingAssignments(assignmentItems)
 
   return (
@@ -168,14 +167,6 @@ export function HomePageReal() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
-          <WorklistCard
-            title="สิ่งที่ต้องจัดการวันนี้"
-            loading={worklistLoading}
-            error={worklistError}
-            items={worklistItems}
-            emptyMessage="ไม่มีสิ่งที่ต้องจัดการในตอนนี้"
-          />
-
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatCard label="นักเรียนทั้งหมด" value={overviewLoading ? '-' : `${overview?.studentCount ?? 0}`} icon={Users} />
             <StatCard
@@ -186,7 +177,7 @@ export function HomePageReal() {
             <StatCard label="รายวิชาที่สอน" value={overviewLoading ? '-' : `${overview?.subjectCount ?? 0}`} icon={BookOpen} />
             <StatCard
               label="นักเรียนที่ควรติดตาม"
-              value={worklistLoading ? '-' : `${followUpCount}`}
+              value={assignmentsLoading ? '-' : `${followUpCount}`}
               icon={AlertTriangle}
               tone={followUpCount > 0 ? 'warning' : 'default'}
             />
@@ -222,24 +213,9 @@ export function HomePageReal() {
         </div>
 
         <div className="space-y-6">
-          <UpcomingAssignmentsCard loading={worklistLoading} error={worklistError} items={upcomingAssignments} />
+          <UpcomingAssignmentsCard loading={assignmentsLoading} error={assignmentsError} items={upcomingAssignments} />
 
           <HermesSummaryCard />
-
-          <ModuleSummaryCard
-            icon={FileText}
-            title="ระบบเอกสาร"
-            to="/teacher/documents"
-            badge="เร็ว ๆ นี้"
-            description="จัดการเอกสารและแบบฟอร์มต่าง ๆ ของคุณในที่เดียว"
-          />
-          <ModuleSummaryCard
-            icon={ListChecks}
-            title="งานและเตือนความจำ"
-            to="/teacher/tasks"
-            badge="เร็ว ๆ นี้"
-            description="รายการสิ่งที่ต้องทำและการเตือนความจำส่วนตัว"
-          />
         </div>
       </div>
     </div>
