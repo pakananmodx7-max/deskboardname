@@ -145,7 +145,7 @@ describe('supabase-admin.ts — untouched (Google Drive integration must not reg
 })
 
 describe('registry.ts — the tool list Hermes will eventually consume', () => {
-  it('exposes exactly the 8 approved Phase 1 tools, no more', () => {
+  it('exposes exactly the 9 approved tools, no more', () => {
     const names = [
       'list_classrooms',
       'list_assignments',
@@ -155,6 +155,7 @@ describe('registry.ts — the tool list Hermes will eventually consume', () => {
       'create_assignment',
       'copy_assignment_to_classrooms',
       'mark_attendance_bulk',
+      'mark_submission_status',
     ]
     for (const name of names) {
       expect(allToolFiles).toContain(`name: '${name}'`)
@@ -250,7 +251,7 @@ describe('read-tools.ts — 5 read tools, each classroom/subject/assignment-scop
   })
 })
 
-describe('write-tools.ts — the 3 approved safe writes', () => {
+describe('write-tools.ts — the 4 approved safe writes', () => {
   it('create_assignment requires classroom ownership, creates no assignment_submissions row, and enforces teacherId server-side as created_by', () => {
     const fn = writeTools.slice(writeTools.indexOf('async function createAssignment'), writeTools.indexOf('export const createAssignmentTool'))
     expect(fn).toContain('requireOwnedClassroom(client, args.classroomId)')
@@ -288,7 +289,84 @@ describe('write-tools.ts — the 3 approved safe writes', () => {
     expect(writeTools).toContain("ATTENDANCE_STATUS_VALUES = ['present', 'late', 'leave', 'absent']")
   })
 
-  it('none of the 3 write tools ever deletes a row (no .delete( call anywhere in write-tools.ts)', () => {
+  it('none of the 4 write tools ever deletes a row (no .delete( call anywhere in write-tools.ts)', () => {
     expect(writeTools).not.toMatch(/\.delete\(/)
+  })
+})
+
+describe('write-tools.ts — mark_submission_status (submission status write)', () => {
+  const fn = writeTools.slice(
+    writeTools.indexOf('async function markSubmissionStatus'),
+    writeTools.indexOf('export const markSubmissionStatusTool'),
+  )
+
+  // -- successful update / clear structured result --------------------
+  it('reads/writes exclusively assignment_submissions.status — the existing production source of truth (0006), never a new table', () => {
+    expect(fn).toContain("from('assignment_submissions')")
+    expect(fn).toContain('status')
+    expect(writeTools).not.toMatch(/create table|create_table/i)
+  })
+
+  it('returns previousStatus, the new status, and a `changed` flag so Hermes can verify exactly what happened', () => {
+    const toolBody = writeTools.slice(
+      writeTools.indexOf('return {', writeTools.indexOf('async function markSubmissionStatus')),
+      writeTools.indexOf('export const markSubmissionStatusTool'),
+    )
+    expect(toolBody).toContain('previousStatus')
+    expect(toolBody).toContain('status: updated.status')
+    expect(toolBody).toContain('changed:')
+  })
+
+  // -- reuses the exact production write path already used by the web app --
+  it('upserts with onConflict on (assignment_id, student_id) — the exact same shape as assignment-service.ts\'s setSubmissionStatus, the web app\'s own production write path', () => {
+    expect(fn).toContain(".upsert(")
+    expect(fn).toContain("onConflict: 'assignment_id,student_id'")
+  })
+
+  // -- teacher ownership + invalid/unowned assignment --------------------
+  it('requires assignment ownership (requireOwnedAssignment) before touching assignment_submissions — this is also how an invalid/unowned assignmentId is rejected', () => {
+    expect(fn.indexOf('requireOwnedAssignment(client, args.assignmentId)')).toBeGreaterThan(-1)
+    expect(fn.indexOf('requireOwnedAssignment(client, args.assignmentId)')).toBeLessThan(fn.indexOf('.upsert('))
+  })
+
+  // -- student not belonging to the assignment's classroom ---------------
+  it('checks classroom_students membership before the FIRST write for a (assignment, student) pair — mirrors assignment_submissions_insert_own (0006) with a clear NotFoundError instead of a raw RLS violation', () => {
+    expect(fn).toContain("from('classroom_students')")
+    expect(fn).toContain("eq('classroom_id', assignment.classroom_id)")
+    expect(fn).toContain("eq('student_id', args.studentId)")
+    expect(fn).toContain('NotFoundError(')
+  })
+
+  it('does NOT repeat the membership check once a submission row already exists — correcting a past mistake for a student who has since left the classroom must stay possible (matches assignment_submissions_update_own\'s own design)', () => {
+    const membershipCheckIndex = fn.indexOf("from('classroom_students')")
+    const ifNotExistingIndex = fn.indexOf('if (!existing)')
+    expect(ifNotExistingIndex).toBeGreaterThan(-1)
+    expect(ifNotExistingIndex).toBeLessThan(membershipCheckIndex)
+  })
+
+  // -- invalid status: only the 4 real production values ------------------
+  it('only accepts the 4 statuses assignment_submissions.status actually supports (0006) — no invented submitted/late/missing-like value', () => {
+    expect(writeTools).toContain(
+      "SUBMISSION_STATUS_VALUES = ['not_submitted', 'submitted', 'late', 'missing']",
+    )
+  })
+
+  // -- never bypasses teacher authorization with service-role -------------
+  it('never uses a service-role/admin client to bypass RLS — every query goes through ctx.client (the caller\'s own RLS-scoped client)', () => {
+    expect(fn).not.toMatch(/service[_-]?role|createAdminClient/i)
+  })
+
+  it('never forges teacherId from caller-supplied args (consistent with every other tool in this layer)', () => {
+    expect(fn).not.toMatch(/args\.teacherId/)
+  })
+
+  it('is registered in writeTools alongside the other 3 write tools', () => {
+    expect(writeTools).toContain('markSubmissionStatusTool')
+    expect(writeTools).toMatch(/writeTools:\s*AgentTool<any>\[\]\s*=\s*\[[\s\S]*markSubmissionStatusTool/)
+  })
+
+  it('never deletes a row and never touches Storage', () => {
+    expect(fn).not.toMatch(/\.delete\(/)
+    expect(fn).not.toMatch(/\.storage\s*\./)
   })
 })

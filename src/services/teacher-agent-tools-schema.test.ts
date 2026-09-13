@@ -148,6 +148,67 @@ describe('validateArgs — arrays and nested objects (mark_attendance_bulk\'s sh
   })
 })
 
+describe('validateArgs — mark_submission_status\'s shape (assignmentId/studentId/status)', () => {
+  const submissionSchema: ToolInputSchema = {
+    type: 'object',
+    properties: {
+      assignmentId: { type: 'string', format: 'uuid' },
+      studentId: { type: 'string', format: 'uuid' },
+      status: { type: 'string', enum: ['not_submitted', 'submitted', 'late', 'missing'] },
+    },
+    required: ['assignmentId', 'studentId', 'status'],
+  }
+  const VALID_UUID_2 = '22222222-2222-2222-2222-222222222222'
+
+  it('accepts a well-formed call with a real production status value', () => {
+    const result = validateArgs(submissionSchema, { assignmentId: VALID_UUID, studentId: VALID_UUID_2, status: 'submitted' })
+    expect(result.ok).toBe(true)
+  })
+
+  it('accepts every one of the 4 real production status values', () => {
+    for (const status of ['not_submitted', 'submitted', 'late', 'missing']) {
+      expect(validateArgs(submissionSchema, { assignmentId: VALID_UUID, studentId: VALID_UUID_2, status }).ok).toBe(true)
+    }
+  })
+
+  it('rejects a status value that does not exist in the production schema (invented/typo values)', () => {
+    for (const invalidStatus of ['graded', 'excused', 'pending', 'complete', '']) {
+      const result = validateArgs(submissionSchema, { assignmentId: VALID_UUID, studentId: VALID_UUID_2, status: invalidStatus })
+      expect(result.ok).toBe(false)
+    }
+  })
+
+  it('rejects malformed arguments: missing assignmentId, missing studentId, or missing status entirely', () => {
+    expect(validateArgs(submissionSchema, { studentId: VALID_UUID_2, status: 'submitted' }).ok).toBe(false)
+    expect(validateArgs(submissionSchema, { assignmentId: VALID_UUID, status: 'submitted' }).ok).toBe(false)
+    expect(validateArgs(submissionSchema, { assignmentId: VALID_UUID, studentId: VALID_UUID_2 }).ok).toBe(false)
+    expect(validateArgs(submissionSchema, {}).ok).toBe(false)
+  })
+
+  it('rejects malformed arguments: non-uuid ids, a non-string status, and completely non-object args', () => {
+    expect(validateArgs(submissionSchema, { assignmentId: 'not-a-uuid', studentId: VALID_UUID_2, status: 'submitted' }).ok).toBe(
+      false,
+    )
+    expect(validateArgs(submissionSchema, { assignmentId: VALID_UUID, studentId: 'not-a-uuid', status: 'submitted' }).ok).toBe(
+      false,
+    )
+    expect(validateArgs(submissionSchema, { assignmentId: VALID_UUID, studentId: VALID_UUID_2, status: 123 }).ok).toBe(false)
+    expect(validateArgs(submissionSchema, 'nope' as unknown).ok).toBe(false)
+    expect(validateArgs(submissionSchema, null as unknown).ok).toBe(false)
+  })
+
+  it('rejects an unknown extra field — the tool\'s surface is exactly assignmentId/studentId/status', () => {
+    const result = validateArgs(submissionSchema, {
+      assignmentId: VALID_UUID,
+      studentId: VALID_UUID_2,
+      status: 'submitted',
+      score: 100,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.errors.some((e) => e.includes('score'))).toBe(true)
+  })
+})
+
 describe('toJsonSchema', () => {
   it('round-trips a schema unchanged (a real JSON Schema object, ready for an OpenAI/Hermes tool definition)', () => {
     expect(toJsonSchema(classroomSchema)).toEqual({

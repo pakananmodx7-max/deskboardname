@@ -1,8 +1,8 @@
 // deno-lint-ignore-file no-explicit-any
-import { ValidationError } from '../../_shared/agent-context.ts'
+import { NotFoundError, ValidationError } from '../../_shared/agent-context.ts'
 import type { AgentContext } from '../../_shared/agent-context.ts'
 import type { AgentTool } from '../types.ts'
-import { requireOwnedAssignment, requireOwnedClassroom } from './shared.ts'
+import { requireOwnedAssignment, requireOwnedClassroom, studentDisplayName, type StudentRow } from './shared.ts'
 
 // ==================================================
 // Shared: resolving which subject an assignment write belongs to.
@@ -326,4 +326,145 @@ export const markAttendanceBulkTool: AgentTool<MarkAttendanceBulkArgs> = {
   handler: (ctx, args) => markAttendanceBulk(ctx, args),
 }
 
-export const writeTools: AgentTool<any>[] = [createAssignmentTool, copyAssignmentToClassroomsTool, markAttendanceBulkTool]
+// ==================================================
+// 9. mark_submission_status
+//
+// Source of truth: assignment_submissions.status (0006_subject_assignments.sql),
+// the SAME column/table the Student Portal's own submission flow and the
+// teacher web app's Grades tab / assignment detail page already read and
+// write — nothing new is modeled here. The 4 status values below are
+// copy-pasted from that table's own CHECK constraint
+// (`status in ('not_submitted', 'submitted', 'late', 'missing')`); no
+// other status has ever existed in this schema.
+//
+// Write path: a plain upsert on (assignment_id, student_id) — the EXACT
+// same shape as assignment-service.ts's setSubmissionStatus (the
+// function the browser app's Grades/assignment-detail UI already calls),
+// run through the caller's own RLS-scoped client. assignment_submissions
+// has no RPC of its own (unlike attendance's save_attendance_session) —
+// a correctly-written RLS policy is already the whole authorization
+// boundary for a single-row upsert like this one, per 0006's own header
+// note.
+// ==================================================
+
+const SUBMISSION_STATUS_VALUES = ['not_submitted', 'submitted', 'late', 'missing'] as const
+
+interface MarkSubmissionStatusArgs {
+  assignmentId: string
+  studentId: string
+  status: (typeof SUBMISSION_STATUS_VALUES)[number]
+}
+
+async function markSubmissionStatus(ctx: AgentContext, args: MarkSubmissionStatusArgs) {
+  const { client } = ctx
+  // Ownership boundary #1: the caller must own the assignment (and, via
+  // requireOwnedAssignment's join, the classroom it belongs to) — same
+  // `assignments_select_own` check every other assignment-scoped tool
+  // uses. This alone is what assignment_submissions_update_own also
+  // requires, so it is the ONLY check re-verified below on the (common)
+  // path where a submission row already exists.
+  const assignment = await requireOwnedAssignment(client, args.assignmentId)
+
+  // Best-effort display name — students_select_via_classroom (0001)
+  // only allows reading a student who is CURRENTLY in at least one of
+  // the caller's own classrooms. A student long gone from every
+  // classroom (rare, but their submission history still exists) simply
+  // yields no row here; the write below still proceeds and studentName
+  // is reported as null rather than blocking the whole operation on a
+  // display-only lookup.
+  const { data: studentRow, error: studentError } = await client
+    .from('students')
+    .select('id, first_name, last_name, nickname, number')
+    .eq('id', args.studentId)
+    .maybeSingle()
+  if (studentError) throw studentError
+
+  const { data: existing, error: existingError } = await client
+    .from('assignment_submissions')
+    .select('status')
+    .eq('assignment_id', args.assignmentId)
+    .eq('student_id', args.studentId)
+    .maybeSingle()
+  if (existingError) throw existingError
+
+  if (!existing) {
+    // Ownership boundary #2 — ONLY on a first-ever write for this
+    // (assignment, student) pair, mirroring exactly what
+    // assignment_submissions_insert_own (0006) itself requires: the
+    // student must be a CURRENT member of the assignment's classroom.
+    // This is a friendlier, Thai-language surfacing of that same rule
+    // (a raw RLS violation on the upsert below would otherwise be the
+    // only signal) — it is advisory only; the database still enforces
+    // the identical rule regardless of this check. Deliberately NOT
+    // re-checked when a row already exists (see the UPDATE policy's own
+    // comment in 0006): correcting a past mistake for a student who has
+    // since left the classroom must stay possible.
+    const { data: membership, error: membershipError } = await client
+      .from('classroom_students')
+      .select('student_id')
+      .eq('classroom_id', assignment.classroom_id)
+      .eq('student_id', args.studentId)
+      .maybeSingle()
+    if (membershipError) throw membershipError
+    if (!membership) {
+      throw new NotFoundError('ไม่พบนักเรียนคนนี้ในห้องเรียนของงานนี้ หรือคุณไม่มีสิทธิ์เข้าถึง')
+    }
+  }
+
+  const previousStatus = existing?.status ?? 'not_submitted'
+
+  // Same upsert shape as setSubmissionStatus (assignment-service.ts):
+  // onConflict on (assignment_id, student_id) matches the table's own
+  // unique constraint (0006), so calling this tool twice with the same
+  // status updates the same row rather than creating a duplicate — a
+  // true no-op the second time, satisfying the idempotency requirement.
+  // Only `status` is written; score/note are left untouched exactly like
+  // the web app's own status-only control (the Grades tab's separate
+  // score input is what touches `score`).
+  const { data: updated, error: updateError } = await client
+    .from('assignment_submissions')
+    .upsert(
+      { assignment_id: args.assignmentId, student_id: args.studentId, status: args.status },
+      { onConflict: 'assignment_id,student_id' },
+    )
+    .select('status, score, note, updated_at')
+    .single()
+  if (updateError) throw updateError
+
+  return {
+    assignmentId: assignment.id,
+    assignmentTitle: assignment.title,
+    classroomId: assignment.classroom_id,
+    studentId: args.studentId,
+    studentName: studentRow ? studentDisplayName(studentRow as StudentRow) : null,
+    previousStatus,
+    status: updated.status,
+    changed: previousStatus !== updated.status,
+    score: updated.score,
+    note: updated.note,
+    updatedAt: updated.updated_at,
+  }
+}
+
+export const markSubmissionStatusTool: AgentTool<MarkSubmissionStatusArgs> = {
+  name: 'mark_submission_status',
+  description:
+    'Sets one student\'s assignment submission status (not_submitted | submitted | late | missing) for an assignment the calling teacher owns, via the same production upsert path assignment-service.ts\'s setSubmissionStatus already uses (idempotent — calling it twice with the same status is a no-op). Never creates or changes a score or note.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      assignmentId: { type: 'string', format: 'uuid' },
+      studentId: { type: 'string', format: 'uuid' },
+      status: { type: 'string', enum: SUBMISSION_STATUS_VALUES },
+    },
+    required: ['assignmentId', 'studentId', 'status'],
+  },
+  handler: (ctx, args) => markSubmissionStatus(ctx, args),
+}
+
+export const writeTools: AgentTool<any>[] = [
+  createAssignmentTool,
+  copyAssignmentToClassroomsTool,
+  markAttendanceBulkTool,
+  markSubmissionStatusTool,
+]

@@ -6,7 +6,7 @@
  *
  * These names/descriptions mirror mcp-bridge/src/tool-schemas.ts and the
  * deployed `teacher-agent-tools` Supabase Edge Function EXACTLY (5 read
- * + 3 write) — see mcp-bridge/README.md. This file does not call either
+ * + 4 write) — see mcp-bridge/README.md. This file does not call either
  * of them and never will from the browser: the MCP bridge is a LOCAL
  * stdio process that runs on the teacher's own machine, wired to Hermes
  * over stdio, not over the network — there is no URL this web app could
@@ -56,6 +56,11 @@ export const HERMES_WRITE_TOOLS: HermesToolInfo[] = [
     name: 'mark_attendance_bulk',
     label: 'เช็กชื่อ',
     description: 'บันทึก/แก้ไขการเช็กชื่อของนักเรียนหลายคนในครั้งเดียว',
+  },
+  {
+    name: 'mark_submission_status',
+    label: 'บันทึกสถานะการส่งงาน',
+    description: 'ปรับสถานะการส่งงานของนักเรียนรายบุคคล (ส่งแล้ว/ส่งช้า/ขาดส่ง/ยังไม่ส่ง)',
   },
 ]
 

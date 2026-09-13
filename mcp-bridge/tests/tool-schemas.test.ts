@@ -6,28 +6,28 @@ import { ALL_TOOL_NAMES, READ_TOOL_NAMES, WRITE_TOOL_NAMES, toolSchemas } from '
 const UUID = '11111111-1111-1111-1111-111111111111'
 const UUID_2 = '22222222-2222-2222-2222-222222222222'
 
-describe('toolSchemas — exactly the 8 tools from the Edge Function registry (5 read + 3 write)', () => {
+describe('toolSchemas — exactly the 9 tools from the Edge Function registry (5 read + 4 write)', () => {
   it('lists exactly these 5 read tool names', () => {
     expect(new Set(READ_TOOL_NAMES)).toEqual(
       new Set(['list_classrooms', 'list_assignments', 'get_missing_submissions', 'get_classroom_summary', 'get_student_summary']),
     )
   })
 
-  it('lists exactly these 3 write tool names', () => {
+  it('lists exactly these 4 write tool names', () => {
     expect(new Set(WRITE_TOOL_NAMES)).toEqual(
-      new Set(['create_assignment', 'copy_assignment_to_classrooms', 'mark_attendance_bulk']),
+      new Set(['create_assignment', 'copy_assignment_to_classrooms', 'mark_attendance_bulk', 'mark_submission_status']),
     )
   })
 
-  it('ALL_TOOL_NAMES is exactly the union of read and write, 8 total, no overlap', () => {
-    expect(ALL_TOOL_NAMES).toHaveLength(8)
+  it('ALL_TOOL_NAMES is exactly the union of read and write, 9 total, no overlap', () => {
+    expect(ALL_TOOL_NAMES).toHaveLength(9)
     expect(new Set(ALL_TOOL_NAMES)).toEqual(new Set([...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]))
     for (const writeTool of WRITE_TOOL_NAMES) {
       expect(READ_TOOL_NAMES).not.toContain(writeTool)
     }
   })
 
-  it('toolSchemas itself has exactly these 8 keys — nothing registered that isn\'t named here', () => {
+  it('toolSchemas itself has exactly these 9 keys — nothing registered that isn\'t named here', () => {
     expect(Object.keys(toolSchemas).sort()).toEqual([...ALL_TOOL_NAMES].sort())
   })
 
@@ -181,6 +181,31 @@ describe('toolSchemas — WRITE argument shapes match write-tools.ts\'s contract
     expect(shape.safeParse({ classroomId: UUID, date: '2026-09-12', updates: [], periodNumber: 1.5 }).success).toBe(false)
     expect(shape.safeParse({ classroomId: UUID, date: '2026-09-12', updates: [], periodNumber: 2 }).success).toBe(true)
   })
+
+  it('mark_submission_status: assignmentId/studentId/status all required', () => {
+    const shape = z.object(toolSchemas.mark_submission_status.input)
+    expect(shape.safeParse({}).success).toBe(false)
+    expect(shape.safeParse({ assignmentId: UUID, studentId: UUID_2 }).success).toBe(false) // status missing
+    expect(shape.safeParse({ assignmentId: UUID, status: 'submitted' }).success).toBe(false) // studentId missing
+    expect(shape.safeParse({ studentId: UUID_2, status: 'submitted' }).success).toBe(false) // assignmentId missing
+    expect(shape.safeParse({ assignmentId: UUID, studentId: UUID_2, status: 'submitted' }).success).toBe(true)
+  })
+
+  it('mark_submission_status: assignmentId/studentId must be uuids, never an arbitrary string', () => {
+    const shape = z.object(toolSchemas.mark_submission_status.input)
+    expect(shape.safeParse({ assignmentId: 'not-a-uuid', studentId: UUID_2, status: 'submitted' }).success).toBe(false)
+    expect(shape.safeParse({ assignmentId: UUID, studentId: 'not-a-uuid', status: 'submitted' }).success).toBe(false)
+  })
+
+  it('mark_submission_status: preserves exactly the 4 statuses assignment_submissions.status actually supports (0006), no invented values', () => {
+    const shape = z.object(toolSchemas.mark_submission_status.input)
+    for (const status of ['not_submitted', 'submitted', 'late', 'missing']) {
+      expect(shape.safeParse({ assignmentId: UUID, studentId: UUID_2, status }).success).toBe(true)
+    }
+    for (const invalidStatus of ['graded', 'excused', 'pending', '']) {
+      expect(shape.safeParse({ assignmentId: UUID, studentId: UUID_2, status: invalidStatus }).success).toBe(false)
+    }
+  })
 })
 
 describe('toolSchemas — descriptions and safety annotations', () => {
@@ -205,6 +230,9 @@ describe('toolSchemas — descriptions and safety annotations', () => {
     )
     expect(toolSchemas.mark_attendance_bulk.description).toContain(
       'Records/updates attendance for one or more students in one classroom on one date',
+    )
+    expect(toolSchemas.mark_submission_status.description).toContain(
+      "Sets one student's assignment submission status (not_submitted | submitted | late | missing)",
     )
   })
 

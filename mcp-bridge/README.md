@@ -2,7 +2,7 @@
 
 A **local** MCP (Model Context Protocol) stdio server that exposes the
 already-deployed production `teacher-agent-tools` Supabase Edge
-Function's 5 read tools and 3 safe write tools to an MCP client such as
+Function's 5 read tools and 4 safe write tools to an MCP client such as
 Hermes.
 
 It runs entirely on the teacher's own machine (this is what makes it a
@@ -30,14 +30,15 @@ it, exactly as it does for the real web app.
 - Not a place with a delete/destroy tool — none exists on the Edge
   Function, so none is exposed here.
 
-## Tools exposed (8 total)
+## Tools exposed (9 total)
 
 **Read (5)** — `list_classrooms`, `list_assignments`,
 `get_missing_submissions`, `get_classroom_summary`, `get_student_summary`.
 
-**Write (3)** — `create_assignment`, `copy_assignment_to_classrooms`,
-`mark_attendance_bulk`. Each of these **mutates real production data**
-through the same production Edge Function every read tool uses:
+**Write (4)** — `create_assignment`, `copy_assignment_to_classrooms`,
+`mark_attendance_bulk`, `mark_submission_status`. Each of these **mutates
+real production data** through the same production Edge Function every
+read tool uses:
 
 - Their MCP tool description is prefixed with
   `[WRITE — mutates production data]`, ahead of the exact upstream
@@ -46,17 +47,21 @@ through the same production Edge Function every read tool uses:
 - Each carries standard MCP annotations (`readOnlyHint: false`,
   `destructiveHint: false` — nothing here can delete anything,
   `idempotentHint`) any MCP-aware client can use to decide whether to
-  confirm with the user before calling one. `mark_attendance_bulk` is
-  idempotent (it upserts); `create_assignment` and
-  `copy_assignment_to_classrooms` are not (each call creates new rows).
+  confirm with the user before calling one. `mark_attendance_bulk` and
+  `mark_submission_status` are idempotent (both upsert); `create_assignment`
+  and `copy_assignment_to_classrooms` are not (each call creates new rows).
 - `mark_attendance_bulk` preserves the Edge Function's exact allowed
   status values (`present`, `late`, `leave`, `absent`) and its required
   `classroomId`/`date`/`updates` shape — nothing here invents a
-  different vocabulary.
+  different vocabulary. `mark_submission_status` does the same for
+  `assignment_submissions.status` (`not_submitted`, `submitted`, `late`,
+  `missing` — the table's own CHECK constraint), taking only
+  `assignmentId`/`studentId`/`status`.
 - Ownership/authorization is still enforced entirely server-side: a
-  classroom, assignment, or subject the calling teacher doesn't own is
-  refused by the Edge Function's own RLS-scoped checks, not by anything
-  in this bridge.
+  classroom, assignment, subject, or student the calling teacher doesn't
+  own (or, for `mark_submission_status`, a student who isn't a member of
+  the assignment's classroom on a first-ever write) is refused by the
+  Edge Function's own RLS-scoped checks, not by anything in this bridge.
 
 ## How authentication works
 

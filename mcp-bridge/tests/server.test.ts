@@ -8,11 +8,11 @@ function fakeClient(callTool: ReturnType<typeof vi.fn>): EdgeFunctionClient {
   return { callTool } as unknown as EdgeFunctionClient
 }
 
-describe('createServer — registers exactly the 8 tools (5 read + 3 write)', () => {
+describe('createServer — registers exactly the 9 tools (5 read + 4 write)', () => {
   it('registers exactly ALL_TOOL_NAMES, no more, no fewer', () => {
     const { registeredTools } = createServer(fakeClient(vi.fn()))
     expect(Object.keys(registeredTools).sort()).toEqual([...ALL_TOOL_NAMES].sort())
-    expect(Object.keys(registeredTools)).toHaveLength(8)
+    expect(Object.keys(registeredTools)).toHaveLength(9)
   })
 
   it('registers all 5 read tools', () => {
@@ -22,7 +22,7 @@ describe('createServer — registers exactly the 8 tools (5 read + 3 write)', ()
     }
   })
 
-  it('registers all 3 write tools', () => {
+  it('registers all 4 write tools', () => {
     const { registeredTools } = createServer(fakeClient(vi.fn()))
     for (const name of WRITE_TOOL_NAMES) {
       expect(registeredTools[name]).toBeDefined()
@@ -56,9 +56,10 @@ describe('createServer — registers exactly the 8 tools (5 read + 3 write)', ()
     }
   })
 
-  it('mark_attendance_bulk is annotated idempotent; create_assignment and copy_assignment_to_classrooms are not', () => {
+  it('mark_attendance_bulk and mark_submission_status are annotated idempotent; create_assignment and copy_assignment_to_classrooms are not', () => {
     const { registeredTools } = createServer(fakeClient(vi.fn()))
     expect(registeredTools.mark_attendance_bulk.annotations?.idempotentHint).toBe(true)
+    expect(registeredTools.mark_submission_status.annotations?.idempotentHint).toBe(true)
     expect(registeredTools.create_assignment.annotations?.idempotentHint).toBe(false)
     expect(registeredTools.copy_assignment_to_classrooms.annotations?.idempotentHint).toBe(false)
   })
@@ -172,6 +173,56 @@ describe('createServer — write tool handler success paths', () => {
     expect(callTool).toHaveBeenCalledExactlyOnceWith('mark_attendance_bulk', args)
     expect(result.structuredContent).toEqual(data)
   })
+
+  it('mark_submission_status: forwards args and returns the updated submission (including previousStatus/changed) unmodified — this is what lets Hermes verify what changed', async () => {
+    const data = {
+      assignmentId: 'a1',
+      assignmentTitle: 'การดำเนินมนุษย์',
+      classroomId: 'c1',
+      studentId: 's1',
+      studentName: 'สมชาย ใจดี',
+      previousStatus: 'not_submitted',
+      status: 'submitted',
+      changed: true,
+      score: null,
+      note: null,
+      updatedAt: '2026-09-13T00:00:00.000Z',
+    }
+    const callTool = vi.fn().mockResolvedValue({ ok: true, tool: 'mark_submission_status', data })
+    const { registeredTools } = createServer(fakeClient(callTool))
+    const args = { assignmentId: 'a1', studentId: 's1', status: 'submitted' }
+
+    const result = await registeredTools.mark_submission_status.handler(args, {} as never)
+
+    expect(callTool).toHaveBeenCalledExactlyOnceWith('mark_submission_status', args)
+    expect(result.isError).toBeUndefined()
+    expect(result.structuredContent).toEqual(data)
+  })
+
+  it('mark_submission_status: calling it twice with the same status is idempotent — the second call reports changed: false', async () => {
+    const noopData = {
+      assignmentId: 'a1',
+      assignmentTitle: 'การดำเนินมนุษย์',
+      classroomId: 'c1',
+      studentId: 's1',
+      studentName: 'สมชาย ใจดี',
+      previousStatus: 'submitted',
+      status: 'submitted',
+      changed: false,
+      score: null,
+      note: null,
+      updatedAt: '2026-09-13T00:00:01.000Z',
+    }
+    const callTool = vi.fn().mockResolvedValue({ ok: true, tool: 'mark_submission_status', data: noopData })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.mark_submission_status.handler(
+      { assignmentId: 'a1', studentId: 's1', status: 'submitted' },
+      {} as never,
+    )
+
+    expect((result.structuredContent as typeof noopData).changed).toBe(false)
+  })
 })
 
 describe('createServer — write tool handler error paths (ownership/authorization failures)', () => {
@@ -233,6 +284,54 @@ describe('createServer — write tool handler error paths (ownership/authorizati
 
     expect(result.isError).toBe(true)
     expect(result.content).toEqual([{ type: 'text', text: 'unauthorized: Teacher authentication failed.' }])
+  })
+
+  it('mark_submission_status: an assignment the teacher does not own (or that does not exist) surfaces as isError, never a silent write', async () => {
+    const callTool = vi
+      .fn()
+      .mockResolvedValue({ ok: false, tool: 'mark_submission_status', error: { code: 'not_found', message: 'ไม่พบงานนี้ หรือคุณไม่มีสิทธิ์เข้าถึง' } })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.mark_submission_status.handler(
+      { assignmentId: 'not-mine', studentId: 's1', status: 'submitted' },
+      {} as never,
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toEqual([{ type: 'text', text: 'not_found: ไม่พบงานนี้ หรือคุณไม่มีสิทธิ์เข้าถึง' }])
+  })
+
+  it('mark_submission_status: a student who does not belong to the assignment\'s classroom surfaces as isError, never a silent write', async () => {
+    const callTool = vi.fn().mockResolvedValue({
+      ok: false,
+      tool: 'mark_submission_status',
+      error: { code: 'not_found', message: 'ไม่พบนักเรียนคนนี้ในห้องเรียนของงานนี้ หรือคุณไม่มีสิทธิ์เข้าถึง' },
+    })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.mark_submission_status.handler(
+      { assignmentId: 'a1', studentId: 'not-in-this-classroom', status: 'submitted' },
+      {} as never,
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toEqual([
+      { type: 'text', text: 'not_found: ไม่พบนักเรียนคนนี้ในห้องเรียนของงานนี้ หรือคุณไม่มีสิทธิ์เข้าถึง' },
+    ])
+  })
+
+  it('mark_submission_status: an invalid_arguments error (e.g. a status outside the 4 real values) surfaces as isError', async () => {
+    const callTool = vi
+      .fn()
+      .mockResolvedValue({ ok: false, tool: 'mark_submission_status', error: { code: 'invalid_arguments', message: "status must be one of: not_submitted, submitted, late, missing" } })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.mark_submission_status.handler(
+      { assignmentId: 'a1', studentId: 's1', status: 'graded' },
+      {} as never,
+    )
+
+    expect(result.isError).toBe(true)
   })
 
   it('never throws out of a write tool handler even if the client itself throws unexpectedly', async () => {

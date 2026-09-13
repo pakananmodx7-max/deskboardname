@@ -2,7 +2,7 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 
 /**
- * All 8 tools' argument shapes, descriptions, and MCP annotations,
+ * All 9 tools' argument shapes, descriptions, and MCP annotations,
  * copied verbatim (field names, required-ness, uuid/enum/number
  * constraints, descriptions) from the deployed Edge Function's own
  * registry — supabase/functions/teacher-agent-tools/tools/read-tools.ts
@@ -10,7 +10,7 @@ import { z } from 'zod'
  * strings.
  *
  * This is NOT the authoritative validator: the Edge Function itself
- * (via _shared/tool-schema.ts's validateArgs, and — for the 3 write
+ * (via _shared/tool-schema.ts's validateArgs, and — for the 4 write
  * tools — the actual RLS-scoped database operations in write-tools.ts)
  * is and remains the only place argument validation AND authorization
  * are actually enforced. A Deno file cannot be imported into this Node
@@ -31,13 +31,13 @@ import { z } from 'zod'
  * happens.
  *
  * WRITE TOOLS (create_assignment, copy_assignment_to_classrooms,
- * mark_attendance_bulk) mutate real production data through the same
- * production Edge Function every read tool uses. Each one's
- * `description` below is prefixed with an explicit "[WRITE — mutates
- * production data]" marker (kept separate from the verbatim upstream
- * description that follows it) so an agent reading the tool list sees,
- * unambiguously, which of the 8 tools can change data before ever
- * calling one. Their `annotations` (readOnlyHint/destructiveHint/
+ * mark_attendance_bulk, mark_submission_status) mutate real production
+ * data through the same production Edge Function every read tool uses.
+ * Each one's `description` below is prefixed with an explicit "[WRITE —
+ * mutates production data]" marker (kept separate from the verbatim
+ * upstream description that follows it) so an agent reading the tool
+ * list sees, unambiguously, which of the 9 tools can change data before
+ * ever calling one. Their `annotations` (readOnlyHint/destructiveHint/
  * idempotentHint) are the standard MCP mechanism for the same signal,
  * for any client that reads annotations rather than (or in addition to)
  * the description text. No delete/destroy tool is registered — none
@@ -46,6 +46,7 @@ import { z } from 'zod'
 
 const ASSIGNMENT_STATUS_VALUES = ['active', 'archived', 'all'] as const
 const ATTENDANCE_STATUS_VALUES = ['present', 'late', 'leave', 'absent'] as const
+const SUBMISSION_STATUS_VALUES = ['not_submitted', 'submitted', 'late', 'missing'] as const
 
 const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
   readOnlyHint: true,
@@ -188,6 +189,27 @@ export const toolSchemas = {
       ),
     },
   },
+  mark_submission_status: {
+    description:
+      WRITE_WARNING_PREFIX +
+      'Sets one student\'s assignment submission status (not_submitted | submitted | late | missing) for an assignment the calling teacher owns, via the same production upsert path assignment-service.ts\'s setSubmissionStatus already uses (idempotent — calling it twice with the same status is a no-op). Never creates or changes a score or note.',
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Idempotent BY DESIGN: the Edge Function upserts on
+      // (assignment_id, student_id) — the table's own unique constraint
+      // — so calling this twice with the same status updates the same
+      // row rather than creating a duplicate. See write-tools.ts's own
+      // doc comment on markSubmissionStatus.
+      idempotentHint: true,
+      openWorldHint: false,
+    } satisfies ToolAnnotations,
+    input: {
+      assignmentId: z.string().uuid(),
+      studentId: z.string().uuid(),
+      status: z.enum(SUBMISSION_STATUS_VALUES),
+    },
+  },
 } as const
 
 export type ToolName = keyof typeof toolSchemas
@@ -206,4 +228,5 @@ export const WRITE_TOOL_NAMES = [
   'create_assignment',
   'copy_assignment_to_classrooms',
   'mark_attendance_bulk',
+  'mark_submission_status',
 ] as const satisfies readonly ToolName[]

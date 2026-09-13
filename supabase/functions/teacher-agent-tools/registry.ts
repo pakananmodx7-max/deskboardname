@@ -23,7 +23,7 @@
  * with ZERO duplication of any handler/business logic — the handlers
  * themselves never change when a new caller (Hermes) is wired up later.
  *
- * ONLY read tools and the three explicitly-approved safe write tools
+ * ONLY read tools and the four explicitly-approved safe write tools
  * exist here. There is intentionally no delete_* tool, no arbitrary
  * table/SQL access, and no Storage access of any kind — see this
  * repository's Phase 1 report for the full list of what was

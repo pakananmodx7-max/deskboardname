@@ -20,8 +20,8 @@ describe('hermes-status — human-readable capability labels (C4)', () => {
     expect(labels).toContain('คัดลอกงาน')
   })
 
-  it('HERMES_TOTAL_TOOL_COUNT still matches the read+write counts (8 total)', () => {
-    expect(HERMES_TOTAL_TOOL_COUNT).toBe(8)
-    expect(allTools).toHaveLength(8)
+  it('HERMES_TOTAL_TOOL_COUNT still matches the read+write counts (9 total)', () => {
+    expect(HERMES_TOTAL_TOOL_COUNT).toBe(9)
+    expect(allTools).toHaveLength(9)
   })
 })
