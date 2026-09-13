@@ -3,17 +3,36 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildClassroomListItems,
   buildRecentActivityItems,
   buildTodayAttendanceStatuses,
   computeAssignmentActionItem,
   selectAssignmentsNeedingAttention,
   selectUpcomingAssignments,
   type AssignmentActionItem,
+  type ClassroomWithStudentCount,
   type SubjectClassroomPair,
 } from '@/services/dashboard-service'
 
 function pair(overrides: Partial<SubjectClassroomPair> = {}): SubjectClassroomPair {
   return { subjectId: 'subj-1', subjectName: 'คณิตศาสตร์', classroomId: 'room-1', classroomName: 'ม.5/1', ...overrides }
+}
+
+function classroomWithCount(overrides: Partial<ClassroomWithStudentCount> = {}): ClassroomWithStudentCount {
+  return {
+    id: 'room-1',
+    teacherId: 'teacher-1',
+    name: 'ม.5/1',
+    gradeLevel: null,
+    section: null,
+    academicYear: null,
+    semester: null,
+    isActive: true,
+    createdAt: '2024-01-01',
+    updatedAt: '2024-01-01',
+    studentCount: 0,
+    ...overrides,
+  }
 }
 
 describe('buildTodayAttendanceStatuses — attendance status logic', () => {
@@ -197,6 +216,55 @@ describe('selectUpcomingAssignments', () => {
   })
 })
 
+describe('buildClassroomListItems — "ห้องเรียนของฉัน" data mapping', () => {
+  it('attaches every active subject linked to a classroom, by name', () => {
+    const items = buildClassroomListItems(
+      [classroomWithCount({ id: 'room-1', studentCount: 25 })],
+      [
+        { subjectId: 'subj-1', classroomId: 'room-1' },
+        { subjectId: 'subj-2', classroomId: 'room-1' },
+      ],
+      new Map([
+        ['subj-1', 'คณิตศาสตร์'],
+        ['subj-2', 'วิทยาศาสตร์'],
+      ]),
+    )
+    expect(items).toEqual([
+      { classroomId: 'room-1', classroomName: 'ม.5/1', subjectNames: ['คณิตศาสตร์', 'วิทยาศาสตร์'], studentCount: 25 },
+    ])
+  })
+
+  it('a classroom with no linked subject gets an empty subjectNames list, never a crash', () => {
+    const items = buildClassroomListItems([classroomWithCount({ id: 'room-1' })], [], new Map())
+    expect(items[0].subjectNames).toEqual([])
+  })
+
+  it('a link naming an inactive/unknown subject id is silently skipped rather than showing "undefined"', () => {
+    const items = buildClassroomListItems(
+      [classroomWithCount({ id: 'room-1' })],
+      [{ subjectId: 'archived-subj', classroomId: 'room-1' }],
+      new Map(),
+    )
+    expect(items[0].subjectNames).toEqual([])
+  })
+
+  it('a link for a different classroom never leaks into this one\'s subject list', () => {
+    const items = buildClassroomListItems(
+      [classroomWithCount({ id: 'room-1' }), classroomWithCount({ id: 'room-2', name: 'ม.5/2' })],
+      [{ subjectId: 'subj-1', classroomId: 'room-2' }],
+      new Map([['subj-1', 'คณิตศาสตร์']]),
+    )
+    const room1 = items.find((i) => i.classroomId === 'room-1')!
+    const room2 = items.find((i) => i.classroomId === 'room-2')!
+    expect(room1.subjectNames).toEqual([])
+    expect(room2.subjectNames).toEqual(['คณิตศาสตร์'])
+  })
+
+  it('empty classroom list produces zero items, never throws', () => {
+    expect(buildClassroomListItems([], [], new Map())).toEqual([])
+  })
+})
+
 describe('buildRecentActivityItems', () => {
   it('labels an assignment as newly created when created_at === updated_at', () => {
     const items = buildRecentActivityItems(
@@ -304,6 +372,31 @@ describe('getDashboardFollowUpSummary — follow-up rules exactly match Reports 
     // — every threshold lives in FOLLOWUP_RULES (followup-report-service.ts) only.
     const functionBody = source.slice(source.indexOf('export async function getDashboardFollowUpSummary'))
     expect(functionBody).not.toMatch(/>=\s*\d/)
+  })
+})
+
+describe('getTodayAttendanceSummary — donut chart data source (dashboard redesign)', () => {
+  const source = readSourceRelativeToThisFile('./dashboard-service.ts')
+  const fnBody = source.slice(
+    source.indexOf('export async function getTodayAttendanceSummary'),
+    source.indexOf('\n// ==', source.indexOf('export async function getTodayAttendanceSummary')),
+  )
+
+  it('reuses attendance-service.ts\'s own tally (getAttendanceSummary) instead of a re-implemented count', () => {
+    expect(source).toMatch(/import\s*\{[^}]*getAttendanceSummary[^}]*\}\s*from\s*['"]@\/services\/attendance-service['"]/)
+    expect(fnBody).toContain('getAttendanceSummary(records)')
+  })
+
+  it('keys each record by session+student so a student checked in twice today (two subjects) is never collapsed into one entry', () => {
+    expect(fnBody).toContain('`${row.attendance_session_id}:${row.student_id}`')
+  })
+
+  it('returns an honest all-zero summary — never throws or fabricates — when no session exists today', () => {
+    expect(fnBody).toContain('{ present: 0, late: 0, leave: 0, absent: 0, total: 0 }')
+  })
+
+  it('scopes strictly to today\'s date via the same toIso helper used elsewhere in this file', () => {
+    expect(fnBody).toContain("eq('attendance_date', today)")
   })
 })
 

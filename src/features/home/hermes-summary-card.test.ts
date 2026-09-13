@@ -21,4 +21,14 @@ describe('HermesSummaryCard — honest status only (Requirement 8: never fabrica
   it('shows only the fixed, known tool count, not a fabricated activity feed', () => {
     expect(source).toContain('HERMES_TOTAL_TOOL_COUNT')
   })
+
+  it('shows human-readable capability labels, never a raw MCP tool identifier', () => {
+    expect(source).toContain('เช็กชื่อ')
+    expect(source).not.toMatch(/mark_attendance_bulk|create_assignment|copy_assignment_to_classrooms/)
+  })
+
+  it('never invents a Telegram launch link — states plainly that none is configured', () => {
+    expect(source).toContain('ยังไม่ได้ตั้งค่าลิงก์ Telegram')
+    expect(source).not.toMatch(/https?:\/\/t\.me/)
+  })
 })

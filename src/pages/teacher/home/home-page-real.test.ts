@@ -40,3 +40,41 @@ describe('HomePageReal — personal command center (Requirement 6)', () => {
     expect(source).toContain('followUpToWorklistItems(followUpRows)')
   })
 })
+
+describe('HomePageReal — visual redesign (welcome hero, stat cards, charts, activity, classroom list)', () => {
+  const source = readSource()
+
+  it('shows the exact requested hero title/subtitle text', () => {
+    expect(source).toContain('ยินดีต้อนรับ ครูผู้สอน')
+    expect(source).toContain('ภาพรวมการจัดการชั้นเรียนของคุณในวันนี้')
+  })
+
+  it('renders 4 StatCards, every value templated from real state — never a literal number', () => {
+    expect((source.match(/<StatCard/g) ?? []).length).toBe(4)
+    expect(source).not.toMatch(/value=\{?['"`]\d+['"`]/)
+  })
+
+  it('feeds the bar chart from getClassroomsWithStudentCounts, the donut chart from getTodayAttendanceSummary', () => {
+    expect(source).toContain('getClassroomsWithStudentCounts')
+    expect(source).toContain('<BarChart')
+    expect(source).toContain('getTodayAttendanceSummary')
+    expect(source).toContain('<DonutChart')
+  })
+
+  it('shows a truthful empty state instead of a zero-filled chart when a chart has no real data yet', () => {
+    expect(source).toContain('classroomsWithCounts.length === 0')
+    expect(source).toContain('attendanceSummary.total === 0')
+  })
+
+  it('reuses RecentActivityCard and ClassroomListCard rather than reimplementing them', () => {
+    expect(source).toContain('<RecentActivityCard')
+    expect(source).toContain('<ClassroomListCard')
+    expect(source).toContain('getRecentActivity')
+    expect(source).toContain('getClassroomListItems')
+  })
+
+  it('feeds the upcoming assignments rail from the same assignmentItems the worklist already loaded', () => {
+    expect(source).toContain('selectUpcomingAssignments(assignmentItems)')
+    expect(source).toContain('<UpcomingAssignmentsCard')
+  })
+})

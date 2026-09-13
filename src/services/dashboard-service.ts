@@ -1,9 +1,11 @@
 import { getAttendanceSummaryReport, getDefaultReportFilters, getGradeSummaryReport, getMissingAssignmentReport } from '@/services/report-service'
 import { computeFollowUpReport } from '@/services/followup-report-service'
+import { getAttendanceSummary } from '@/services/attendance-service'
 import { getClassrooms } from '@/services/classroom-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { getSupabaseClient } from '@/lib/supabase'
 import { getSubjects } from '@/services/subject-service'
+import type { AttendanceRecord, AttendanceStatus, AttendanceSummary } from '@/types/attendance'
 import type { SubmissionStatus } from '@/types/assignment'
 import type { Classroom } from '@/types/classroom'
 import type { FollowUpRow } from '@/types/report'
@@ -78,6 +80,63 @@ export async function getClassroomsWithStudentCounts(): Promise<ClassroomWithStu
   const classrooms = (await getClassrooms()).filter((c) => c.isActive)
   const counts = await Promise.all(classrooms.map((c) => getStudentsByClassroom(c.id)))
   return classrooms.map((c, i) => ({ ...c, studentCount: counts[i].length }))
+}
+
+export interface ClassroomListItem {
+  classroomId: string
+  classroomName: string
+  subjectNames: string[]
+  studentCount: number
+}
+
+/**
+ * Pure — pairs each active classroom with the names of every active
+ * subject linked to it (subject_classrooms), for the Home page's
+ * "ห้องเรียนของฉัน" list. Built the same way getTodaySubjectAttendanceStatus
+ * builds its pairs: one batch link query joined client-side, never one
+ * getClassroomSubjects call per classroom.
+ */
+export function buildClassroomListItems(
+  classrooms: ClassroomWithStudentCount[],
+  links: { subjectId: string; classroomId: string }[],
+  subjectNameById: Map<string, string>,
+): ClassroomListItem[] {
+  const subjectNamesByClassroom = new Map<string, string[]>()
+  for (const link of links) {
+    const name = subjectNameById.get(link.subjectId)
+    if (!name) continue
+    const list = subjectNamesByClassroom.get(link.classroomId) ?? []
+    list.push(name)
+    subjectNamesByClassroom.set(link.classroomId, list)
+  }
+
+  return classrooms.map((c) => ({
+    classroomId: c.id,
+    classroomName: c.name,
+    subjectNames: subjectNamesByClassroom.get(c.id) ?? [],
+    studentCount: c.studentCount,
+  }))
+}
+
+/** Every active classroom plus its linked subject names and student
+ * count, in 3 queries total regardless of classroom count — the Home
+ * page's "ห้องเรียนของฉัน" data source. */
+export async function getClassroomListItems(): Promise<ClassroomListItem[]> {
+  const supabase = getSupabaseClient()
+  const [classrooms, subjects, linksResult] = await Promise.all([
+    getClassroomsWithStudentCounts(),
+    getSubjects(),
+    supabase.from('subject_classrooms').select('subject_id, classroom_id'),
+  ])
+  if (linksResult.error) throw linksResult.error
+
+  const activeSubjectNameById = new Map(subjects.filter((s) => s.isActive).map((s) => [s.id, s.name]))
+  const links = (linksResult.data as { subject_id: string; classroom_id: string }[]).map((l) => ({
+    subjectId: l.subject_id,
+    classroomId: l.classroom_id,
+  }))
+
+  return buildClassroomListItems(classrooms, links, activeSubjectNameById)
 }
 
 // ==================================================
@@ -200,6 +259,45 @@ export async function getTodaySubjectAttendanceStatus(classroomId?: string): Pro
   }))
 
   return buildTodayAttendanceStatuses(pairs, sessions)
+}
+
+/**
+ * Today's attendance records, tallied by status, across every
+ * subject+classroom attendance session recorded today — the donut
+ * chart's data source ("สถานะการเข้าเรียนวันนี้"). Reuses
+ * attendance-service.ts's own getAttendanceSummary tally (the exact
+ * function the live roster/summary card uses) rather than a
+ * re-implemented count; each row is keyed by `${sessionId}:${studentId}`
+ * so a student checked in more than one session today (e.g. two
+ * subjects) is never silently collapsed into one entry the way a
+ * plain student_id key would. Returns an all-zero summary — never
+ * fabricated non-zero numbers — when nothing has been recorded yet
+ * today; the caller shows a truthful empty state in that case.
+ */
+export async function getTodayAttendanceSummary(): Promise<AttendanceSummary> {
+  const supabase = getSupabaseClient()
+  const today = toIso(new Date())
+
+  const { data: sessionRows, error: sessionError } = await supabase
+    .from('attendance_sessions')
+    .select('id')
+    .eq('attendance_date', today)
+  if (sessionError) throw sessionError
+
+  const sessionIds = (sessionRows as { id: string }[]).map((s) => s.id)
+  if (sessionIds.length === 0) return { present: 0, late: 0, leave: 0, absent: 0, total: 0 }
+
+  const { data: recordRows, error: recordError } = await supabase
+    .from('attendance_records')
+    .select('attendance_session_id, student_id, status, note')
+    .in('attendance_session_id', sessionIds)
+  if (recordError) throw recordError
+
+  const records: Record<string, AttendanceRecord> = {}
+  for (const row of recordRows as { attendance_session_id: string; student_id: string; status: AttendanceStatus; note: string | null }[]) {
+    records[`${row.attendance_session_id}:${row.student_id}`] = { studentId: row.student_id, status: row.status, note: row.note }
+  }
+  return getAttendanceSummary(records)
 }
 
 // ==================================================

@@ -1,4 +1,5 @@
-import { Bell, LogOut, Menu, RotateCcw } from 'lucide-react'
+import { Bell, LogOut, Menu, RotateCcw, Search } from 'lucide-react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { ThemeToggle } from '@/components/layout/theme-toggle'
@@ -32,6 +33,40 @@ function MenuButton({ onOpenMobileMenu }: HeaderProps) {
       <Menu className="size-5" />
     </button>
   )
+}
+
+/**
+ * A real, styled search field — kept purely presentational for now
+ * because no cross-entity (student/classroom/subject/assignment) search
+ * index exists anywhere in this codebase yet. It intentionally does not
+ * submit to a fabricated endpoint; wiring it up is future work once such
+ * an index exists, so it never silently no-ops on a real query a teacher
+ * expects to work.
+ */
+function GlobalSearchField() {
+  const [value, setValue] = useState('')
+  return (
+    <div className="relative hidden w-full max-w-sm md:block">
+      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="ค้นหานักเรียน ห้องเรียน รายวิชา หรืองาน..."
+        aria-label="ค้นหา"
+        className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+    </div>
+  )
+}
+
+/** Today's real date — the only "context" this header shows, since no
+ * global current-semester setting exists (semester/academic year are
+ * per-classroom fields, not a single app-wide value that could be shown
+ * truthfully here). */
+function TodayDateLabel() {
+  const label = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  return <span className="hidden shrink-0 text-xs text-muted-foreground lg:block">{label}</span>
 }
 
 function NotificationButton() {
@@ -140,8 +175,11 @@ function RealHeader({ onOpenMobileMenu }: HeaderProps) {
           <h1 className="text-base font-bold tracking-tight">KrunameClass</h1>
           <p className="hidden text-[12px] leading-tight text-muted-foreground sm:block">ระบบจัดการห้องเรียน</p>
         </div>
+
+        <GlobalSearchField />
       </div>
 
+      <TodayDateLabel />
       <ThemeToggle />
       <NotificationButton />
 

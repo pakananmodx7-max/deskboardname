@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/components/dashboard/empty-state'
 import type { RecentActivityItem } from '@/services/dashboard-service'
 
 interface RecentActivityCardProps {
@@ -36,7 +37,7 @@ export function RecentActivityCard({ loading, error, items }: RecentActivityCard
         ) : error ? (
           <p className="px-5 py-6 text-center text-sm text-destructive">{error}</p>
         ) : items.length === 0 ? (
-          <p className="px-5 py-6 text-center text-sm text-muted-foreground">ยังไม่มีกิจกรรมล่าสุด</p>
+          <EmptyState message="ยังไม่มีกิจกรรมล่าสุดที่บันทึกไว้" />
         ) : (
           <ol className="space-y-3 px-5 py-4">
             {items.map((item) => (
