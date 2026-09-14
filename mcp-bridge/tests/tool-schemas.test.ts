@@ -6,21 +6,27 @@ import { ALL_TOOL_NAMES, READ_TOOL_NAMES, WRITE_TOOL_NAMES, toolSchemas } from '
 const UUID = '11111111-1111-1111-1111-111111111111'
 const UUID_2 = '22222222-2222-2222-2222-222222222222'
 
-describe('toolSchemas — exactly the 9 tools from the Edge Function registry (5 read + 4 write)', () => {
+describe('toolSchemas — exactly the 10 tools from the Edge Function registry (5 read + 5 write)', () => {
   it('lists exactly these 5 read tool names', () => {
     expect(new Set(READ_TOOL_NAMES)).toEqual(
       new Set(['list_classrooms', 'list_assignments', 'get_missing_submissions', 'get_classroom_summary', 'get_student_summary']),
     )
   })
 
-  it('lists exactly these 4 write tool names', () => {
+  it('lists exactly these 5 write tool names', () => {
     expect(new Set(WRITE_TOOL_NAMES)).toEqual(
-      new Set(['create_assignment', 'copy_assignment_to_classrooms', 'mark_attendance_bulk', 'mark_submission_status']),
+      new Set([
+        'create_assignment',
+        'copy_assignment_to_classrooms',
+        'mark_attendance_bulk',
+        'mark_submission_status',
+        'mark_submission_status_bulk',
+      ]),
     )
   })
 
-  it('ALL_TOOL_NAMES is exactly the union of read and write, 9 total, no overlap', () => {
-    expect(ALL_TOOL_NAMES).toHaveLength(9)
+  it('ALL_TOOL_NAMES is exactly the union of read and write, 10 total, no overlap', () => {
+    expect(ALL_TOOL_NAMES).toHaveLength(10)
     expect(new Set(ALL_TOOL_NAMES)).toEqual(new Set([...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]))
     for (const writeTool of WRITE_TOOL_NAMES) {
       expect(READ_TOOL_NAMES).not.toContain(writeTool)
@@ -205,6 +211,44 @@ describe('toolSchemas — WRITE argument shapes match write-tools.ts\'s contract
     for (const invalidStatus of ['graded', 'excused', 'pending', '']) {
       expect(shape.safeParse({ assignmentId: UUID, studentId: UUID_2, status: invalidStatus }).success).toBe(false)
     }
+  })
+
+  it('mark_submission_status_bulk: updates required, at least 1 item, each item shaped exactly like mark_submission_status\'s own args', () => {
+    const shape = z.object(toolSchemas.mark_submission_status_bulk.input)
+    expect(shape.safeParse({}).success).toBe(false) // updates missing
+    expect(shape.safeParse({ updates: [] }).success).toBe(false) // below min(1)
+    expect(shape.safeParse({ updates: [{ assignmentId: UUID, studentId: UUID_2, status: 'submitted' }] }).success).toBe(true)
+    expect(shape.safeParse({ updates: [{ assignmentId: UUID, studentId: UUID_2 }] }).success).toBe(false) // status missing
+    expect(shape.safeParse({ updates: [{ assignmentId: UUID, status: 'submitted' }] }).success).toBe(false) // studentId missing
+    expect(shape.safeParse({ updates: [{ assignmentId: 'not-a-uuid', studentId: UUID_2, status: 'submitted' }] }).success).toBe(
+      false,
+    )
+  })
+
+  it('mark_submission_status_bulk: preserves exactly the 4 real production status values per item, no invented values', () => {
+    const shape = z.object(toolSchemas.mark_submission_status_bulk.input)
+    for (const status of ['not_submitted', 'submitted', 'late', 'missing']) {
+      expect(shape.safeParse({ updates: [{ assignmentId: UUID, studentId: UUID_2, status }] }).success).toBe(true)
+    }
+    for (const invalidStatus of ['graded', 'excused', 'pending', '']) {
+      expect(shape.safeParse({ updates: [{ assignmentId: UUID, studentId: UUID_2, status: invalidStatus }] }).success).toBe(
+        false,
+      )
+    }
+  })
+
+  it('mark_submission_status_bulk: accepts a batch of exactly 50 updates, and rejects a batch of 51 — the maximum batch size mirrors write-tools.ts\'s MAX_BULK_SUBMISSION_STATUS_UPDATES', () => {
+    const shape = z.object(toolSchemas.mark_submission_status_bulk.input)
+    const makeUpdates = (count: number) =>
+      Array.from({ length: count }, () => ({ assignmentId: UUID, studentId: UUID_2, status: 'submitted' as const }))
+    expect(shape.safeParse({ updates: makeUpdates(50) }).success).toBe(true)
+    expect(shape.safeParse({ updates: makeUpdates(51) }).success).toBe(false)
+  })
+
+  it('mark_submission_status_bulk: accepts duplicate (same assignmentId/studentId/status) entries in one batch — repeated calls to the same pair are the reused mark_submission_status upsert\'s job, not a schema concern', () => {
+    const shape = z.object(toolSchemas.mark_submission_status_bulk.input)
+    const duplicateUpdate = { assignmentId: UUID, studentId: UUID_2, status: 'submitted' as const }
+    expect(shape.safeParse({ updates: [duplicateUpdate, duplicateUpdate] }).success).toBe(true)
   })
 })
 

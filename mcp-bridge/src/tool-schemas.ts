@@ -47,6 +47,12 @@ import { z } from 'zod'
 const ASSIGNMENT_STATUS_VALUES = ['active', 'archived', 'all'] as const
 const ATTENDANCE_STATUS_VALUES = ['present', 'late', 'leave', 'absent'] as const
 const SUBMISSION_STATUS_VALUES = ['not_submitted', 'submitted', 'late', 'missing'] as const
+/** Mirrors write-tools.ts's own MAX_BULK_SUBMISSION_STATUS_UPDATES exactly
+ * — the Edge Function is still the authoritative enforcement (a batch
+ * over this limit is rejected there with invalid_arguments regardless of
+ * what this bridge lets through), but validating it here too gives
+ * Hermes fast, local feedback instead of a round trip. */
+const MAX_BULK_SUBMISSION_STATUS_UPDATES = 50
 
 const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
   readOnlyHint: true,
@@ -210,6 +216,34 @@ export const toolSchemas = {
       status: z.enum(SUBMISSION_STATUS_VALUES),
     },
   },
+  mark_submission_status_bulk: {
+    description:
+      WRITE_WARNING_PREFIX +
+      `Sets submission status for up to ${MAX_BULK_SUBMISSION_STATUS_UPDATES} (assignment, student) pairs in one call — each update goes through the exact same ownership check, classroom-membership check, and idempotent upsert path as mark_submission_status. Use this instead of calling mark_submission_status once per pair when updating many assignments/students at once. Returns compact counts (requestedCount/changedCount/unchangedCount/failedCount) and a failures[] list naming which updates failed and why — never full submission rows.`,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Idempotent BY DESIGN: every update in the batch runs through the
+      // same upsert-on-(assignment_id, student_id) path as
+      // mark_submission_status, so resubmitting the exact same batch
+      // updates the same rows rather than creating duplicates.
+      idempotentHint: true,
+      openWorldHint: false,
+    } satisfies ToolAnnotations,
+    input: {
+      updates: z
+        .array(
+          z.object({
+            assignmentId: z.string().uuid(),
+            studentId: z.string().uuid(),
+            status: z.enum(SUBMISSION_STATUS_VALUES),
+          }),
+        )
+        .min(1)
+        .max(MAX_BULK_SUBMISSION_STATUS_UPDATES)
+        .describe(`1 to ${MAX_BULK_SUBMISSION_STATUS_UPDATES} updates per call.`),
+    },
+  },
 } as const
 
 export type ToolName = keyof typeof toolSchemas
@@ -229,4 +263,5 @@ export const WRITE_TOOL_NAMES = [
   'copy_assignment_to_classrooms',
   'mark_attendance_bulk',
   'mark_submission_status',
+  'mark_submission_status_bulk',
 ] as const satisfies readonly ToolName[]

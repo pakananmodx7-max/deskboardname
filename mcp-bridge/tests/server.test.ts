@@ -8,11 +8,11 @@ function fakeClient(callTool: ReturnType<typeof vi.fn>): EdgeFunctionClient {
   return { callTool } as unknown as EdgeFunctionClient
 }
 
-describe('createServer — registers exactly the 9 tools (5 read + 4 write)', () => {
+describe('createServer — registers exactly the 10 tools (5 read + 5 write)', () => {
   it('registers exactly ALL_TOOL_NAMES, no more, no fewer', () => {
     const { registeredTools } = createServer(fakeClient(vi.fn()))
     expect(Object.keys(registeredTools).sort()).toEqual([...ALL_TOOL_NAMES].sort())
-    expect(Object.keys(registeredTools)).toHaveLength(9)
+    expect(Object.keys(registeredTools)).toHaveLength(10)
   })
 
   it('registers all 5 read tools', () => {
@@ -22,7 +22,7 @@ describe('createServer — registers exactly the 9 tools (5 read + 4 write)', ()
     }
   })
 
-  it('registers all 4 write tools', () => {
+  it('registers all 5 write tools', () => {
     const { registeredTools } = createServer(fakeClient(vi.fn()))
     for (const name of WRITE_TOOL_NAMES) {
       expect(registeredTools[name]).toBeDefined()
@@ -56,10 +56,11 @@ describe('createServer — registers exactly the 9 tools (5 read + 4 write)', ()
     }
   })
 
-  it('mark_attendance_bulk and mark_submission_status are annotated idempotent; create_assignment and copy_assignment_to_classrooms are not', () => {
+  it('mark_attendance_bulk, mark_submission_status, and mark_submission_status_bulk are annotated idempotent; create_assignment and copy_assignment_to_classrooms are not', () => {
     const { registeredTools } = createServer(fakeClient(vi.fn()))
     expect(registeredTools.mark_attendance_bulk.annotations?.idempotentHint).toBe(true)
     expect(registeredTools.mark_submission_status.annotations?.idempotentHint).toBe(true)
+    expect(registeredTools.mark_submission_status_bulk.annotations?.idempotentHint).toBe(true)
     expect(registeredTools.create_assignment.annotations?.idempotentHint).toBe(false)
     expect(registeredTools.copy_assignment_to_classrooms.annotations?.idempotentHint).toBe(false)
   })
@@ -199,6 +200,88 @@ describe('createServer — write tool handler success paths', () => {
     expect(result.structuredContent).toEqual(data)
   })
 
+  it('mark_submission_status_bulk: forwards the whole updates array in one call and returns the compact aggregate result unmodified', async () => {
+    const data = { requestedCount: 3, changedCount: 2, unchangedCount: 1, failedCount: 0, failures: [] }
+    const callTool = vi.fn().mockResolvedValue({ ok: true, tool: 'mark_submission_status_bulk', data })
+    const { registeredTools } = createServer(fakeClient(callTool))
+    const args = {
+      updates: [
+        { assignmentId: 'a1', studentId: 's1', status: 'submitted' },
+        { assignmentId: 'a1', studentId: 's2', status: 'late' },
+        { assignmentId: 'a2', studentId: 's1', status: 'submitted' },
+      ],
+    }
+
+    const result = await registeredTools.mark_submission_status_bulk.handler(args, {} as never)
+
+    expect(callTool).toHaveBeenCalledExactlyOnceWith('mark_submission_status_bulk', args)
+    expect(result.isError).toBeUndefined()
+    expect(result.structuredContent).toEqual(data)
+  })
+
+  it('mark_submission_status_bulk: a mixed batch reports both changedCount and unchangedCount, never full submission rows', async () => {
+    const data = { requestedCount: 2, changedCount: 1, unchangedCount: 1, failedCount: 0, failures: [] }
+    const callTool = vi.fn().mockResolvedValue({ ok: true, tool: 'mark_submission_status_bulk', data })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.mark_submission_status_bulk.handler(
+      {
+        updates: [
+          { assignmentId: 'a1', studentId: 's1', status: 'submitted' }, // already submitted -> unchanged
+          { assignmentId: 'a1', studentId: 's2', status: 'missing' }, // was not_submitted -> changed
+        ],
+      },
+      {} as never,
+    )
+
+    expect(result.structuredContent).toEqual(data)
+    expect((result.structuredContent as typeof data).changedCount).toBe(1)
+    expect((result.structuredContent as typeof data).unchangedCount).toBe(1)
+  })
+
+  it('mark_submission_status_bulk: a partial failure is reported in failures[] with failedCount, not thrown as a whole-batch error', async () => {
+    const data = {
+      requestedCount: 2,
+      changedCount: 1,
+      unchangedCount: 0,
+      failedCount: 1,
+      failures: [{ assignmentId: 'not-mine', studentId: 's1', code: 'not_found', message: 'ไม่พบงานนี้ หรือคุณไม่มีสิทธิ์เข้าถึง' }],
+    }
+    const callTool = vi.fn().mockResolvedValue({ ok: true, tool: 'mark_submission_status_bulk', data })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.mark_submission_status_bulk.handler(
+      {
+        updates: [
+          { assignmentId: 'a1', studentId: 's1', status: 'submitted' },
+          { assignmentId: 'not-mine', studentId: 's1', status: 'submitted' },
+        ],
+      },
+      {} as never,
+    )
+
+    expect(result.isError).toBeUndefined() // a partial failure is a normal ok:true result, not an MCP error
+    expect((result.structuredContent as typeof data).failedCount).toBe(1)
+    expect((result.structuredContent as typeof data).failures).toHaveLength(1)
+  })
+
+  it('mark_submission_status_bulk: calling the same batch twice is idempotent — the second call reports unchangedCount equal to the batch size', async () => {
+    const firstData = { requestedCount: 1, changedCount: 1, unchangedCount: 0, failedCount: 0, failures: [] }
+    const secondData = { requestedCount: 1, changedCount: 0, unchangedCount: 1, failedCount: 0, failures: [] }
+    const callTool = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, tool: 'mark_submission_status_bulk', data: firstData })
+      .mockResolvedValueOnce({ ok: true, tool: 'mark_submission_status_bulk', data: secondData })
+    const { registeredTools } = createServer(fakeClient(callTool))
+    const args = { updates: [{ assignmentId: 'a1', studentId: 's1', status: 'submitted' }] }
+
+    const first = await registeredTools.mark_submission_status_bulk.handler(args, {} as never)
+    const second = await registeredTools.mark_submission_status_bulk.handler(args, {} as never)
+
+    expect((first.structuredContent as typeof firstData).changedCount).toBe(1)
+    expect((second.structuredContent as typeof secondData).unchangedCount).toBe(1)
+  })
+
   it('mark_submission_status: calling it twice with the same status is idempotent — the second call reports changed: false', async () => {
     const noopData = {
       assignmentId: 'a1',
@@ -332,6 +415,38 @@ describe('createServer — write tool handler error paths (ownership/authorizati
     )
 
     expect(result.isError).toBe(true)
+  })
+
+  it('mark_submission_status_bulk: an unauthorized (expired/invalid teacher session) error surfaces exactly like on every other write tool', async () => {
+    const callTool = vi
+      .fn()
+      .mockResolvedValue({ ok: false, tool: 'mark_submission_status_bulk', error: { code: 'unauthorized', message: 'Teacher authentication failed.' } })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.mark_submission_status_bulk.handler(
+      { updates: [{ assignmentId: 'a1', studentId: 's1', status: 'submitted' }] },
+      {} as never,
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toEqual([{ type: 'text', text: 'unauthorized: Teacher authentication failed.' }])
+  })
+
+  it('mark_submission_status_bulk: a student not belonging to the assignment\'s classroom is reported per-item, and a whole-batch rejection (e.g. over the max batch size) surfaces as isError', async () => {
+    const callTool = vi.fn().mockResolvedValue({
+      ok: false,
+      tool: 'mark_submission_status_bulk',
+      error: { code: 'invalid_arguments', message: 'อัปเดตได้ไม่เกิน 50 รายการต่อครั้ง' },
+    })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.mark_submission_status_bulk.handler(
+      { updates: Array.from({ length: 51 }, () => ({ assignmentId: 'a1', studentId: 's1', status: 'submitted' })) },
+      {} as never,
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toEqual([{ type: 'text', text: 'invalid_arguments: อัปเดตได้ไม่เกิน 50 รายการต่อครั้ง' }])
   })
 
   it('never throws out of a write tool handler even if the client itself throws unexpectedly', async () => {

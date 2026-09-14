@@ -62,6 +62,11 @@ export const HERMES_WRITE_TOOLS: HermesToolInfo[] = [
     label: 'บันทึกสถานะการส่งงาน',
     description: 'ปรับสถานะการส่งงานของนักเรียนรายบุคคล (ส่งแล้ว/ส่งช้า/ขาดส่ง/ยังไม่ส่ง)',
   },
+  {
+    name: 'mark_submission_status_bulk',
+    label: 'บันทึกสถานะการส่งงานหลายรายการ',
+    description: 'ปรับสถานะการส่งงานของนักเรียนหลายคน/หลายงานพร้อมกันในครั้งเดียว (สูงสุด 50 รายการ)',
+  },
 ]
 
 export const HERMES_TOTAL_TOOL_COUNT = HERMES_READ_TOOLS.length + HERMES_WRITE_TOOLS.length

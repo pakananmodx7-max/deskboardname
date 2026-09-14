@@ -63,9 +63,15 @@ describe('credential safety — the service-role key is structurally unreachable
 })
 
 describe('write tools are registered ONLY through tool-schemas.ts + server.ts\'s generic loop — no bespoke write path exists', () => {
-  it('the 4 write tool names are declared exactly once each, inside tool-schemas.ts\'s toolSchemas object (their only definition site)', () => {
+  it('the 5 write tool names are declared exactly once each, inside tool-schemas.ts\'s toolSchemas object (their only definition site)', () => {
     const toolSchemasCode = sourceFiles.find((f) => f.name === 'tool-schemas.ts')!.code
-    for (const writeTool of ['create_assignment', 'copy_assignment_to_classrooms', 'mark_attendance_bulk', 'mark_submission_status']) {
+    for (const writeTool of [
+      'create_assignment',
+      'copy_assignment_to_classrooms',
+      'mark_attendance_bulk',
+      'mark_submission_status',
+      'mark_submission_status_bulk',
+    ]) {
       expect(toolSchemasCode).toContain(`  ${writeTool}: {`)
     }
   })
@@ -73,7 +79,9 @@ describe('write tools are registered ONLY through tool-schemas.ts + server.ts\'s
   it('no source file other than tool-schemas.ts references a write tool by name — server.ts/index.ts stay generic, with no bespoke "if it\'s a write tool" branch', () => {
     for (const file of sourceFiles) {
       if (file.name === 'tool-schemas.ts') continue
-      expect(file.code).not.toMatch(/create_assignment|copy_assignment_to_classrooms|mark_attendance_bulk|mark_submission_status/)
+      expect(file.code).not.toMatch(
+        /create_assignment|copy_assignment_to_classrooms|mark_attendance_bulk|mark_submission_status_bulk|mark_submission_status/,
+      )
     }
   })
 

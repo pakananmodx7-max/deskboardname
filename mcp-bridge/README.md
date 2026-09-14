@@ -2,7 +2,7 @@
 
 A **local** MCP (Model Context Protocol) stdio server that exposes the
 already-deployed production `teacher-agent-tools` Supabase Edge
-Function's 5 read tools and 4 safe write tools to an MCP client such as
+Function's 5 read tools and 5 safe write tools to an MCP client such as
 Hermes.
 
 It runs entirely on the teacher's own machine (this is what makes it a
@@ -30,15 +30,15 @@ it, exactly as it does for the real web app.
 - Not a place with a delete/destroy tool — none exists on the Edge
   Function, so none is exposed here.
 
-## Tools exposed (9 total)
+## Tools exposed (10 total)
 
 **Read (5)** — `list_classrooms`, `list_assignments`,
 `get_missing_submissions`, `get_classroom_summary`, `get_student_summary`.
 
-**Write (4)** — `create_assignment`, `copy_assignment_to_classrooms`,
-`mark_attendance_bulk`, `mark_submission_status`. Each of these **mutates
-real production data** through the same production Edge Function every
-read tool uses:
+**Write (5)** — `create_assignment`, `copy_assignment_to_classrooms`,
+`mark_attendance_bulk`, `mark_submission_status`,
+`mark_submission_status_bulk`. Each of these **mutates real production
+data** through the same production Edge Function every read tool uses:
 
 - Their MCP tool description is prefixed with
   `[WRITE — mutates production data]`, ahead of the exact upstream
@@ -57,6 +57,18 @@ read tool uses:
   `assignment_submissions.status` (`not_submitted`, `submitted`, `late`,
   `missing` — the table's own CHECK constraint), taking only
   `assignmentId`/`studentId`/`status`.
+- `mark_submission_status_bulk` sets status for up to 50
+  `{ assignmentId, studentId, status }` pairs in ONE call — each pair
+  goes through the exact same authorization/validation/upsert path as
+  `mark_submission_status`, run once per pair server-side. Use it
+  instead of many sequential `mark_submission_status` calls when
+  updating several assignments and/or students at once (this is what it
+  exists to prevent — an agent hitting model/tool-output limits after
+  10-50 one-at-a-time calls). It returns only a compact summary
+  (`requestedCount`/`changedCount`/`unchangedCount`/`failedCount` and a
+  `failures[]` list naming which pairs failed and why) — never the full
+  updated submission rows. One failing pair never blocks or rolls back
+  the others.
 - Ownership/authorization is still enforced entirely server-side: a
   classroom, assignment, subject, or student the calling teacher doesn't
   own (or, for `mark_submission_status`, a student who isn't a member of

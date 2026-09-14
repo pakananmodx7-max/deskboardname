@@ -209,6 +209,94 @@ describe('validateArgs — mark_submission_status\'s shape (assignmentId/student
   })
 })
 
+describe('validateArgs — mark_submission_status_bulk\'s shape (an array of mark_submission_status\'s own shape)', () => {
+  const bulkSchema: ToolInputSchema = {
+    type: 'object',
+    properties: {
+      updates: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            assignmentId: { type: 'string', format: 'uuid' },
+            studentId: { type: 'string', format: 'uuid' },
+            status: { type: 'string', enum: ['not_submitted', 'submitted', 'late', 'missing'] },
+          },
+          required: ['assignmentId', 'studentId', 'status'],
+        },
+      },
+    },
+    required: ['updates'],
+  }
+  const VALID_UUID_2 = '22222222-2222-2222-2222-222222222222'
+  const VALID_UUID_3 = '33333333-3333-3333-3333-333333333333'
+
+  it('accepts a well-formed batch of multiple updates for the same student across different assignments', () => {
+    const result = validateArgs(bulkSchema, {
+      updates: [
+        { assignmentId: VALID_UUID, studentId: VALID_UUID_2, status: 'submitted' },
+        { assignmentId: VALID_UUID_3, studentId: VALID_UUID_2, status: 'late' },
+      ],
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('accepts a well-formed batch covering multiple students', () => {
+    const result = validateArgs(bulkSchema, {
+      updates: [
+        { assignmentId: VALID_UUID, studentId: VALID_UUID_2, status: 'submitted' },
+        { assignmentId: VALID_UUID, studentId: VALID_UUID_3, status: 'missing' },
+      ],
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('rejects a missing `updates` field entirely', () => {
+    expect(validateArgs(bulkSchema, {}).ok).toBe(false)
+  })
+
+  it('rejects an update with an invented/typo status value, naming the offending index', () => {
+    const result = validateArgs(bulkSchema, {
+      updates: [{ assignmentId: VALID_UUID, studentId: VALID_UUID_2, status: 'graded' }],
+    })
+    expect(result.ok).toBe(false)
+    expect(result.errors.some((e) => e.includes('updates[0]'))).toBe(true)
+  })
+
+  it('rejects an update with a non-uuid assignmentId or studentId', () => {
+    expect(
+      validateArgs(bulkSchema, { updates: [{ assignmentId: 'not-a-uuid', studentId: VALID_UUID_2, status: 'submitted' }] }).ok,
+    ).toBe(false)
+    expect(
+      validateArgs(bulkSchema, { updates: [{ assignmentId: VALID_UUID, studentId: 'not-a-uuid', status: 'submitted' }] }).ok,
+    ).toBe(false)
+  })
+
+  it('rejects an update missing assignmentId, studentId, or status', () => {
+    expect(validateArgs(bulkSchema, { updates: [{ studentId: VALID_UUID_2, status: 'submitted' }] }).ok).toBe(false)
+    expect(validateArgs(bulkSchema, { updates: [{ assignmentId: VALID_UUID, status: 'submitted' }] }).ok).toBe(false)
+    expect(validateArgs(bulkSchema, { updates: [{ assignmentId: VALID_UUID, studentId: VALID_UUID_2 }] }).ok).toBe(false)
+  })
+
+  it('accepts a duplicate (same assignmentId+studentId+status) entry appearing twice — batch-level idempotency is the handler\'s job, not the schema\'s', () => {
+    const duplicateUpdate = { assignmentId: VALID_UUID, studentId: VALID_UUID_2, status: 'submitted' }
+    const result = validateArgs(bulkSchema, { updates: [duplicateUpdate, duplicateUpdate] })
+    expect(result.ok).toBe(true)
+  })
+
+  it('rejects a non-array `updates` value', () => {
+    expect(validateArgs(bulkSchema, { updates: 'not-an-array' }).ok).toBe(false)
+  })
+
+  it('rejects an unknown extra top-level field', () => {
+    const result = validateArgs(bulkSchema, {
+      updates: [{ assignmentId: VALID_UUID, studentId: VALID_UUID_2, status: 'submitted' }],
+      extraField: 'nope',
+    })
+    expect(result.ok).toBe(false)
+  })
+})
+
 describe('toJsonSchema', () => {
   it('round-trips a schema unchanged (a real JSON Schema object, ready for an OpenAI/Hermes tool definition)', () => {
     expect(toJsonSchema(classroomSchema)).toEqual({

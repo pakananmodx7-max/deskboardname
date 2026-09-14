@@ -145,7 +145,7 @@ describe('supabase-admin.ts — untouched (Google Drive integration must not reg
 })
 
 describe('registry.ts — the tool list Hermes will eventually consume', () => {
-  it('exposes exactly the 9 approved tools, no more', () => {
+  it('exposes exactly the 10 approved tools, no more', () => {
     const names = [
       'list_classrooms',
       'list_assignments',
@@ -156,6 +156,7 @@ describe('registry.ts — the tool list Hermes will eventually consume', () => {
       'copy_assignment_to_classrooms',
       'mark_attendance_bulk',
       'mark_submission_status',
+      'mark_submission_status_bulk',
     ]
     for (const name of names) {
       expect(allToolFiles).toContain(`name: '${name}'`)
@@ -251,7 +252,7 @@ describe('read-tools.ts — 5 read tools, each classroom/subject/assignment-scop
   })
 })
 
-describe('write-tools.ts — the 4 approved safe writes', () => {
+describe('write-tools.ts — the 5 approved safe writes', () => {
   it('create_assignment requires classroom ownership, creates no assignment_submissions row, and enforces teacherId server-side as created_by', () => {
     const fn = writeTools.slice(writeTools.indexOf('async function createAssignment'), writeTools.indexOf('export const createAssignmentTool'))
     expect(fn).toContain('requireOwnedClassroom(client, args.classroomId)')
@@ -289,7 +290,7 @@ describe('write-tools.ts — the 4 approved safe writes', () => {
     expect(writeTools).toContain("ATTENDANCE_STATUS_VALUES = ['present', 'late', 'leave', 'absent']")
   })
 
-  it('none of the 4 write tools ever deletes a row (no .delete( call anywhere in write-tools.ts)', () => {
+  it('none of the 5 write tools ever deletes a row (no .delete( call anywhere in write-tools.ts)', () => {
     expect(writeTools).not.toMatch(/\.delete\(/)
   })
 })
@@ -363,6 +364,113 @@ describe('write-tools.ts — mark_submission_status (submission status write)', 
   it('is registered in writeTools alongside the other 3 write tools', () => {
     expect(writeTools).toContain('markSubmissionStatusTool')
     expect(writeTools).toMatch(/writeTools:\s*AgentTool<any>\[\]\s*=\s*\[[\s\S]*markSubmissionStatusTool/)
+  })
+
+  it('never deletes a row and never touches Storage', () => {
+    expect(fn).not.toMatch(/\.delete\(/)
+    expect(fn).not.toMatch(/\.storage\s*\./)
+  })
+})
+
+describe('write-tools.ts — mark_submission_status_bulk (bulk submission status write)', () => {
+  // Starts at the "10. mark_submission_status_bulk" section header so it
+  // also covers the MAX_BULK_SUBMISSION_STATUS_UPDATES constant and the
+  // MarkSubmissionStatusBulkUpdateInput interface declared just above the
+  // function itself.
+  const section = writeTools.slice(
+    writeTools.indexOf('// 10. mark_submission_status_bulk'),
+    writeTools.indexOf('export const writeTools:'),
+  )
+  const fn = writeTools.slice(
+    writeTools.indexOf('async function markSubmissionStatusBulk'),
+    writeTools.indexOf('export const markSubmissionStatusBulkTool'),
+  )
+  const toolDef = writeTools.slice(
+    writeTools.indexOf('export const markSubmissionStatusBulkTool'),
+    writeTools.indexOf('export const writeTools:'),
+  )
+
+  // -- exists ONLY to avoid sequential mark_submission_status calls -------
+  it('is registered alongside the other 4 write tools, right after markSubmissionStatusTool', () => {
+    expect(writeTools).toMatch(
+      /writeTools:\s*AgentTool<any>\[\]\s*=\s*\[[\s\S]*markSubmissionStatusTool,\s*markSubmissionStatusBulkTool/,
+    )
+  })
+
+  // -- reuses markSubmissionStatus verbatim, no separate data model/write path --
+  it('every update runs through the SAME markSubmissionStatus() function used by the single-item tool — no separate upsert, no separate data model', () => {
+    expect(fn).toContain('await markSubmissionStatus(ctx, update)')
+    expect(fn).not.toContain(".from('assignment_submissions')")
+    expect(fn).not.toContain('.upsert(')
+  })
+
+  it('never uses a service-role/admin client — every query still goes through ctx.client via the reused markSubmissionStatus', () => {
+    expect(fn).not.toMatch(/service[_-]?role|createAdminClient/i)
+  })
+
+  it('never forges teacherId from caller-supplied args', () => {
+    expect(fn).not.toMatch(/args\.teacherId/)
+  })
+
+  // -- only the 4 real production status values, mirrored via the shared constant --
+  it("each update's status is typed against the shared SUBMISSION_STATUS_VALUES constant — no invented status value for the bulk tool", () => {
+    expect(section).toContain('(typeof SUBMISSION_STATUS_VALUES)[number]')
+  })
+
+  // -- maximum batch size ---------------------------------------------------
+  it('rejects an empty batch and a batch over MAX_BULK_SUBMISSION_STATUS_UPDATES (50) before any write is attempted', () => {
+    expect(section).toContain('MAX_BULK_SUBMISSION_STATUS_UPDATES = 50')
+    const emptyCheckIndex = fn.indexOf('args.updates.length === 0')
+    const maxCheckIndex = fn.indexOf('args.updates.length > MAX_BULK_SUBMISSION_STATUS_UPDATES')
+    const promiseAllIndex = fn.indexOf('Promise.all(')
+    expect(emptyCheckIndex).toBeGreaterThan(-1)
+    expect(maxCheckIndex).toBeGreaterThan(-1)
+    expect(emptyCheckIndex).toBeLessThan(promiseAllIndex)
+    expect(maxCheckIndex).toBeLessThan(promiseAllIndex)
+    expect(fn.slice(emptyCheckIndex, emptyCheckIndex + 60)).toMatch(/ValidationError/)
+  })
+
+  // -- partial failure: one bad update never blocks or rolls back the rest --
+  it("each update is independent (try/catch inside Promise.all's mapper) — one failing never throws out of the whole batch and never blocks the others", () => {
+    expect(fn).toContain('Promise.all(')
+    expect(fn).toContain('try {')
+    expect(fn).toContain('} catch (err) {')
+    expect(fn).toContain('ok: false as const')
+  })
+
+  it('classifies a failure by error type — NotFoundError (invalid/unowned assignment, or student not in classroom) -> not_found, ValidationError -> invalid_arguments, anything else -> internal_error', () => {
+    expect(fn).toMatch(/err instanceof NotFoundError[\s\S]{0,20}'not_found'/)
+    expect(fn).toMatch(/err instanceof ValidationError[\s\S]{0,40}'invalid_arguments'/)
+    expect(fn).toContain("'internal_error'")
+  })
+
+  // -- compact result shape only — never large submission objects ---------
+  it('returns ONLY the compact aggregate shape (requestedCount/changedCount/unchangedCount/failedCount/failures) — never previousStatus/score/note/updatedAt per item', () => {
+    const returnBlock = fn.slice(fn.lastIndexOf('return {'))
+    expect(returnBlock).toContain('requestedCount: args.updates.length')
+    expect(returnBlock).toContain('changedCount')
+    expect(returnBlock).toContain('unchangedCount')
+    expect(returnBlock).toContain('failedCount: failures.length')
+    expect(returnBlock).toContain('failures')
+    expect(returnBlock).not.toMatch(/previousStatus|updatedAt/)
+  })
+
+  it('a failure entry names only assignmentId/studentId/code/message — never a full row', () => {
+    expect(fn).toMatch(/assignmentId,\s*studentId,\s*code,\s*message/)
+  })
+
+  // -- idempotency: reuses markSubmissionStatus's own idempotent upsert ---
+  it('changed/unchanged is derived from markSubmissionStatus\'s own `changed` flag — calling the same batch twice yields unchangedCount on the second call, for free, with no extra logic here', () => {
+    expect(fn).toContain('result.changed')
+    expect(fn).toContain('successes.filter((r) => r.changed).length')
+    expect(fn).toContain('successes.filter((r) => !r.changed).length')
+  })
+
+  // -- tool registration shape ---------------------------------------------
+  it("the tool's inputSchema requires `updates` as an array of {assignmentId, studentId, status} objects, matching mark_attendance_bulk's established shape", () => {
+    expect(toolDef).toContain("required: ['updates']")
+    expect(toolDef).toMatch(/updates:\s*\{\s*type:\s*'array'/)
+    expect(toolDef).toContain("required: ['assignmentId', 'studentId', 'status']")
   })
 
   it('never deletes a row and never touches Storage', () => {

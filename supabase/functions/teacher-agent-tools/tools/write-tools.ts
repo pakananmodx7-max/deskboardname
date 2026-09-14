@@ -462,9 +462,130 @@ export const markSubmissionStatusTool: AgentTool<MarkSubmissionStatusArgs> = {
   handler: (ctx, args) => markSubmissionStatus(ctx, args),
 }
 
+// ==================================================
+// 10. mark_submission_status_bulk
+//
+// Exists ONLY to avoid Hermes making 10-50 sequential
+// mark_submission_status calls — and hitting model/tool-output limits —
+// when a teacher wants to update many (assignment, student) pairs at
+// once (e.g. "mark everyone who handed in this week as submitted,
+// across 3 assignments"). Every update in the batch runs through
+// markSubmissionStatus (the exact function above) UNCHANGED: same
+// requireOwnedAssignment ownership check, same classroom_students
+// membership check on a first-ever write, same upsert onConflict
+// (assignment_id, student_id), same ctx.client (the caller's own
+// RLS-scoped client — never service_role). This handler adds no new
+// authorization rule, no new table, and no new write path; it is
+// purely a bounded loop over the existing one, returning a compact
+// aggregate result instead of one full submission object per update
+// (never large submission objects, per the ticket).
+// ==================================================
+
+const MAX_BULK_SUBMISSION_STATUS_UPDATES = 50
+
+interface MarkSubmissionStatusBulkUpdateInput {
+  assignmentId: string
+  studentId: string
+  status: (typeof SUBMISSION_STATUS_VALUES)[number]
+}
+
+interface MarkSubmissionStatusBulkArgs {
+  updates: MarkSubmissionStatusBulkUpdateInput[]
+}
+
+interface MarkSubmissionStatusBulkFailure {
+  assignmentId: string
+  studentId: string
+  code: string
+  message: string
+}
+
+async function markSubmissionStatusBulk(ctx: AgentContext, args: MarkSubmissionStatusBulkArgs) {
+  if (args.updates.length === 0) {
+    throw new ValidationError('กรุณาระบุรายการที่ต้องการอัปเดตอย่างน้อย 1 รายการ')
+  }
+  if (args.updates.length > MAX_BULK_SUBMISSION_STATUS_UPDATES) {
+    throw new ValidationError(`อัปเดตได้ไม่เกิน ${MAX_BULK_SUBMISSION_STATUS_UPDATES} รายการต่อครั้ง`)
+  }
+
+  // Each update runs independently through the EXACT SAME
+  // markSubmissionStatus() as the single-item tool above — one failing
+  // (unowned/nonexistent assignment, student not in the classroom, etc.)
+  // is caught and reported in `failures`, never thrown out of the whole
+  // batch and never blocking the other updates — identical "each item
+  // independent" shape as copyAssignmentToClassrooms above.
+  const results = await Promise.all(
+    args.updates.map(async (update) => {
+      try {
+        const result = await markSubmissionStatus(ctx, update)
+        return { ok: true as const, changed: result.changed }
+      } catch (err) {
+        return {
+          ok: false as const,
+          assignmentId: update.assignmentId,
+          studentId: update.studentId,
+          code:
+            err instanceof NotFoundError
+              ? 'not_found'
+              : err instanceof ValidationError
+                ? 'invalid_arguments'
+                : 'internal_error',
+          message: err instanceof Error ? err.message : 'ไม่สามารถอัปเดตสถานะการส่งงานได้',
+        }
+      }
+    }),
+  )
+
+  const failures: MarkSubmissionStatusBulkFailure[] = results
+    .filter((r): r is { ok: false; assignmentId: string; studentId: string; code: string; message: string } => !r.ok)
+    .map(({ assignmentId, studentId, code, message }) => ({ assignmentId, studentId, code, message }))
+
+  const successes = results.filter((r): r is { ok: true; changed: boolean } => r.ok)
+  const changedCount = successes.filter((r) => r.changed).length
+  const unchangedCount = successes.filter((r) => !r.changed).length
+
+  // Compact aggregate result ONLY — never the updated submission rows
+  // themselves (previousStatus/score/note/updatedAt etc. are exactly
+  // what mark_submission_status already returns per-call; a caller that
+  // needs that detail for one specific pair should call it directly).
+  return {
+    requestedCount: args.updates.length,
+    changedCount,
+    unchangedCount,
+    failedCount: failures.length,
+    failures,
+  }
+}
+
+export const markSubmissionStatusBulkTool: AgentTool<MarkSubmissionStatusBulkArgs> = {
+  name: 'mark_submission_status_bulk',
+  description:
+    `Sets submission status for up to ${MAX_BULK_SUBMISSION_STATUS_UPDATES} (assignment, student) pairs in one call — each update goes through the exact same ownership check, classroom-membership check, and idempotent upsert path as mark_submission_status. Use this instead of calling mark_submission_status once per pair when updating many assignments/students at once. Returns compact counts (requestedCount/changedCount/unchangedCount/failedCount) and a failures[] list naming which updates failed and why — never full submission rows.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      updates: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            assignmentId: { type: 'string', format: 'uuid' },
+            studentId: { type: 'string', format: 'uuid' },
+            status: { type: 'string', enum: SUBMISSION_STATUS_VALUES },
+          },
+          required: ['assignmentId', 'studentId', 'status'],
+        },
+      },
+    },
+    required: ['updates'],
+  },
+  handler: (ctx, args) => markSubmissionStatusBulk(ctx, args),
+}
+
 export const writeTools: AgentTool<any>[] = [
   createAssignmentTool,
   copyAssignmentToClassroomsTool,
   markAttendanceBulkTool,
   markSubmissionStatusTool,
+  markSubmissionStatusBulkTool,
 ]
