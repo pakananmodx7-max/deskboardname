@@ -9,16 +9,21 @@ import {
   computeClassGradeStats,
   computeGradedTally,
   computeGradeRows,
+  computeSubmissionCellState,
+  computeSubmissionCheckTally,
   deriveAssignmentRoster,
   deriveGradeRoster,
   filterRosterByStatus,
+  filterStudentsBySubmissionCheckState,
   getSubmissionSummary,
+  isSubmissionCellGradable,
   mergeSubmissionsWithDefaults,
   nextScoreFocusIndex,
   nextStatusAfterScore,
   parsePastedScores,
   parseScoreInput,
   planScorePaste,
+  searchAssignmentsByTitle,
   searchRoster,
   validateMaxScoreChange,
 } from '@/services/assignment-service'
@@ -707,5 +712,202 @@ describe('deleteAssignmentPermanently — deletes regardless of submissions; Sto
     expect(fnBody).toContain('getAssignmentResources(assignmentId)')
     expect(fnBody).toContain('getSubmissionResourceStoragePathsForAssignment(assignmentId)')
     expect(fnBody).not.toMatch(/getAssignmentResources\((?!assignmentId\))/)
+  })
+})
+
+// ==================================================
+// ตรวจสอบงาน (Submission Check) tab — separating "was this turned in?"
+// from "what score did it get?"
+// ==================================================
+
+describe('computeSubmissionCellState — the ตรวจสอบงาน matrix cell state', () => {
+  it('not submitted, no score -> not_submitted (neutral "—")', () => {
+    expect(computeSubmissionCellState('not_submitted', null)).toBe('not_submitted')
+  })
+
+  it('submitted, no score -> submitted_ungraded — NEVER treated as score 0', () => {
+    expect(computeSubmissionCellState('submitted', null)).toBe('submitted_ungraded')
+  })
+
+  it('late, no score -> late_ungraded', () => {
+    expect(computeSubmissionCellState('late', null)).toBe('late_ungraded')
+  })
+
+  it('missing, no score -> missing', () => {
+    expect(computeSubmissionCellState('missing', null)).toBe('missing')
+  })
+
+  it('ANY status with an explicit score (including exactly 0) -> graded — a real score always wins, even 0', () => {
+    expect(computeSubmissionCellState('submitted', 0)).toBe('graded')
+    expect(computeSubmissionCellState('late', 0)).toBe('graded')
+    expect(computeSubmissionCellState('missing', 0)).toBe('graded')
+    expect(computeSubmissionCellState('not_submitted', 0)).toBe('graded')
+  })
+
+  it('a positive score also grades regardless of status', () => {
+    expect(computeSubmissionCellState('submitted', 8)).toBe('graded')
+    expect(computeSubmissionCellState('late', 10)).toBe('graded')
+  })
+
+  it('distinguishes score=0 (graded) from score=null (ungraded) — the whole point of this feature', () => {
+    const gradedZero = computeSubmissionCellState('submitted', 0)
+    const ungraded = computeSubmissionCellState('submitted', null)
+    expect(gradedZero).not.toBe(ungraded)
+    expect(gradedZero).toBe('graded')
+    expect(ungraded).toBe('submitted_ungraded')
+  })
+})
+
+describe('isSubmissionCellGradable — which cells open the score dialog on click', () => {
+  it('submitted_ungraded, late_ungraded, and graded are clickable ("a submitted ✓ cell")', () => {
+    expect(isSubmissionCellGradable('submitted_ungraded')).toBe(true)
+    expect(isSubmissionCellGradable('late_ungraded')).toBe(true)
+    expect(isSubmissionCellGradable('graded')).toBe(true)
+  })
+
+  it('not_submitted and missing are NOT clickable — marking as submitted stays the งาน tab\'s / Hermes\' job', () => {
+    expect(isSubmissionCellGradable('not_submitted')).toBe(false)
+    expect(isSubmissionCellGradable('missing')).toBe(false)
+  })
+})
+
+describe('computeSubmissionCheckTally — the 4 summary counters (ส่งแล้ว/รอตรวจ/ตรวจแล้ว/ยังไม่ส่ง)', () => {
+  it('tallies a mix of states correctly across students and assignments', () => {
+    const submissionsByAssignment = {
+      a1: {
+        s1: submission('s1', null, 'submitted'), // awaiting review
+        s2: submission('s2', 8, 'submitted'), // graded
+        s3: submission('s3', null, 'not_submitted'), // not submitted
+      },
+      a2: {
+        s1: submission('s1', 15, 'late'), // graded (even though late)
+        s2: submission('s2', null, 'late'), // awaiting review (late)
+        // s3 has no row at all -> defaults to not_submitted
+      },
+    }
+    const tally = computeSubmissionCheckTally(['s1', 's2', 's3'], ['a1', 'a2'], submissionsByAssignment)
+    expect(tally.awaitingReview).toBe(2) // a1/s1, a2/s2
+    expect(tally.graded).toBe(2) // a1/s2, a2/s1
+    expect(tally.notSubmitted).toBe(2) // a1/s3, a2/s3 (missing row)
+    expect(tally.submitted).toBe(4) // awaitingReview + graded
+  })
+
+  it('every cell is counted exactly once — submitted + notSubmitted === total cells (students x assignments)', () => {
+    const submissionsByAssignment = {
+      a1: { s1: submission('s1', null, 'submitted'), s2: submission('s2', 5, 'submitted') },
+      a2: { s1: submission('s1', null, 'missing') },
+    }
+    const tally = computeSubmissionCheckTally(['s1', 's2'], ['a1', 'a2'], submissionsByAssignment)
+    const totalCells = 2 * 2
+    expect(tally.submitted + tally.notSubmitted).toBe(totalCells)
+  })
+
+  it('an explicit score of 0 counts toward "ตรวจแล้ว" (graded), never toward "ยังไม่ส่ง" or "รอตรวจ"', () => {
+    const submissionsByAssignment = { a1: { s1: submission('s1', 0, 'submitted') } }
+    const tally = computeSubmissionCheckTally(['s1'], ['a1'], submissionsByAssignment)
+    expect(tally.graded).toBe(1)
+    expect(tally.awaitingReview).toBe(0)
+    expect(tally.notSubmitted).toBe(0)
+  })
+
+  it('empty roster/assignment list tallies to all zeros', () => {
+    expect(computeSubmissionCheckTally([], [], {})).toEqual({ submitted: 0, awaitingReview: 0, graded: 0, notSubmitted: 0 })
+  })
+})
+
+describe('filterStudentsBySubmissionCheckState — row filter (ทั้งหมด/รอตรวจ/ตรวจแล้ว/ยังไม่ส่ง)', () => {
+  const students = [rosterStudent({ id: 's1' }), rosterStudent({ id: 's2' }), rosterStudent({ id: 's3' })]
+  const submissionsByAssignment = {
+    a1: {
+      s1: submission('s1', null, 'submitted'), // awaiting review
+      s2: submission('s2', 9, 'submitted'), // graded
+      // s3: no row -> not_submitted
+    },
+  }
+
+  it("'all' returns every student unchanged", () => {
+    expect(filterStudentsBySubmissionCheckState(students, ['a1'], submissionsByAssignment, 'all').map((s) => s.id)).toEqual([
+      's1',
+      's2',
+      's3',
+    ])
+  })
+
+  it("'awaiting_review' keeps only students with at least one ungraded-but-submitted cell", () => {
+    const result = filterStudentsBySubmissionCheckState(students, ['a1'], submissionsByAssignment, 'awaiting_review')
+    expect(result.map((s) => s.id)).toEqual(['s1'])
+  })
+
+  it("'graded' keeps only students with at least one graded cell", () => {
+    const result = filterStudentsBySubmissionCheckState(students, ['a1'], submissionsByAssignment, 'graded')
+    expect(result.map((s) => s.id)).toEqual(['s2'])
+  })
+
+  it("'not_submitted' keeps students with a not_submitted OR missing cell (no score, never turned in)", () => {
+    const result = filterStudentsBySubmissionCheckState(students, ['a1'], submissionsByAssignment, 'not_submitted')
+    expect(result.map((s) => s.id)).toEqual(['s3'])
+  })
+
+  it('a student graded 0 is never matched by the not_submitted filter', () => {
+    const zeroGraded = { a1: { s1: submission('s1', 0, 'submitted') } }
+    const result = filterStudentsBySubmissionCheckState([rosterStudent({ id: 's1' })], ['a1'], zeroGraded, 'not_submitted')
+    expect(result).toHaveLength(0)
+  })
+})
+
+describe('searchAssignmentsByTitle — the optional assignment search box', () => {
+  const assignments = [assignment('a1', 10, 'ใบงาน 1'), assignment('a2', 20, 'Quiz กลางภาค'), assignment('a3', 30, 'Final Project')]
+
+  it('an empty/whitespace query returns every assignment, in the same order', () => {
+    expect(searchAssignmentsByTitle(assignments, '').map((a) => a.id)).toEqual(['a1', 'a2', 'a3'])
+    expect(searchAssignmentsByTitle(assignments, '   ').map((a) => a.id)).toEqual(['a1', 'a2', 'a3'])
+  })
+
+  it('matches case-insensitively on a substring of the title', () => {
+    expect(searchAssignmentsByTitle(assignments, 'quiz').map((a) => a.id)).toEqual(['a2'])
+    expect(searchAssignmentsByTitle(assignments, 'final').map((a) => a.id)).toEqual(['a3'])
+  })
+
+  it('matches Thai titles too', () => {
+    expect(searchAssignmentsByTitle(assignments, 'ใบงาน').map((a) => a.id)).toEqual(['a1'])
+  })
+
+  it('no match returns an empty array', () => {
+    expect(searchAssignmentsByTitle(assignments, 'nope')).toEqual([])
+  })
+})
+
+describe('Hermes-written submission states render correctly in ตรวจสอบงาน — mark_submission_status/mark_submission_status_bulk write the SAME status/score columns this reads', () => {
+  it('a submission Hermes marked "submitted" (no score) renders as submitted_ungraded, exactly like a teacher-marked one — no separate "checked by Hermes" state exists', () => {
+    // mark_submission_status_bulk's own upsert never sets `score` — see
+    // supabase/functions/teacher-agent-tools/tools/write-tools.ts's
+    // markSubmissionStatus, which only ever writes { status }. A row
+    // written that way is indistinguishable, on read, from one the
+    // teacher marked by hand — there is no separate flag to fall out of
+    // sync.
+    const hermesWritten = submission('s1', null, 'submitted')
+    expect(computeSubmissionCellState(hermesWritten.status, hermesWritten.score)).toBe('submitted_ungraded')
+    expect(isSubmissionCellGradable(computeSubmissionCellState(hermesWritten.status, hermesWritten.score))).toBe(true)
+  })
+
+  it('11 Hermes-marked-submitted assignments all show as awaiting review in the tally, none as graded, none as score 0', () => {
+    const submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>> = {}
+    const assignmentIds = Array.from({ length: 11 }, (_, i) => `a${i}`)
+    for (const id of assignmentIds) {
+      submissionsByAssignment[id] = { s1: submission('s1', null, 'submitted') }
+    }
+    const tally = computeSubmissionCheckTally(['s1'], assignmentIds, submissionsByAssignment)
+    expect(tally.awaitingReview).toBe(11)
+    expect(tally.graded).toBe(0)
+    expect(tally.notSubmitted).toBe(0)
+    expect(tally.submitted).toBe(11)
+  })
+
+  it('a score Hermes writes via mark_submission_status_bulk (still just status, never score) never appears as graded until a teacher enters one here', () => {
+    // Hermes' write tools never write `score` (see write-tools.ts's
+    // markSubmissionStatus upsert shape) — grading stays exclusively a
+    // teacher action through this tab's setSubmissionScore call.
+    expect(computeSubmissionCellState('late', null)).toBe('late_ungraded')
+    expect(computeSubmissionCellState('late', null)).not.toBe('graded')
   })
 })

@@ -927,3 +927,151 @@ export function getNextAssignment(activeAssignments: Assignment[], currentAssign
   const index = findSwitcherIndex(activeAssignments, currentAssignmentId)
   return index !== -1 && index < activeAssignments.length - 1 ? activeAssignments[index + 1] : null
 }
+
+// ==================================================
+// ตรวจสอบงาน (Submission Check) tab — separates "was this turned in?"
+// from "what score did it get?", both derived purely from the SAME
+// assignment_submissions.status/score columns the งาน and คะแนน tabs
+// already read (via getAssignments/getSubmissions above) — no new
+// table, no new database status, no separate "checked" flag. The only
+// new concept here is a pure, display-only derivation of one of 5
+// VISUAL cell states from the existing (status, score) pair, exactly
+// like submission-service.ts's StudentFacingSubmissionStatus 'reviewed'
+// derivation for the student side.
+// ==================================================
+
+/**
+ * The ตรวจสอบงาน matrix cell's visual state for one (assignment,
+ * student) pair. `score !== null` always wins over status — once a
+ * teacher has recorded ANY score (including on a 'late' or 'missing'
+ * submission), grading is complete and the cell shows the score,
+ * regardless of how the work arrived. This is the exact same "score is
+ * the source of truth for graded" rule computeGradedTally already uses
+ * for the assignment detail page's ตรวจแล้ว/ยังไม่ตรวจ count — nothing
+ * new is invented here, only reused.
+ *
+ * 'submitted_ungraded'/'late_ungraded' are pure DISPLAY derivations
+ * (status is 'submitted'/'late' AND score is still null) — never a 5th
+ * database status. This is the one place that distinguishes "turned in,
+ * not yet graded" from "score = 0" (an explicit score, checked via
+ * `!== null`, not `!score`) and from "never turned in" — the whole
+ * point of this feature.
+ */
+export type SubmissionCellState = 'not_submitted' | 'submitted_ungraded' | 'late_ungraded' | 'missing' | 'graded'
+
+export const SUBMISSION_CELL_STATE_LABEL: Record<SubmissionCellState, string> = {
+  not_submitted: 'ยังไม่ส่ง',
+  submitted_ungraded: 'ส่งแล้ว · รอตรวจ',
+  late_ungraded: 'ส่งช้า · รอตรวจ',
+  missing: 'ขาดส่ง',
+  graded: 'ตรวจแล้ว',
+}
+
+export function computeSubmissionCellState(status: SubmissionStatus, score: number | null): SubmissionCellState {
+  if (score !== null) return 'graded'
+  if (status === 'missing') return 'missing'
+  if (status === 'late') return 'late_ungraded'
+  if (status === 'submitted') return 'submitted_ungraded'
+  return 'not_submitted'
+}
+
+/** Cell states a teacher can click to open the score dialog from — any
+ * cell representing turned-in work ("a submitted ✓ cell", whether
+ * already graded or still awaiting review). 'not_submitted' and
+ * 'missing' stay informational-only in this tab: marking a student as
+ * having submitted is the existing งาน tab's (and Hermes'
+ * mark_submission_status/mark_submission_status_bulk's) job, not this
+ * tab's — ตรวจสอบงาน only separates checking from grading for work that
+ * has already arrived. */
+export function isSubmissionCellGradable(state: SubmissionCellState): boolean {
+  return state === 'submitted_ungraded' || state === 'late_ungraded' || state === 'graded'
+}
+
+export interface SubmissionCheckTally {
+  /** Turned in at all — awaitingReview + graded. Always internally
+   * consistent with the other three (every cell counted exactly once). */
+  submitted: number
+  /** Turned in, score still null — "ส่งแล้ว · รอตรวจ" / "ส่งช้า · รอตรวจ". */
+  awaitingReview: number
+  /** Has an explicit, non-null score — "ตรวจแล้ว". */
+  graded: number
+  /** 'not_submitted' or 'missing' with no score yet — "ยังไม่ส่ง". */
+  notSubmitted: number
+}
+
+/**
+ * Tallies every (student, assignment) cell in the matrix into exactly
+ * one of the 4 top-of-tab counters. Iterates the full `studentIds` ×
+ * `assignmentIds` cross product so a student/assignment with NO
+ * submission row at all still counts as 'not_submitted' — the same
+ * "missing row = not_submitted" default buildDefaultSubmissions uses
+ * everywhere else in this file.
+ */
+export function computeSubmissionCheckTally(
+  studentIds: string[],
+  assignmentIds: string[],
+  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
+): SubmissionCheckTally {
+  let awaitingReview = 0
+  let graded = 0
+  let notSubmitted = 0
+
+  for (const assignmentId of assignmentIds) {
+    for (const studentId of studentIds) {
+      const submission = submissionsByAssignment[assignmentId]?.[studentId]
+      const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)
+      if (state === 'graded') graded += 1
+      else if (state === 'submitted_ungraded' || state === 'late_ungraded') awaitingReview += 1
+      else notSubmitted += 1
+    }
+  }
+
+  return { submitted: awaitingReview + graded, awaitingReview, graded, notSubmitted }
+}
+
+export type SubmissionCheckFilter = 'all' | 'awaiting_review' | 'graded' | 'not_submitted'
+
+export const SUBMISSION_CHECK_FILTERS: { key: SubmissionCheckFilter; label: string }[] = [
+  { key: 'all', label: 'ทั้งหมด' },
+  { key: 'awaiting_review', label: 'รอตรวจ' },
+  { key: 'graded', label: 'ตรวจแล้ว' },
+  { key: 'not_submitted', label: 'ยังไม่ส่ง' },
+]
+
+/**
+ * Filters the student roster to only those with AT LEAST ONE cell (among
+ * `assignmentIds`, the assignments currently shown) matching the filter
+ * — "who still needs review anywhere", "who hasn't turned in anything
+ * yet", etc. `'all'` returns the roster unchanged. Never touches the
+ * summary tally above, which always reflects every shown assignment
+ * regardless of this filter — same "summary counts stay truthful
+ * regardless of the current table filter" rule as filterRosterByStatus.
+ */
+export function filterStudentsBySubmissionCheckState<T extends { id: string }>(
+  students: T[],
+  assignmentIds: string[],
+  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
+  filter: SubmissionCheckFilter,
+): T[] {
+  if (filter === 'all') return [...students]
+
+  return students.filter((student) =>
+    assignmentIds.some((assignmentId) => {
+      const submission = submissionsByAssignment[assignmentId]?.[student.id]
+      const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)
+      if (filter === 'awaiting_review') return state === 'submitted_ungraded' || state === 'late_ungraded'
+      if (filter === 'graded') return state === 'graded'
+      return state === 'not_submitted' || state === 'missing'
+    }),
+  )
+}
+
+/** Narrows the assignment COLUMNS shown — the tab's optional "search
+ * assignments" box for when the matrix gets too wide. Case-insensitive
+ * substring match on title only; an empty/whitespace query returns the
+ * list unchanged (a new array, matching searchRoster's own contract). */
+export function searchAssignmentsByTitle(assignments: Assignment[], query: string): Assignment[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return [...assignments]
+  return assignments.filter((a) => a.title.toLowerCase().includes(q))
+}

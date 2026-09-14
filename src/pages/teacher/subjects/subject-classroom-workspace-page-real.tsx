@@ -9,13 +9,14 @@ import { GradesTab } from '@/features/subjects-real/tabs/grades-tab'
 import { LessonsTab } from '@/features/subjects-real/tabs/lessons-tab'
 import { OverviewTab } from '@/features/subjects-real/tabs/overview-tab'
 import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
+import { SubmissionCheckTab } from '@/features/subjects-real/tabs/submission-check-tab'
 import { buildSubjectClassroomPath, isClassroomLinkedToSubject } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { getSubjectById, getSubjectClassroomsWithCounts } from '@/services/subject-service'
 import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
-type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments' | 'grades'
+type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments' | 'submissionCheck' | 'grades'
 
 /** Exported (rather than kept module-private) so the exact tab set — and
  * specifically that Topics is gone — is unit-testable without rendering.
@@ -23,13 +24,20 @@ type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments'
  *
  * บทเรียน (Lessons) sits between เช็คชื่อ and งาน — teacher-organized
  * learning materials (slides/videos/documents/links), completely
- * separate from the assignment workflow (see 0015_lessons.sql). */
+ * separate from the assignment workflow (see 0015_lessons.sql).
+ *
+ * ตรวจสอบงาน sits directly after งาน (its own submission-check matrix,
+ * separate from คะแนน's grade-focused one — see submission-check-tab.tsx)
+ * and before คะแนน, matching the requested งาน → ตรวจสอบงาน → ... → คะแนน
+ * ordering; existing tabs keep their prior relative order otherwise, so
+ * no existing ?tab= deep link or position changes. */
 export const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
   { key: 'attendance', label: 'เช็กชื่อ' },
   { key: 'lessons', label: 'บทเรียน' },
   { key: 'assignments', label: 'งาน' },
+  { key: 'submissionCheck', label: 'ตรวจสอบงาน' },
   { key: 'grades', label: 'คะแนน' },
 ]
 
@@ -192,6 +200,7 @@ export function SubjectClassroomWorkspacePageReal() {
         )}
         {activeTab === 'lessons' && <LessonsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'assignments' && <AssignmentsTab subject={subject} classroomId={activeClassroomId} />}
+        {activeTab === 'submissionCheck' && <SubmissionCheckTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'grades' && (
           <GradesTab subject={subject} classroomId={activeClassroomId} classroomName={currentLink.classroomName ?? ''} />
         )}
