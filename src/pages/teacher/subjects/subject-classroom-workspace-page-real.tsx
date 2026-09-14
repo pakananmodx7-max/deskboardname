@@ -5,18 +5,17 @@ import { Badge } from '@/components/ui/badge'
 import { NativeSelect } from '@/components/ui/select'
 import { AssignmentsTab } from '@/features/subjects-real/tabs/assignments-tab'
 import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
-import { GradesTab } from '@/features/subjects-real/tabs/grades-tab'
+import { CheckAndGradesTab } from '@/features/subjects-real/tabs/check-and-grades-tab'
 import { LessonsTab } from '@/features/subjects-real/tabs/lessons-tab'
 import { OverviewTab } from '@/features/subjects-real/tabs/overview-tab'
 import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
-import { SubmissionCheckTab } from '@/features/subjects-real/tabs/submission-check-tab'
 import { buildSubjectClassroomPath, isClassroomLinkedToSubject } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { getSubjectById, getSubjectClassroomsWithCounts } from '@/services/subject-service'
 import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
-type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments' | 'submissionCheck' | 'grades'
+type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments' | 'checkAndGrades'
 
 /** Exported (rather than kept module-private) so the exact tab set — and
  * specifically that Topics is gone — is unit-testable without rendering.
@@ -26,19 +25,20 @@ type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments'
  * learning materials (slides/videos/documents/links), completely
  * separate from the assignment workflow (see 0015_lessons.sql).
  *
- * ตรวจสอบงาน sits directly after งาน (its own submission-check matrix,
- * separate from คะแนน's grade-focused one — see submission-check-tab.tsx)
- * and before คะแนน, matching the requested งาน → ตรวจสอบงาน → ... → คะแนน
- * ordering; existing tabs keep their prior relative order otherwise, so
- * no existing ?tab= deep link or position changes. */
+ * ตรวจงานและคะแนน sits directly after งาน — the formerly separate
+ * ตรวจสอบงาน and คะแนน top-level tabs are merged into this ONE tab, with
+ * ตรวจสอบงาน/คะแนน as inner sub-tabs instead (see check-and-grades-tab.tsx).
+ * Nothing else about the underlying submission-check or grades UI
+ * changed — only where it's reached from. Every other tab keeps its
+ * prior relative order/key, so no other existing ?tab= deep link
+ * changes. */
 export const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
   { key: 'attendance', label: 'เช็กชื่อ' },
   { key: 'lessons', label: 'บทเรียน' },
   { key: 'assignments', label: 'งาน' },
-  { key: 'submissionCheck', label: 'ตรวจสอบงาน' },
-  { key: 'grades', label: 'คะแนน' },
+  { key: 'checkAndGrades', label: 'ตรวจงานและคะแนน' },
 ]
 
 /**
@@ -69,7 +69,7 @@ function isTabKey(value: string | null): value is TabKey {
 export function SubjectClassroomWorkspacePageReal() {
   const { subjectId, classroomId } = useParams<{ subjectId: string; classroomId: string }>()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   // Lets a caller (e.g. the Dashboard Control Center's "เช็คชื่อ"/"ให้คะแนน"
   // deep links) open this workspace straight to a specific tab via
   // ?tab=attendance instead of always landing on ภาพรวม — see
@@ -78,6 +78,24 @@ export function SubjectClassroomWorkspacePageReal() {
   // back to 'overview'.
   const initialTabParam = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState<TabKey>(isTabKey(initialTabParam) ? initialTabParam : 'overview')
+
+  // Keeps ?tab= in sync with every click (not just the initial deep
+  // link) — this is what lets ตรวจงานและคะแนน's own inner ?subtab=
+  // (see check-and-grades-tab.tsx) survive a refresh: without ?tab=
+  // itself also surviving, the page would land back on ภาพรวม first and
+  // the inner sub-tab would never even be reached. `replace: true` so
+  // clicking through tabs doesn't spam the browser history stack.
+  function handleTabClick(key: TabKey) {
+    setActiveTab(key)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('tab', key)
+        return next
+      },
+      { replace: true },
+    )
+  }
 
   const [subject, setSubject] = useState<Subject | null | undefined>(undefined)
   const [links, setLinks] = useState<SubjectClassroomWithCount[]>([])
@@ -170,7 +188,7 @@ export function SubjectClassroomWorkspacePageReal() {
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => handleTabClick(tab.key)}
               className={cn(
                 'shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
                 activeTab === tab.key
@@ -200,9 +218,8 @@ export function SubjectClassroomWorkspacePageReal() {
         )}
         {activeTab === 'lessons' && <LessonsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'assignments' && <AssignmentsTab subject={subject} classroomId={activeClassroomId} />}
-        {activeTab === 'submissionCheck' && <SubmissionCheckTab subject={subject} classroomId={activeClassroomId} />}
-        {activeTab === 'grades' && (
-          <GradesTab subject={subject} classroomId={activeClassroomId} classroomName={currentLink.classroomName ?? ''} />
+        {activeTab === 'checkAndGrades' && (
+          <CheckAndGradesTab subject={subject} classroomId={activeClassroomId} classroomName={currentLink.classroomName ?? ''} />
         )}
       </div>
     </div>

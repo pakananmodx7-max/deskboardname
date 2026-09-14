@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { TABS as REAL_TABS } from '@/pages/teacher/subjects/subject-classroom-workspace-page-real'
 import { TABS as DEMO_TABS } from '@/pages/teacher/subjects/subject-classroom-workspace-page-demo'
 
-describe('Subject-Classroom workspace tabs — Topics removed, real and demo in sync', () => {
+describe('Subject-Classroom workspace tabs — Topics removed, ตรวจสอบงาน+คะแนน merged into ตรวจงานและคะแนน', () => {
   const expectedDemoKeys = ['overview', 'students', 'attendance', 'lessons', 'assignments', 'grades']
-  const expectedRealKeys = ['overview', 'students', 'attendance', 'lessons', 'assignments', 'submissionCheck', 'grades']
+  const expectedRealKeys = ['overview', 'students', 'attendance', 'lessons', 'assignments', 'checkAndGrades']
 
   it('real workspace has no Topics ("หัวข้อ") tab', () => {
     expect(REAL_TABS.some((tab) => (tab.key as string) === 'topics')).toBe(false)
@@ -17,23 +17,27 @@ describe('Subject-Classroom workspace tabs — Topics removed, real and demo in 
     expect(DEMO_TABS.some((tab) => tab.label === 'หัวข้อ')).toBe(false)
   })
 
-  it('real workspace is exactly ภาพรวม/นักเรียน/เช็กชื่อ/บทเรียน/งาน/ตรวจสอบงาน/คะแนน, in that order', () => {
+  it('real workspace is exactly ภาพรวม/นักเรียน/เช็กชื่อ/บทเรียน/งาน/ตรวจงานและคะแนน, in that order — ตรวจสอบงาน and คะแนน are no longer separate top-level tabs', () => {
     expect(REAL_TABS.map((tab) => tab.key)).toEqual(expectedRealKeys)
+    expect(REAL_TABS.some((tab) => (tab.key as string) === 'submissionCheck')).toBe(false)
+    expect(REAL_TABS.some((tab) => (tab.key as string) === 'grades')).toBe(false)
+    const merged = REAL_TABS.find((tab) => tab.key === 'checkAndGrades')
+    expect(merged?.label).toBe('ตรวจงานและคะแนน')
   })
 
-  it('ตรวจสอบงาน sits directly between งาน and คะแนน', () => {
+  it('ตรวจงานและคะแนน sits directly after งาน — the same position ตรวจสอบงาน used to occupy, and is the last tab', () => {
     const keys = REAL_TABS.map((tab) => tab.key)
-    expect(keys.indexOf('submissionCheck')).toBe(keys.indexOf('assignments') + 1)
-    expect(keys.indexOf('grades')).toBe(keys.indexOf('submissionCheck') + 1)
+    expect(keys.indexOf('checkAndGrades')).toBe(keys.indexOf('assignments') + 1)
+    expect(keys.indexOf('checkAndGrades')).toBe(keys.length - 1)
   })
 
-  it('demo workspace matches the real workspace’s tab set MINUS ตรวจสอบงาน — that tab is real-data-only (submission checking/grading on actual assignment_submissions rows), never backed by demo/mock data', () => {
+  it('demo workspace still has its OWN standalone คะแนน tab — demo never had a ตรวจสอบงาน sibling to merge with (real-data-only feature), so nothing to merge there; every tab BEFORE the merged/grades one still matches real tab-for-tab', () => {
     expect(DEMO_TABS.map((tab) => tab.key)).toEqual(expectedDemoKeys)
-    expect(DEMO_TABS.some((tab) => (tab.key as string) === 'submissionCheck')).toBe(false)
-    // every OTHER tab still matches real exactly, in the same relative order
-    const realWithoutSubmissionCheck = REAL_TABS.filter((tab) => tab.key !== 'submissionCheck')
-    expect(DEMO_TABS.map((tab) => tab.key)).toEqual(realWithoutSubmissionCheck.map((tab) => tab.key))
-    expect(DEMO_TABS.map((tab) => tab.label)).toEqual(realWithoutSubmissionCheck.map((tab) => tab.label))
+    expect(DEMO_TABS.some((tab) => (tab.key as string) === 'checkAndGrades')).toBe(false)
+    const realWithoutMergedTab = REAL_TABS.filter((tab) => tab.key !== 'checkAndGrades')
+    const demoWithoutGrades = DEMO_TABS.filter((tab) => tab.key !== 'grades')
+    expect(demoWithoutGrades.map((tab) => tab.key)).toEqual(realWithoutMergedTab.map((tab) => tab.key))
+    expect(demoWithoutGrades.map((tab) => tab.label)).toEqual(realWithoutMergedTab.map((tab) => tab.label))
   })
 
   it('attendance is spelled "เช็กชื่อ" — the same spelling the Classroom Workspace tab uses, never "เช็คชื่อ"', () => {
