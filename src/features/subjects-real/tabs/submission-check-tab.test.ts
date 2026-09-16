@@ -77,7 +77,7 @@ describe('SubmissionCheckTab — "+ สร้างงาน": create assignment
   })
 })
 
-describe('SubmissionCheckTab — cell rendering: submitted-but-ungraded is never score 0', () => {
+describe('SubmissionCheckTab — cell rendering: green ✓ = ตรวจแล้ว, never score 0, no "รอตรวจ"/awaiting-review treatment', () => {
   const source = readSource()
 
   it('computes each cell\'s state via computeSubmissionCellState(status, score) — status/score straight from the fetched submission, never defaulted to 0', () => {
@@ -95,18 +95,15 @@ describe('SubmissionCheckTab — cell rendering: submitted-but-ungraded is never
     expect(cellFn).not.toContain('score ?? 0')
   })
 
-  it('submitted_ungraded renders a green check (CheckCircle2) with NO score text next to it — visually distinct from the graded "score/max" branch', () => {
+  it('"submitted" (covering both submitted and late statuses with no score) renders a green check (CheckCircle2) with NO score text next to it — visually distinct from the graded "score/max" branch, and with NO separate amber/"awaiting" treatment for late', () => {
     const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
-    const ungradedBranch = cellFn.slice(cellFn.indexOf("state === 'submitted_ungraded'"), cellFn.indexOf("state === 'late_ungraded'"))
-    expect(ungradedBranch).toContain('CheckCircle2')
-    expect(ungradedBranch).not.toMatch(/\{score\}/)
-  })
-
-  it('late_ungraded renders an explicit "สาย" label (the spec\'s exact cell-state legend), distinct from submitted_ungraded and from ขาดส่ง', () => {
-    const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
-    const lateBranch = cellFn.slice(cellFn.indexOf("state === 'late_ungraded'"), cellFn.indexOf("state === 'missing'"))
-    expect(lateBranch).toContain('สาย')
-    expect(lateBranch).toContain('text-warning-foreground')
+    const submittedBranch = cellFn.slice(cellFn.indexOf("state === 'submitted'"), cellFn.indexOf("state === 'missing'"))
+    expect(submittedBranch).toContain('CheckCircle2')
+    expect(submittedBranch).not.toMatch(/\{score\}/)
+    expect(cellFn).not.toContain("state === 'submitted_ungraded'")
+    expect(cellFn).not.toContain("state === 'late_ungraded'")
+    expect(cellFn).not.toContain('สาย')
+    expect(cellFn).not.toContain('Clock3')
   })
 
   it('missing renders "ขาดส่ง", not_submitted renders a neutral "—"', () => {
@@ -116,8 +113,9 @@ describe('SubmissionCheckTab — cell rendering: submitted-but-ungraded is never
     expect(cellFn).toContain('return <span className="text-muted-foreground">—</span>')
   })
 
-  it('the tooltip/label text comes from SUBMISSION_CELL_STATE_LABEL — includes the exact required "ส่งแล้ว · รอตรวจ" wording, never invented copy', () => {
+  it('the tooltip/label text comes from SUBMISSION_CELL_STATE_LABEL and reads "ตรวจแล้ว" for a checked cell — never "รอตรวจ"/awaiting-review copy', () => {
     expect(source).toContain('title={SUBMISSION_CELL_STATE_LABEL[state]}')
+    expect(source).not.toContain('รอตรวจ')
   })
 })
 
@@ -340,14 +338,15 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
   })
 })
 
-describe('SubmissionCheckTab — summary counters and filters', () => {
+describe('SubmissionCheckTab — summary counters and filters: no "รอตรวจ"/awaiting-review bucket anywhere', () => {
   const source = readSource()
 
-  it('renders exactly the 4 required counters: ส่งแล้ว, รอตรวจ, ตรวจแล้ว, ยังไม่ส่ง', () => {
-    expect(source).toContain('label="ส่งแล้ว" value={tally.submitted}')
-    expect(source).toContain('label="รอตรวจ" value={tally.awaitingReview}')
-    expect(source).toContain('label="ตรวจแล้ว" value={tally.graded}')
+  it('renders exactly the 3 required counters: ตรวจแล้ว, ให้คะแนนแล้ว, ยังไม่ส่ง — no separate "รอตรวจ"/"ส่งแล้ว" split', () => {
+    expect(source).toContain('label="ตรวจแล้ว" value={tally.checked}')
+    expect(source).toContain('label="ให้คะแนนแล้ว" value={tally.graded}')
     expect(source).toContain('label="ยังไม่ส่ง" value={tally.notSubmitted}')
+    expect(source).not.toContain('รอตรวจ')
+    expect(source).not.toMatch(/tally\.awaitingReview|tally\.submitted\b/)
   })
 
   it('the tally and filter both come from the shared pure functions, computed over the CURRENTLY VISIBLE (searched) assignment columns', () => {
@@ -355,7 +354,7 @@ describe('SubmissionCheckTab — summary counters and filters', () => {
     expect(source).toContain('filterStudentsBySubmissionCheckState(roster, visibleAssignmentIds, submissionsByAssignment, filter)')
   })
 
-  it('renders the filter buttons from SUBMISSION_CHECK_FILTERS (ทั้งหมด/รอตรวจ/ตรวจแล้ว/ยังไม่ส่ง) — no separate, hand-typed filter list', () => {
+  it('renders the filter buttons from SUBMISSION_CHECK_FILTERS (ทั้งหมด/ตรวจแล้ว/ให้คะแนนแล้ว/ยังไม่ส่ง) — no separate, hand-typed filter list, and no "รอตรวจ" filter option', () => {
     expect(source).toContain('SUBMISSION_CHECK_FILTERS.map((f) =>')
   })
 

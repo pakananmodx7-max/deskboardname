@@ -24,7 +24,7 @@ describe('GradesTab — export grades (Google Sheets Integration, Section 2/6)',
   })
 })
 
-describe('GradesTab — a submitted-but-ungraded score cell is never rendered/treated as 0', () => {
+describe('GradesTab — a submitted-but-ungraded score cell is never rendered/treated as 0, and never shown as "รอตรวจ"', () => {
   const source = readSource()
 
   it('derives each cell\'s state via the shared computeSubmissionCellState — no locally reinvented ungraded check', () => {
@@ -33,8 +33,10 @@ describe('GradesTab — a submitted-but-ungraded score cell is never rendered/tr
     expect(source).toContain('computeSubmissionCellState(status, score)')
   })
 
-  it('a submitted/late-but-ungraded cell shows a "รอตรวจ" placeholder, distinct from a plain not-submitted cell', () => {
-    expect(source).toContain("cellState === 'submitted_ungraded' || cellState === 'late_ungraded' ? 'รอตรวจ' : '—'")
+  it('a submitted/late-but-ungraded cell (already ตรวจแล้ว) shows a "✓" placeholder, distinct from a plain not-submitted cell — never "รอตรวจ"', () => {
+    expect(source).toContain("cellState === 'submitted' ? '✓' : '—'")
+    expect(source).not.toContain('รอตรวจ')
+    expect(source).not.toMatch(/submitted_ungraded|late_ungraded/)
   })
 
   it('the score <Input> itself is never given a literal 0 default for an ungraded cell — defaultValue always comes straight from the real score (null stays null, never coerced)', () => {

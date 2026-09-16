@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, Clock3, Plus, Search, Users } from 'lucide-react'
+import { Check, CheckCircle2, Plus, Search, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -79,7 +79,10 @@ function studentDisplayName(student: ClassroomStudent): string {
  * no mock data, no invented database status. Cell state is a pure
  * DISPLAY derivation of the existing (status, score) pair — see
  * assignment-service.ts's computeSubmissionCellState (score !== null
- * always wins; a submitted-but-ungraded cell is never treated as 0).
+ * always wins; a submitted-but-ungraded cell is never treated as 0). A
+ * submitted (or late) status renders the green ✓ directly — "ตรวจแล้ว"
+ * — the instant Hermes or a teacher marks it that way; there is no
+ * separate "awaiting review" step in between.
  *
  * "+ สร้างงาน" creates an assignment through the EXACT SAME
  * createAssignment (via AssignmentDialog) the งาน tab uses, then
@@ -399,10 +402,9 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <SummaryStat label="ส่งแล้ว" value={tally.submitted} tone="default" />
-            <SummaryStat label="รอตรวจ" value={tally.awaitingReview} tone="warning" />
-            <SummaryStat label="ตรวจแล้ว" value={tally.graded} tone="success" />
+          <div className="grid grid-cols-3 gap-3">
+            <SummaryStat label="ตรวจแล้ว" value={tally.checked} tone="success" />
+            <SummaryStat label="ให้คะแนนแล้ว" value={tally.graded} tone="default" />
             <SummaryStat label="ยังไม่ส่ง" value={tally.notSubmitted} tone="muted" />
           </div>
 
@@ -735,11 +737,13 @@ function SummaryStat({ label, value, tone }: { label: string; value: number; ton
 }
 
 /**
- * The 5 visual states from the spec: neutral "—" (not submitted), a
- * green check with no score (submitted, awaiting review — NEVER shown
- * as/confused with 0), an amber "สาย" for a late-but-ungraded
- * submission, a muted "ขาดส่ง" tag, and a check + score (e.g. "8/10")
- * once grading is complete.
+ * The 4 visual states: neutral "—" (not submitted), a green ✓ for a
+ * submitted (or late) item with no score yet — "ตรวจแล้ว", NEVER shown
+ * as/confused with 0 — a muted "ขาดส่ง" tag, and a check + score (e.g.
+ * "8/10", or "0/10" for an explicit zero) once graded. There is no
+ * separate "awaiting review" visual — a submitted item is already
+ * ตรวจแล้ว the moment its status says so, whether that came from a
+ * teacher or from Hermes.
  */
 function SubmissionCellVisual({
   state,
@@ -758,16 +762,8 @@ function SubmissionCellVisual({
       </span>
     )
   }
-  if (state === 'submitted_ungraded') {
+  if (state === 'submitted') {
     return <CheckCircle2 className="size-4 text-success" />
-  }
-  if (state === 'late_ungraded') {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-warning-foreground">
-        <Clock3 className="size-3.5" />
-        สาย
-      </span>
-    )
   }
   if (state === 'missing') {
     return <span className="text-xs font-medium text-destructive">ขาดส่ง</span>
