@@ -88,11 +88,10 @@ export interface AssignmentSubmission {
    * least once. Set by submission-service.ts's finalizeSubmission(),
    * never editable by a teacher. */
   submittedAt?: string | null
-  /** "ตรวจแล้ว" — when a teacher last marked this submission checked.
-   * Bumped by setSubmissionScore() (recording a score always implies
-   * review) AND, independently, by setSubmissionReviewed()/
-   * bulkSetSubmissionsReviewed() (checking work off WITHOUT a score).
-   * Never editable by a student, enforced by 0016's
-   * enforce_submission_field_ownership trigger. */
+  /** When a teacher last recorded a score — bumped every time
+   * setSubmissionScore() runs. Informational only (supports a future
+   * storage-retention policy, e.g. "clean up files N days after
+   * grading") — never editable by a student, enforced by
+   * 0016's enforce_submission_field_ownership trigger. */
   reviewedAt?: string | null
 }

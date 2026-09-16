@@ -19,8 +19,6 @@ import {
   SUBMISSION_CELL_STATE_LABEL,
   SUBMISSION_CHECK_FILTERS,
   archiveAssignment,
-  buildBulkReviewTargets,
-  bulkSetSubmissionsReviewed,
   computeSubmissionCellState,
   computeSubmissionCheckTally,
   deleteAssignmentPermanently,
@@ -33,7 +31,6 @@ import {
   parseScoreInput,
   searchAssignmentsByTitle,
   setSubmissionNote,
-  setSubmissionReviewed,
   setSubmissionScore,
   setSubmissionStatus,
   type SubmissionCheckFilter,
@@ -80,15 +77,9 @@ function studentDisplayName(student: ClassroomStudent): string {
  * that route). Reads the exact same `assignments` + `assignment_submissions`
  * data as งาน/คะแนน (via getAssignments/getSubmissions) — no new table,
  * no mock data, no invented database status. Cell state is a pure
- * DISPLAY derivation of the existing (status, score, reviewed_at) triple
- * — see assignment-service.ts's computeSubmissionCellState (score !==
- * null always wins; a checked-but-ungraded cell is never treated as 0).
- * Checking and grading are separate teacher actions: a green ✓ means
- * ONLY "ครูตรวจงานแล้ว" (setSubmissionReviewed/bulkSetSubmissionsReviewed,
- * reusing the SAME reviewed_at column the student portal already reads —
- * see 0016_assignment_submission_uploads.sql), never a forced score;
- * entering a score (setSubmissionScore) always implies review too, but
- * the reverse is never true.
+ * DISPLAY derivation of the existing (status, score) pair — see
+ * assignment-service.ts's computeSubmissionCellState (score !== null
+ * always wins; a submitted-but-ungraded cell is never treated as 0).
  *
  * "+ สร้างงาน" creates an assignment through the EXACT SAME
  * createAssignment (via AssignmentDialog) the งาน tab uses, then
@@ -133,7 +124,6 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
 
   const [target, setTarget] = useState<SubmissionTarget | null>(null)
   const [statusDraft, setStatusDraft] = useState<SubmissionStatus>('not_submitted')
-  const [reviewedDraft, setReviewedDraft] = useState(false)
   const [scoreDraft, setScoreDraft] = useState('')
   const [noteDraft, setNoteDraft] = useState('')
   const [targetError, setTargetError] = useState<string | null>(null)
@@ -281,81 +271,21 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
     runBulkStatusUpdate(Array.from(selectedStudentIds), Array.from(selectedAssignmentIds), status)
   }
 
-  /**
-   * The one place any bulk "ตรวจแล้ว" write happens — a column's own
-   * quick action, and the multi-select bulk bar's "ตรวจแล้ว" button, both
-   * call this with their own (studentIds, assignmentIds) pair (which
-   * covers every required bulk shape: multiple students, "whole
-   * classroom" via select-all, one assignment column, or multiple
-   * assignment columns selected together). Builds the full cross
-   * product, then ONE bulkSetSubmissionsReviewed call for the whole
-   * batch — never one request per student — and NEVER touches score, so
-   * a bulk check can never assign a 0.
-   */
-  async function runBulkReviewUpdate(studentIds: string[], assignmentIds: string[]) {
-    if (studentIds.length === 0 || assignmentIds.length === 0) return
-    const targets = buildBulkReviewTargets(studentIds, assignmentIds)
-    setBulkBusy(true)
-    try {
-      await bulkSetSubmissionsReviewed(targets, true)
-      const nowIso = new Date().toISOString()
-      setSubmissionsByAssignment((prev) => {
-        const next = { ...prev }
-        for (const t of targets) {
-          const existing = next[t.assignmentId]?.[t.studentId] ?? {
-            studentId: t.studentId,
-            status: 'not_submitted' as const,
-            score: null,
-            note: null,
-          }
-          next[t.assignmentId] = {
-            ...next[t.assignmentId],
-            [t.studentId]: { ...existing, reviewedAt: nowIso },
-          }
-        }
-        return next
-      })
-      toast(`ทำเครื่องหมายตรวจแล้ว ${targets.length} รายการ`)
-    } catch (err) {
-      toast(toFriendlyErrorMessage(err, 'ไม่สามารถทำเครื่องหมายตรวจแล้วได้'))
-    } finally {
-      setBulkBusy(false)
-    }
-  }
-
-  function handleColumnMarkReviewed(assignment: Assignment) {
-    runBulkReviewUpdate(
-      roster.map((s) => s.id),
-      [assignment.id],
-    )
-  }
-
-  function handleSelectionMarkReviewed() {
-    runBulkReviewUpdate(Array.from(selectedStudentIds), Array.from(selectedAssignmentIds))
-  }
-
   function openTargetDialog(assignment: Assignment, student: ClassroomStudent) {
     const submission = submissionsByAssignment[assignment.id]?.[student.id]
     setTarget({ assignment, student })
     setStatusDraft(submission?.status ?? 'not_submitted')
-    setReviewedDraft(Boolean(submission?.reviewedAt))
     setScoreDraft(submission?.score !== null && submission?.score !== undefined ? String(submission.score) : '')
     setNoteDraft(submission?.note ?? '')
     setTargetError(null)
   }
 
   /**
-   * Saves whichever of status/score/reviewed/note actually changed, each
-   * through its OWN existing production function — never a new write
-   * path. Status is written first (if changed) so setSubmissionScore's
-   * own nextStatusAfterScore transform runs against the teacher's just-
-   * chosen status, not the stale one this dialog opened with. Entering a
-   * score ALWAYS implies review (setSubmissionScore already stamps
-   * reviewed_at itself) — reviewedDraft only triggers its OWN
-   * setSubmissionReviewed call when the teacher checked (or unchecked)
-   * "ตรวจแล้ว" WITHOUT that already being covered by a score change, so
-   * grading later never fights with — and always preserves — an
-   * already-checked mark (effectiveReviewed starts true and stays true).
+   * Saves whichever of status/score/note actually changed, each through
+   * its OWN existing production function — never a new write path.
+   * Status is written first (if changed) so setSubmissionScore's own
+   * nextStatusAfterScore transform runs against the teacher's just-
+   * chosen status, not the stale one this dialog opened with.
    */
   async function handleSaveTarget() {
     if (!target) return
@@ -364,7 +294,6 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
     const originalStatus = original?.status ?? 'not_submitted'
     const originalScore = original?.score ?? null
     const originalNote = original?.note ?? ''
-    const originalReviewed = Boolean(original?.reviewedAt)
 
     const { value: score, error: validationError } = parseScoreInput(scoreDraft, assignment.maxScore)
     if (validationError) {
@@ -375,7 +304,6 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
     setSavingTarget(true)
     try {
       let effectiveStatus = originalStatus
-      let effectiveReviewed = originalReviewed
       if (statusDraft !== originalStatus) {
         await setSubmissionStatus(assignment.id, student.id, statusDraft)
         effectiveStatus = statusDraft
@@ -383,11 +311,6 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
       if (score !== originalScore) {
         await setSubmissionScore(assignment.id, student.id, score, effectiveStatus)
         effectiveStatus = nextStatusAfterScore(effectiveStatus, score)
-        effectiveReviewed = true
-      }
-      if (reviewedDraft !== effectiveReviewed) {
-        await setSubmissionReviewed(assignment.id, student.id, reviewedDraft)
-        effectiveReviewed = reviewedDraft
       }
       if (noteDraft !== originalNote) {
         await setSubmissionNote(assignment.id, student.id, noteDraft)
@@ -404,13 +327,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
           ...prev,
           [assignment.id]: {
             ...prev[assignment.id],
-            [student.id]: {
-              ...existing,
-              status: effectiveStatus,
-              score,
-              note: noteDraft || null,
-              reviewedAt: effectiveReviewed ? new Date().toISOString() : null,
-            },
+            [student.id]: { ...existing, status: effectiveStatus, score, note: noteDraft || null },
           },
         }
       })
@@ -527,16 +444,6 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                 {selectedStudentIds.size} นักเรียน × {selectedAssignmentIds.size} งาน = {selectionCellCount} รายการ
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-1.5">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={bulkBusy || selectionCellCount === 0}
-                  onClick={handleSelectionMarkReviewed}
-                >
-                  <Check className="size-3.5" />
-                  ตรวจแล้ว
-                </Button>
                 {STATUS_ACTIONS.map((action) => (
                   <Button
                     key={action.key}
@@ -613,12 +520,6 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                                   onSelect: () => handleColumnQuickAction(assignment, 'missing'),
                                 },
                                 {
-                                  key: 'mark-reviewed',
-                                  label: 'ตรวจแล้วทั้งห้อง',
-                                  disabled: bulkBusy,
-                                  onSelect: () => handleColumnMarkReviewed(assignment),
-                                },
-                                {
                                   key: 'archive',
                                   label: 'เก็บถาวรงาน',
                                   separatorBefore: true,
@@ -671,11 +572,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                           </td>
                           {visibleAssignments.map((assignment) => {
                             const submission = submissionsByAssignment[assignment.id]?.[student.id]
-                            const state = computeSubmissionCellState(
-                              submission?.status ?? 'not_submitted',
-                              submission?.score ?? null,
-                              submission?.reviewedAt ?? null,
-                            )
+                            const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)
                             return (
                               <td key={assignment.id} className="px-2 py-1.5 text-center">
                                 <button
@@ -769,25 +666,8 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  สถานะปัจจุบัน:{' '}
-                  {SUBMISSION_CELL_STATE_LABEL[computeSubmissionCellState(statusDraft, null, reviewedDraft ? 'draft' : null)]}
-                </p>
+                <p className="text-xs text-muted-foreground">สถานะปัจจุบัน: {SUBMISSION_CELL_STATE_LABEL[computeSubmissionCellState(statusDraft, null)]}</p>
               </div>
-
-              <label
-                htmlFor="submission-check-reviewed"
-                className="flex cursor-pointer items-center gap-2 rounded-md border border-input px-3 py-2"
-              >
-                <input
-                  id="submission-check-reviewed"
-                  type="checkbox"
-                  checked={reviewedDraft}
-                  onChange={(e) => setReviewedDraft(e.target.checked)}
-                  className="size-4 rounded border-input"
-                />
-                <span className="text-sm font-medium">ตรวจแล้ว (ครูตรวจงานนี้แล้ว — ไม่ต้องให้คะแนนก็ได้)</span>
-              </label>
 
               <div className="space-y-1.5">
                 <Label htmlFor="submission-check-score">คะแนน (เต็ม {target.assignment.maxScore})</Label>
@@ -855,13 +735,10 @@ function SummaryStat({ label, value, tone }: { label: string; value: number; ton
 }
 
 /**
- * The 6 visual states from the spec: neutral "—" (not submitted), an
- * amber "รอตรวจ" (submitted but NOT yet reviewed — no checkmark; a
- * checkmark means "ครูตรวจงานแล้ว" and ONLY that), a bare green ✓ once a
- * teacher has checked the work WITHOUT entering a score (NEVER shown
- * as/confused with 0), an amber "สาย · รอตรวจ" for a late-and-still-
- * unreviewed submission, a muted "ขาดส่ง" tag, and a check + score (e.g.
- * "8/10", or "0/10" for an explicit zero — score !== null always wins)
+ * The 5 visual states from the spec: neutral "—" (not submitted), a
+ * green check with no score (submitted, awaiting review — NEVER shown
+ * as/confused with 0), an amber "สาย" for a late-but-ungraded
+ * submission, a muted "ขาดส่ง" tag, and a check + score (e.g. "8/10")
  * once grading is complete.
  */
 function SubmissionCellVisual({
@@ -881,22 +758,14 @@ function SubmissionCellVisual({
       </span>
     )
   }
-  if (state === 'checked') {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-        <CheckCircle2 className="size-4" />
-        ตรวจแล้ว
-      </span>
-    )
-  }
   if (state === 'submitted_ungraded') {
-    return <span className="text-xs font-medium text-warning-foreground">รอตรวจ</span>
+    return <CheckCircle2 className="size-4 text-success" />
   }
   if (state === 'late_ungraded') {
     return (
       <span className="inline-flex items-center gap-1 text-xs font-medium text-warning-foreground">
         <Clock3 className="size-3.5" />
-        สาย · รอตรวจ
+        สาย
       </span>
     )
   }

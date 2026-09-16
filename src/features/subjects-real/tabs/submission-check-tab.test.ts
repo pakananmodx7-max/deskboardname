@@ -77,48 +77,36 @@ describe('SubmissionCheckTab — "+ สร้างงาน": create assignment
   })
 })
 
-describe('SubmissionCheckTab — cell rendering: checking is independent of grading, and neither is ever confused with score 0', () => {
+describe('SubmissionCheckTab — cell rendering: submitted-but-ungraded is never score 0', () => {
   const source = readSource()
 
-  it('computes each cell\'s state via computeSubmissionCellState(status, score, reviewedAt) — status/score/reviewedAt straight from the fetched submission, never defaulted to 0 or dropped', () => {
+  it('computes each cell\'s state via computeSubmissionCellState(status, score) — status/score straight from the fetched submission, never defaulted to 0', () => {
     const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
     expect(cellFn).toContain('state === ')
-    const stateCall = source.slice(source.indexOf('const state = computeSubmissionCellState('), source.indexOf('const state = computeSubmissionCellState(') + 250)
-    expect(stateCall).toContain("submission?.status ?? 'not_submitted'")
-    expect(stateCall).toContain('submission?.score ?? null')
-    expect(stateCall).toContain('submission?.reviewedAt ?? null')
+    expect(source).toContain(
+      "const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)",
+    )
   })
 
-  it('the graded branch renders the REAL score (including an explicit 0), never a literal 0 fallback for a null score', () => {
+  it('the graded branch renders the REAL score, never a literal 0 fallback for a null score', () => {
     const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'), source.indexOf('function SubmissionCellVisual') + 800)
     expect(cellFn).toMatch(/if \(state === 'graded'\)/)
     expect(cellFn).toContain('{score}/{maxScore}')
     expect(cellFn).not.toContain('score ?? 0')
   })
 
-  it('"checked" renders a bare green ✓ (CheckCircle2) — reviewed, no score — visually distinct from BOTH the graded "score/max" branch and the unreviewed "รอตรวจ" branch', () => {
-    const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
-    const checkedBranch = cellFn.slice(cellFn.indexOf("state === 'checked'"), cellFn.indexOf("state === 'submitted_ungraded'"))
-    expect(checkedBranch).toContain('CheckCircle2')
-    expect(checkedBranch).toContain('ตรวจแล้ว')
-    expect(checkedBranch).not.toMatch(/\{score\}/)
-  })
-
-  it('submitted_ungraded ("รอตรวจ") renders plain text, NEVER a checkmark icon — a green ✓ means ONLY "ครูตรวจงานแล้ว"', () => {
+  it('submitted_ungraded renders a green check (CheckCircle2) with NO score text next to it — visually distinct from the graded "score/max" branch', () => {
     const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
     const ungradedBranch = cellFn.slice(cellFn.indexOf("state === 'submitted_ungraded'"), cellFn.indexOf("state === 'late_ungraded'"))
-    expect(ungradedBranch).toContain('รอตรวจ')
-    expect(ungradedBranch).not.toContain('CheckCircle2')
+    expect(ungradedBranch).toContain('CheckCircle2')
     expect(ungradedBranch).not.toMatch(/\{score\}/)
   })
 
-  it('late_ungraded renders an explicit "สาย" + "รอตรวจ" label (the spec\'s exact cell-state legend), distinct from submitted_ungraded, checked, and ขาดส่ง', () => {
+  it('late_ungraded renders an explicit "สาย" label (the spec\'s exact cell-state legend), distinct from submitted_ungraded and from ขาดส่ง', () => {
     const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
     const lateBranch = cellFn.slice(cellFn.indexOf("state === 'late_ungraded'"), cellFn.indexOf("state === 'missing'"))
     expect(lateBranch).toContain('สาย')
-    expect(lateBranch).toContain('รอตรวจ')
     expect(lateBranch).toContain('text-warning-foreground')
-    expect(lateBranch).not.toContain('CheckCircle2')
   })
 
   it('missing renders "ขาดส่ง", not_submitted renders a neutral "—"', () => {
@@ -142,10 +130,9 @@ describe('SubmissionCheckTab — every cell (including not_submitted/missing) is
     expect(cellBlock).not.toContain('disabled=')
   })
 
-  it('opening the dialog pre-fills status/checked/score/note from the CURRENT submission — never resets an existing value to blank/0/unchecked', () => {
+  it('opening the dialog pre-fills status/score/note from the CURRENT submission — never resets an existing value to blank/0', () => {
     const fn = source.slice(source.indexOf('function openTargetDialog'), source.indexOf('async function handleSaveTarget'))
     expect(fn).toContain("setStatusDraft(submission?.status ?? 'not_submitted')")
-    expect(fn).toContain('setReviewedDraft(Boolean(submission?.reviewedAt))')
     expect(fn).toMatch(/setScoreDraft\(submission\?\.score !== null && submission\?\.score !== undefined \? String\(submission\.score\) : ''\)/)
     expect(fn).toContain("setNoteDraft(submission?.note ?? '')")
   })
@@ -165,22 +152,6 @@ describe('SubmissionCheckTab — the dialog: student, assignment, status actions
     expect(source).toContain("{ key: 'missing', label: 'ขาดส่ง' }")
     expect(dialogBlock).toContain('STATUS_ACTIONS.map((action) =>')
     expect(dialogBlock).toContain('onClick={() => setStatusDraft(action.key)}')
-  })
-
-  it('has a "ตรวจแล้ว" checkbox, independent of the score field — checking work off never requires entering a score', () => {
-    expect(dialogBlock).toContain('id="submission-check-reviewed"')
-    expect(dialogBlock).toContain('type="checkbox"')
-    expect(dialogBlock).toContain('checked={reviewedDraft}')
-    expect(dialogBlock).toContain('onChange={(e) => setReviewedDraft(e.target.checked)}')
-    expect(dialogBlock).toContain('ตรวจแล้ว')
-    expect(dialogBlock).toContain('ไม่ต้องให้คะแนนก็ได้')
-  })
-
-  it('the "ตรวจแล้ว" checkbox appears BEFORE the score field — checking, then optionally grading, matches the required teacher flow', () => {
-    const reviewedIdx = dialogBlock.indexOf('id="submission-check-reviewed"')
-    const scoreIdx = dialogBlock.indexOf('id="submission-check-score"')
-    expect(reviewedIdx).toBeGreaterThan(-1)
-    expect(scoreIdx).toBeGreaterThan(reviewedIdx)
   })
 
   it('shows the max score and a numeric score input bounded to [0, maxScore], matching parseScoreInput\'s own validation range', () => {
@@ -222,25 +193,6 @@ describe('SubmissionCheckTab — saving the dialog: status/score/note each go th
     expect(fn).toContain('if (score !== originalScore)')
     expect(fn).toContain('await setSubmissionScore(assignment.id, student.id, score, effectiveStatus)')
     expect(fn).toContain('nextStatusAfterScore(effectiveStatus, score)')
-  })
-
-  it('entering a score always implies review — effectiveReviewed is forced true right after a score write, BEFORE the reviewedDraft check runs', () => {
-    const scoreBlockIdx = fn.indexOf('if (score !== originalScore)')
-    const reviewedBlockIdx = fn.indexOf('if (reviewedDraft !== effectiveReviewed)')
-    const scoreBlock = fn.slice(scoreBlockIdx, reviewedBlockIdx)
-    expect(scoreBlock).toContain('effectiveReviewed = true')
-    expect(reviewedBlockIdx).toBeGreaterThan(scoreBlockIdx)
-  })
-
-  it('writes "ตรวจแล้ว" via setSubmissionReviewed ONLY when the checkbox state actually differs from what a status/score change already implied — never a redundant call when grading already covered it', () => {
-    expect(fn).toContain('if (reviewedDraft !== effectiveReviewed)')
-    expect(fn).toContain('await setSubmissionReviewed(assignment.id, student.id, reviewedDraft)')
-  })
-
-  it('grading later preserves an already-checked mark — effectiveReviewed starts from originalReviewed (Boolean(original?.reviewedAt)) and a score change only ever pushes it to true, never resets it to false', () => {
-    expect(fn).toContain('const originalReviewed = Boolean(original?.reviewedAt)')
-    expect(fn).toContain('let effectiveReviewed = originalReviewed')
-    expect(fn).not.toMatch(/effectiveReviewed = false/)
   })
 
   it('writes the note ONLY when it changed', () => {
@@ -300,58 +252,6 @@ describe('SubmissionCheckTab — bulk actions never send one request per student
     const fn = source.slice(source.indexOf('async function runBulkStatusUpdate'), source.indexOf('function handleColumnQuickAction'))
     expect(fn).toContain('if (result.failedCount === 0)')
     expect(fn).toMatch(/ไม่สำเร็จ \$\{result\.failedCount\} รายการ/)
-  })
-})
-
-describe('SubmissionCheckTab — bulk "ตรวจแล้ว" (mark checked) never assigns a score, and never sends one request per student', () => {
-  const source = readSource()
-  const fn = source.slice(source.indexOf('async function runBulkReviewUpdate'), source.indexOf('function handleColumnMarkReviewed'))
-
-  it('imports buildBulkReviewTargets and bulkSetSubmissionsReviewed from assignment-service.ts — a write path completely separate from score/status', () => {
-    expect(source).toContain('buildBulkReviewTargets')
-    expect(source).toContain('bulkSetSubmissionsReviewed')
-  })
-
-  it('runBulkReviewUpdate builds the cross product then makes exactly ONE bulkSetSubmissionsReviewed(targets, true) call for the whole batch — never one request per student, and the chunking/multi-row-upsert happens inside that shared service, not here', () => {
-    expect(fn).toContain('buildBulkReviewTargets(studentIds, assignmentIds)')
-    expect(fn).toContain('await bulkSetSubmissionsReviewed(targets, true)')
-    expect(fn).not.toMatch(/targets\.map\(.*await/)
-    expect(fn).not.toMatch(/for \(const .* of targets\)[\s\S]{0,80}await/)
-  })
-
-  it('never calls setSubmissionScore and never writes a numeric score anywhere in the bulk-check path — a bulk check can never assign a 0 or any other score (the only `score` reference left is the untouched `null` default on a brand-new local record)', () => {
-    expect(fn).not.toContain('setSubmissionScore')
-    expect(fn).not.toMatch(/score:\s*0/)
-    expect(fn).not.toMatch(/score:\s*nowIso/)
-    expect(fn).toContain('score: null')
-  })
-
-  it('the optimistic local update after a bulk check only ever sets reviewedAt — status/score/note on the existing record are left untouched', () => {
-    const updateBlock = fn.slice(fn.indexOf('setSubmissionsByAssignment((prev)'), fn.indexOf('toast('))
-    expect(updateBlock).toContain('{ ...existing, reviewedAt: nowIso }')
-  })
-
-  it('handleColumnMarkReviewed targets the WHOLE roster for one assignment column — "ตรวจแล้วทั้งห้อง"', () => {
-    const columnFn = source.slice(source.indexOf('function handleColumnMarkReviewed'), source.indexOf('function handleSelectionMarkReviewed'))
-    expect(columnFn).toContain('runBulkReviewUpdate(')
-    expect(columnFn).toContain('roster.map((s) => s.id)')
-    expect(columnFn).toContain('[assignment.id]')
-  })
-
-  it('handleSelectionMarkReviewed targets exactly the selected students × selected assignments — covers multi-student, whole-classroom (select-all), one column, or multiple columns, all through the SAME runBulkReviewUpdate', () => {
-    const selectionFn = source.slice(source.indexOf('function handleSelectionMarkReviewed'), source.indexOf('function openTargetDialog'))
-    expect(selectionFn).toContain('runBulkReviewUpdate(Array.from(selectedStudentIds), Array.from(selectedAssignmentIds))')
-  })
-
-  it('the multi-select bulk bar has a "ตรวจแล้ว" button wired to handleSelectionMarkReviewed, disabled under the same conditions as the status bulk buttons', () => {
-    expect(source).toContain('onClick={handleSelectionMarkReviewed}')
-    const buttonBlock = source.slice(source.indexOf('onClick={handleSelectionMarkReviewed}') - 200, source.indexOf('onClick={handleSelectionMarkReviewed}'))
-    expect(buttonBlock).toContain('disabled={bulkBusy || selectionCellCount === 0}')
-  })
-
-  it('each assignment column\'s "..." menu has a "ตรวจแล้วทั้งห้อง" item calling handleColumnMarkReviewed', () => {
-    expect(source).toContain("label: 'ตรวจแล้วทั้งห้อง'")
-    expect(source).toContain('onSelect: () => handleColumnMarkReviewed(assignment)')
   })
 })
 

@@ -4,10 +4,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ASSIGNMENT_DETAIL_FILTERS,
-  buildBulkReviewTargets,
   buildDefaultSubmissions,
   bulkFillWouldOverwrite,
-  chunkBulkReviewTargets,
   computeClassGradeStats,
   computeGradedTally,
   computeGradeRows,
@@ -19,7 +17,6 @@ import {
   filterStudentsBySubmissionCheckState,
   getSubmissionSummary,
   isSubmissionCellGradable,
-  MAX_BULK_REVIEW_TARGETS_PER_REQUEST,
   mergeSubmissionsWithDefaults,
   nextScoreFocusIndex,
   nextStatusAfterScore,
@@ -28,7 +25,6 @@ import {
   planScorePaste,
   searchAssignmentsByTitle,
   searchRoster,
-  type SubmissionReviewTarget,
   validateMaxScoreChange,
 } from '@/services/assignment-service'
 import type { Assignment, AssignmentSubmission } from '@/types/assignment'
@@ -193,13 +189,8 @@ function assignment(id: string, maxScore: number, title = id): Assignment {
   }
 }
 
-function submission(
-  studentId: string,
-  score: number | null,
-  status: AssignmentSubmission['status'] = 'submitted',
-  reviewedAt: string | null = null,
-): AssignmentSubmission {
-  return { studentId, status, score, note: null, reviewedAt }
+function submission(studentId: string, score: number | null, status: AssignmentSubmission['status'] = 'submitted'): AssignmentSubmission {
+  return { studentId, status, score, note: null }
 }
 
 describe('computeGradeRows — the Grades tab matrix (student x assignment -> score, totals, percentage)', () => {
@@ -767,51 +758,10 @@ describe('computeSubmissionCellState — the ตรวจสอบงาน matr
   })
 })
 
-describe('computeSubmissionCellState — checking is independent of grading (reviewed_at, no score forced)', () => {
-  it('submitted + unchecked (no reviewedAt) -> submitted_ungraded ("รอตรวจ"), the default with no 3rd argument', () => {
-    expect(computeSubmissionCellState('submitted', null)).toBe('submitted_ungraded')
-    expect(computeSubmissionCellState('submitted', null, null)).toBe('submitted_ungraded')
-  })
-
-  it('submitted + checked (reviewedAt set) + no score -> "checked" (a bare ✓), NEVER "graded"', () => {
-    const state = computeSubmissionCellState('submitted', null, '2026-01-01T00:00:00Z')
-    expect(state).toBe('checked')
-    expect(state).not.toBe('graded')
-  })
-
-  it('checked without a score is NEVER counted/treated as score 0 — "checked" and "graded" are distinct states even though both are score !== null vs === null', () => {
-    const checked = computeSubmissionCellState('submitted', null, '2026-01-01T00:00:00Z')
-    const gradedZero = computeSubmissionCellState('submitted', 0, '2026-01-01T00:00:00Z')
-    expect(checked).not.toBe(gradedZero)
-    expect(checked).toBe('checked')
-    expect(gradedZero).toBe('graded')
-  })
-
-  it('a late submission also becomes "checked" once reviewed, no longer "late_ungraded" — the lateness distinction only matters BEFORE review', () => {
-    expect(computeSubmissionCellState('late', null, '2026-01-01T00:00:00Z')).toBe('checked')
-    expect(computeSubmissionCellState('late', null, null)).toBe('late_ungraded')
-  })
-
-  it('checked + a real score entered later -> "graded", showing the actual score ("checked + score = score displayed")', () => {
-    expect(computeSubmissionCellState('submitted', 8, '2026-01-01T00:00:00Z')).toBe('graded')
-  })
-
-  it('an explicit score of 0 always renders as graded (shows "0/10"), reviewedAt or not — grading a submission always implies it was reviewed', () => {
-    expect(computeSubmissionCellState('submitted', 0, null)).toBe('graded')
-    expect(computeSubmissionCellState('submitted', 0, '2026-01-01T00:00:00Z')).toBe('graded')
-  })
-
-  it('reviewedAt is IGNORED for a submission that was never actually turned in — a bulk "ตรวจแล้ว" action can never make an untouched/missing cell show a checkmark', () => {
-    expect(computeSubmissionCellState('not_submitted', null, '2026-01-01T00:00:00Z')).toBe('not_submitted')
-    expect(computeSubmissionCellState('missing', null, '2026-01-01T00:00:00Z')).toBe('missing')
-  })
-})
-
 describe('isSubmissionCellGradable — which cells open the score dialog on click', () => {
-  it('submitted_ungraded, late_ungraded, checked, and graded are clickable ("a submitted ✓ cell") — grading a checked cell later is always allowed', () => {
+  it('submitted_ungraded, late_ungraded, and graded are clickable ("a submitted ✓ cell")', () => {
     expect(isSubmissionCellGradable('submitted_ungraded')).toBe(true)
     expect(isSubmissionCellGradable('late_ungraded')).toBe(true)
-    expect(isSubmissionCellGradable('checked')).toBe(true)
     expect(isSubmissionCellGradable('graded')).toBe(true)
   })
 
@@ -863,19 +813,6 @@ describe('computeSubmissionCheckTally — the 4 summary counters (ส่งแ�
   it('empty roster/assignment list tallies to all zeros', () => {
     expect(computeSubmissionCheckTally([], [], {})).toEqual({ submitted: 0, awaitingReview: 0, graded: 0, notSubmitted: 0 })
   })
-
-  it('a checked-but-ungraded cell counts toward "ตรวจแล้ว" (graded bucket), same as an actually-scored cell — both mean "reviewed"', () => {
-    const submissionsByAssignment = {
-      a1: {
-        s1: submission('s1', null, 'submitted', '2026-01-01T00:00:00Z'), // checked, no score
-        s2: submission('s2', 9, 'submitted'), // graded
-        s3: submission('s3', null, 'submitted'), // awaiting review
-      },
-    }
-    const tally = computeSubmissionCheckTally(['s1', 's2', 's3'], ['a1'], submissionsByAssignment)
-    expect(tally.graded).toBe(2)
-    expect(tally.awaitingReview).toBe(1)
-  })
 })
 
 describe('filterStudentsBySubmissionCheckState — row filter (ทั้งหมด/รอตรวจ/ตรวจแล้ว/ยังไม่ส่ง)', () => {
@@ -915,61 +852,6 @@ describe('filterStudentsBySubmissionCheckState — row filter (ทั้งห�
     const zeroGraded = { a1: { s1: submission('s1', 0, 'submitted') } }
     const result = filterStudentsBySubmissionCheckState([rosterStudent({ id: 's1' })], ['a1'], zeroGraded, 'not_submitted')
     expect(result).toHaveLength(0)
-  })
-
-  it("'graded' also matches a checked-but-ungraded student — both count as ตรวจแล้ว", () => {
-    const checkedOnly = { a1: { s1: submission('s1', null, 'submitted', '2026-01-01T00:00:00Z') } }
-    const result = filterStudentsBySubmissionCheckState([rosterStudent({ id: 's1' })], ['a1'], checkedOnly, 'graded')
-    expect(result.map((s) => s.id)).toEqual(['s1'])
-  })
-})
-
-describe('buildBulkReviewTargets — the "ตรวจแล้ว" bulk action\'s cross product', () => {
-  it('builds one target per (assignment, student) pair', () => {
-    const targets = buildBulkReviewTargets(['s1', 's2'], ['a1', 'a2', 'a3'])
-    expect(targets).toHaveLength(6)
-  })
-
-  it('is assignment-major, matching buildBulkSubmissionStatusUpdates\' own order', () => {
-    const targets = buildBulkReviewTargets(['s1', 's2'], ['a1', 'a2'])
-    expect(targets.map((t) => `${t.assignmentId}:${t.studentId}`)).toEqual(['a1:s1', 'a1:s2', 'a2:s1', 'a2:s2'])
-  })
-
-  it('an empty student or assignment list produces zero targets', () => {
-    expect(buildBulkReviewTargets([], ['a1'])).toEqual([])
-    expect(buildBulkReviewTargets(['s1'], [])).toEqual([])
-  })
-})
-
-describe('chunkBulkReviewTargets — a bulk "ตรวจแล้ว" action is never a single unbounded request', () => {
-  function makeTargets(count: number): SubmissionReviewTarget[] {
-    return Array.from({ length: count }, (_, i) => ({ assignmentId: 'a1', studentId: `s${i}` }))
-  }
-
-  it('a batch at exactly the default cap stays in one chunk', () => {
-    const chunks = chunkBulkReviewTargets(makeTargets(MAX_BULK_REVIEW_TARGETS_PER_REQUEST))
-    expect(chunks).toHaveLength(1)
-    expect(chunks[0]).toHaveLength(MAX_BULK_REVIEW_TARGETS_PER_REQUEST)
-  })
-
-  it('one target over the cap splits into two chunks, preserving order', () => {
-    const targets = makeTargets(MAX_BULK_REVIEW_TARGETS_PER_REQUEST + 1)
-    const chunks = chunkBulkReviewTargets(targets)
-    expect(chunks).toHaveLength(2)
-    expect(chunks.flat()).toEqual(targets)
-  })
-
-  it('an empty list chunks to zero chunks', () => {
-    expect(chunkBulkReviewTargets([])).toEqual([])
-  })
-
-  it('respects a custom chunkSize', () => {
-    expect(chunkBulkReviewTargets(makeTargets(10), 4).map((c) => c.length)).toEqual([4, 4, 2])
-  })
-
-  it('rejects a non-positive chunkSize rather than looping forever', () => {
-    expect(() => chunkBulkReviewTargets(makeTargets(1), 0)).toThrow()
-    expect(() => chunkBulkReviewTargets(makeTargets(1), -1)).toThrow()
   })
 })
 
@@ -1027,12 +909,5 @@ describe('Hermes-written submission states render correctly in ตรวจส�
     // teacher action through this tab's setSubmissionScore call.
     expect(computeSubmissionCellState('late', null)).toBe('late_ungraded')
     expect(computeSubmissionCellState('late', null)).not.toBe('graded')
-  })
-
-  it('mark_submission_status/_bulk never write reviewed_at either (write-tools.ts\'s upsert shape is { status } only) — a Hermes-marked submission stays "รอตรวจ" until a teacher explicitly checks or grades it here, exactly like a teacher-marked one', () => {
-    const hermesWritten = submission('s1', null, 'submitted') // reviewedAt defaults to null
-    expect(computeSubmissionCellState(hermesWritten.status, hermesWritten.score, hermesWritten.reviewedAt ?? null)).toBe(
-      'submitted_ungraded',
-    )
   })
 })

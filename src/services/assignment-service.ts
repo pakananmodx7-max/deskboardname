@@ -452,111 +452,6 @@ export async function setSubmissionNote(assignmentId: string, studentId: string,
   if (error) throw error
 }
 
-// ==================================================
-// "ตรวจแล้ว" (mark checked) — independent of score. Reuses the EXISTING
-// assignment_submissions.reviewed_at column added by
-// 0016_assignment_submission_uploads.sql (and already read by the
-// student portal's deriveStudentFacingStatus, submission-service.ts) —
-// no new column, no new table, no duplicate "checked" concept. Until
-// now the only thing that ever stamped reviewed_at was setSubmissionScore
-// above (every score entry implies review); the functions below add the
-// missing "reviewed, no score yet" path so a teacher can check work off
-// without being forced to grade it first. No migration is required: the
-// 0006 teacher update policy already allows writing any column
-// (reviewed_at included) on a submission row the teacher owns — only a
-// STUDENT write to reviewed_at is blocked, by 0016's
-// enforce_submission_field_ownership trigger.
-// ==================================================
-
-/**
- * Sets or clears the "ตรวจแล้ว" mark for one (assignment, student) pair —
- * never touches status/score/note. A submission checked this way with no
- * score keeps score === null, so computeSubmissionCellState renders it
- * as 'checked' (a bare ✓), never 'graded'/0. Same RLS-scoped upsert shape
- * as setSubmissionStatus/setSubmissionNote — no service-role bypass, no
- * Edge Function involved (this write has no reason to also be something
- * Hermes calls, unlike mark_submission_status/_bulk).
- */
-export async function setSubmissionReviewed(assignmentId: string, studentId: string, reviewed: boolean): Promise<void> {
-  const supabase = getSupabaseClient()
-  const { error } = await supabase.from('assignment_submissions').upsert(
-    { assignment_id: assignmentId, student_id: studentId, reviewed_at: reviewed ? new Date().toISOString() : null },
-    { onConflict: 'assignment_id,student_id' },
-  )
-
-  if (error) throw error
-}
-
-export interface SubmissionReviewTarget {
-  assignmentId: string
-  studentId: string
-}
-
-/** Every (student × assignment) combination for a bulk "ตรวจแล้ว" action —
- * the exact same cross-product shape and assignment-major order as
- * buildBulkSubmissionStatusUpdates (submission-bulk-service.ts), so a
- * whole-column check, an arbitrary multi-student/multi-assignment
- * selection, and "whole classroom" (every visible student selected) all
- * build their target list the same way. */
-export function buildBulkReviewTargets(studentIds: string[], assignmentIds: string[]): SubmissionReviewTarget[] {
-  const targets: SubmissionReviewTarget[] = []
-  for (const assignmentId of assignmentIds) {
-    for (const studentId of studentIds) {
-      targets.push({ assignmentId, studentId })
-    }
-  }
-  return targets
-}
-
-/** Keeps one bulk "ตรวจแล้ว" action to a small, bounded number of
- * requests — this write goes straight to Supabase (a single multi-row
- * upsert per chunk), never through the teacher-agent-tools Edge Function
- * (there is no reason to add a new Edge Function tool for a write Hermes
- * never needs to make), so there is no external 50-item cap to mirror —
- * this is purely a defensive ceiling on one request's payload size. */
-export const MAX_BULK_REVIEW_TARGETS_PER_REQUEST = 500
-
-/** Splits `targets` into groups no larger than `chunkSize`, preserving
- * order — mirrors chunkBulkSubmissionStatusUpdates' own contract
- * exactly, just for review targets instead of status updates. */
-export function chunkBulkReviewTargets(
-  targets: SubmissionReviewTarget[],
-  chunkSize: number = MAX_BULK_REVIEW_TARGETS_PER_REQUEST,
-): SubmissionReviewTarget[][] {
-  if (chunkSize <= 0) throw new Error('chunkSize must be positive')
-  const chunks: SubmissionReviewTarget[][] = []
-  for (let i = 0; i < targets.length; i += chunkSize) {
-    chunks.push(targets.slice(i, i + chunkSize))
-  }
-  return chunks
-}
-
-/**
- * Marks every (assignment, student) pair in `targets` as checked (or, if
- * `reviewed` is false, un-checked) in ONE action — the matrix's bulk
- * "ตรวจแล้ว" controls (a whole column, an arbitrary student/assignment
- * selection, "whole classroom") all call this. Each chunk is exactly one
- * multi-row upsert — never a loop making one request per student/cell.
- * Never writes score/status/note, so a bulk check can never turn an
- * ungraded submission into a score of 0.
- */
-export async function bulkSetSubmissionsReviewed(targets: SubmissionReviewTarget[], reviewed: boolean): Promise<void> {
-  if (targets.length === 0) return
-  const supabase = getSupabaseClient()
-  const nowIso = new Date().toISOString()
-  const chunks = chunkBulkReviewTargets(targets)
-
-  for (const chunk of chunks) {
-    const rows = chunk.map((t) => ({
-      assignment_id: t.assignmentId,
-      student_id: t.studentId,
-      reviewed_at: reviewed ? nowIso : null,
-    }))
-    const { error } = await supabase.from('assignment_submissions').upsert(rows, { onConflict: 'assignment_id,student_id' })
-    if (error) throw error
-  }
-}
-
 /**
  * Client-side default for a student with no submission row yet: matches
  * the assignment_submissions table's own `status` column default
@@ -1062,70 +957,43 @@ export function getNextAssignment(activeAssignments: Assignment[], currentAssign
  * `!== null`, not `!score`) and from "never turned in" — the whole
  * point of this feature.
  */
-export type SubmissionCellState = 'not_submitted' | 'submitted_ungraded' | 'late_ungraded' | 'checked' | 'missing' | 'graded'
+export type SubmissionCellState = 'not_submitted' | 'submitted_ungraded' | 'late_ungraded' | 'missing' | 'graded'
 
 export const SUBMISSION_CELL_STATE_LABEL: Record<SubmissionCellState, string> = {
   not_submitted: 'ยังไม่ส่ง',
   submitted_ungraded: 'ส่งแล้ว · รอตรวจ',
   late_ungraded: 'ส่งช้า · รอตรวจ',
-  checked: 'ตรวจแล้ว · ยังไม่ให้คะแนน',
   missing: 'ขาดส่ง',
   graded: 'ตรวจแล้ว',
 }
 
-/**
- * `reviewedAt` is the teacher's "ครูตรวจงานแล้ว" mark — reusing the SAME
- * assignment_submissions.reviewed_at column the student portal already
- * reads (see submission-service.ts's deriveStudentFacingStatus), just no
- * longer stamped ONLY by setSubmissionScore. It is intentionally checked
- * AFTER status/missing/not_submitted: a cell with nothing turned in is
- * never shown as "checked" just because a bulk action happened to also
- * touch it (see bulkSetSubmissionsReviewed's own note on this), and a
- * score (even 0) always wins over everything else — grading a cell
- * always implies it was reviewed, so 'graded' never needs reviewedAt to
- * be true. 'checked' is the ONE new state this feature adds: reviewed,
- * turned in (submitted or late), but still no score — rendered as a bare
- * ✓, NEVER as 0 and NEVER conflated with an unreviewed "รอตรวจ" cell.
- */
-export function computeSubmissionCellState(
-  status: SubmissionStatus,
-  score: number | null,
-  reviewedAt: string | null = null,
-): SubmissionCellState {
+export function computeSubmissionCellState(status: SubmissionStatus, score: number | null): SubmissionCellState {
   if (score !== null) return 'graded'
   if (status === 'missing') return 'missing'
-  if (status === 'not_submitted') return 'not_submitted'
-  if (reviewedAt) return 'checked'
-  return status === 'late' ? 'late_ungraded' : 'submitted_ungraded'
+  if (status === 'late') return 'late_ungraded'
+  if (status === 'submitted') return 'submitted_ungraded'
+  return 'not_submitted'
 }
 
 /** Cell states a teacher can click to open the score dialog from — any
  * cell representing turned-in work ("a submitted ✓ cell", whether
- * already checked, already graded, or still awaiting review). 'checked'
- * is gradable too — grading is optional AFTER checking, never the other
- * way around. 'not_submitted' and 'missing' stay informational-only in
- * this tab: marking a student as having submitted is the existing งาน
- * tab's (and Hermes' mark_submission_status/mark_submission_status_bulk's)
- * job, not this tab's — ตรวจสอบงาน only separates checking from grading
- * for work that has already arrived. */
+ * already graded or still awaiting review). 'not_submitted' and
+ * 'missing' stay informational-only in this tab: marking a student as
+ * having submitted is the existing งาน tab's (and Hermes'
+ * mark_submission_status/mark_submission_status_bulk's) job, not this
+ * tab's — ตรวจสอบงาน only separates checking from grading for work that
+ * has already arrived. */
 export function isSubmissionCellGradable(state: SubmissionCellState): boolean {
-  return state === 'submitted_ungraded' || state === 'late_ungraded' || state === 'checked' || state === 'graded'
+  return state === 'submitted_ungraded' || state === 'late_ungraded' || state === 'graded'
 }
 
 export interface SubmissionCheckTally {
   /** Turned in at all — awaitingReview + graded. Always internally
    * consistent with the other three (every cell counted exactly once). */
   submitted: number
-  /** Turned in, NOT yet reviewed and NOT scored — "ส่งแล้ว · รอตรวจ" /
-   * "ส่งช้า · รอตรวจ". Once a teacher checks or grades a cell, it moves
-   * out of this bucket. */
+  /** Turned in, score still null — "ส่งแล้ว · รอตรวจ" / "ส่งช้า · รอตรวจ". */
   awaitingReview: number
-  /** "ตรวจแล้ว" — reviewed, whether or not a score was entered yet
-   * (covers BOTH the 'checked' state and the 'graded' state). A score
-   * always implies review, so a graded cell is always counted here too;
-   * this is deliberately NOT "has a score" — see computeGradedTally for
-   * that separate, score-only concept used by the older assignment
-   * detail page. */
+  /** Has an explicit, non-null score — "ตรวจแล้ว". */
   graded: number
   /** 'not_submitted' or 'missing' with no score yet — "ยังไม่ส่ง". */
   notSubmitted: number
@@ -1151,12 +1019,8 @@ export function computeSubmissionCheckTally(
   for (const assignmentId of assignmentIds) {
     for (const studentId of studentIds) {
       const submission = submissionsByAssignment[assignmentId]?.[studentId]
-      const state = computeSubmissionCellState(
-        submission?.status ?? 'not_submitted',
-        submission?.score ?? null,
-        submission?.reviewedAt ?? null,
-      )
-      if (state === 'graded' || state === 'checked') graded += 1
+      const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)
+      if (state === 'graded') graded += 1
       else if (state === 'submitted_ungraded' || state === 'late_ungraded') awaitingReview += 1
       else notSubmitted += 1
     }
@@ -1194,13 +1058,9 @@ export function filterStudentsBySubmissionCheckState<T extends { id: string }>(
   return students.filter((student) =>
     assignmentIds.some((assignmentId) => {
       const submission = submissionsByAssignment[assignmentId]?.[student.id]
-      const state = computeSubmissionCellState(
-        submission?.status ?? 'not_submitted',
-        submission?.score ?? null,
-        submission?.reviewedAt ?? null,
-      )
+      const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)
       if (filter === 'awaiting_review') return state === 'submitted_ungraded' || state === 'late_ungraded'
-      if (filter === 'graded') return state === 'graded' || state === 'checked'
+      if (filter === 'graded') return state === 'graded'
       return state === 'not_submitted' || state === 'missing'
     }),
   )
