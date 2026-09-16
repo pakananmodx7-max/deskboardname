@@ -25,6 +25,7 @@ import {
   planScorePaste,
   searchAssignmentsByTitle,
   searchRoster,
+  SUBMISSION_CELL_STATE_LABEL,
   validateMaxScoreChange,
 } from '@/services/assignment-service'
 import type { Assignment, AssignmentSubmission } from '@/types/assignment'
@@ -756,6 +757,26 @@ describe('computeSubmissionCellState — the ตรวจสอบงาน matr
     expect(gradedZero).toBe('graded')
     expect(ungraded).toBe('submitted_ungraded')
   })
+
+  it('a score can be added later to an already-checked (green ✓, no score) submission — the SAME status stays, only score moves from null to a real number', () => {
+    const status: AssignmentSubmission['status'] = 'submitted'
+    const beforeGrading = computeSubmissionCellState(status, null)
+    const afterGrading = computeSubmissionCellState(status, 8)
+    expect(beforeGrading).toBe('submitted_ungraded')
+    expect(afterGrading).toBe('graded')
+    // nextStatusAfterScore never demotes/changes an already-'submitted'
+    // status just because a score was entered — checking and grading
+    // stay two independent actions on the same status column.
+    expect(nextStatusAfterScore(status, 8)).toBe('submitted')
+  })
+
+  it('missing status renders correctly and is never confused with a checked/submitted cell, with or without a score', () => {
+    expect(computeSubmissionCellState('missing', null)).toBe('missing')
+    // An explicit score entered on a missing submission still grades it
+    // (score always wins) — this is unchanged existing behavior, not a
+    // new state.
+    expect(computeSubmissionCellState('missing', 0)).toBe('graded')
+  })
 })
 
 describe('isSubmissionCellGradable — which cells open the score dialog on click', () => {
@@ -768,6 +789,26 @@ describe('isSubmissionCellGradable — which cells open the score dialog on clic
   it('not_submitted and missing are NOT clickable — marking as submitted stays the งาน tab\'s / Hermes\' job', () => {
     expect(isSubmissionCellGradable('not_submitted')).toBe(false)
     expect(isSubmissionCellGradable('missing')).toBe(false)
+  })
+})
+
+describe('No new reviewed/checked/awaiting-review database state exists — the green ✓ IS the existing submission status, nothing more', () => {
+  it('SubmissionCellState is exactly the original 5 values — no "checked"/"awaiting_review" state was added', () => {
+    expect(Object.keys(SUBMISSION_CELL_STATE_LABEL).sort()).toEqual(
+      ['graded', 'late_ungraded', 'missing', 'not_submitted', 'submitted_ungraded'].sort(),
+    )
+  })
+
+  it('computeSubmissionCellState takes exactly 2 parameters (status, score) — no reviewedAt/checked 3rd argument exists to accidentally pass', () => {
+    expect(computeSubmissionCellState.length).toBe(2)
+  })
+
+  it('a submitted cell with no score is "submitted_ungraded" regardless of a 3rd argument nobody can pass — computeSubmissionCellState ignores anything beyond (status, score)', () => {
+    // @ts-expect-error — intentionally calling with an extra argument to
+    // prove the function's behavior can't be changed by one; a 3rd
+    // argument like a reviewedAt/checked flag was removed and must stay
+    // removed.
+    expect(computeSubmissionCellState('submitted', null, 'anything')).toBe('submitted_ungraded')
   })
 })
 

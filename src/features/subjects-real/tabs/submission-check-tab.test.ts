@@ -366,6 +366,36 @@ describe('SubmissionCheckTab — summary counters and filters', () => {
   })
 })
 
+describe('SubmissionCheckTab — green ✓ IS "ตรวจแล้ว": no separate reviewed/checked state, score stays fully optional', () => {
+  const source = readSource()
+
+  it('a submitted (including Hermes-marked) cell with no score renders the green ✓ directly — clicking it opens the SAME dialog as any other cell, never a forced/mandatory score step', () => {
+    expect(source).toContain('onClick={() => openTargetDialog(assignment, student)}')
+    const saveFn = source.slice(source.indexOf('async function handleSaveTarget'), source.indexOf('async function handleArchiveAssignment'))
+    expect(saveFn).not.toMatch(/if \(!scoreDraft\)/)
+    expect(saveFn).not.toMatch(/scoreDraft is required/i)
+  })
+
+  it('never reintroduces a reviewed/checked concept distinct from status — no reviewedAt, no setSubmissionReviewed/bulkSetSubmissionsReviewed, no "checked" cell state, no separate "ตรวจแล้ว" bulk-mark action', () => {
+    expect(source).not.toMatch(/reviewedAt/)
+    expect(source).not.toContain('setSubmissionReviewed')
+    expect(source).not.toContain('bulkSetSubmissionsReviewed')
+    expect(source).not.toContain("state === 'checked'")
+    expect(source).not.toContain("label: 'ตรวจแล้วทั้งห้อง'")
+    expect(source).not.toContain('runBulkReviewUpdate')
+  })
+
+  it('bulk actions only ever write `status` — the optimistic update spreads `existing` and overrides only `status`; the sole `score:` reference left is the untouched `null` default on a brand-new local record, and setSubmissionScore is never called from a bulk path', () => {
+    const fn = source.slice(source.indexOf('async function runBulkStatusUpdate'), source.indexOf('function handleColumnQuickAction'))
+    const scoreMatches = fn.match(/score:/g) ?? []
+    const scoreNullMatches = fn.match(/score: null/g) ?? []
+    expect(scoreMatches.length).toBeGreaterThan(0)
+    expect(scoreMatches.length).toBe(scoreNullMatches.length)
+    expect(fn).toContain('{ ...existing, status: update.status }')
+    expect(fn).not.toContain('setSubmissionScore')
+  })
+})
+
 describe('SubmissionCheckTab — layout: sticky columns/headers, horizontally scrollable, compact rows', () => {
   const source = readSource()
 

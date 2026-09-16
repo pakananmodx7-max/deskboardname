@@ -184,3 +184,23 @@ describe('bulkMarkSubmissionStatus — calls mark_submission_status_bulk (Hermes
     expect(fn).toContain('outcomes.push({ ok: false, chunk, error: response.error })')
   })
 })
+
+describe('bulk checking never assigns a score — the update shape has no score field, matching mark_submission_status_bulk on the server', () => {
+  it('a built bulk status update carries only { assignmentId, studentId, status } — no score key exists to accidentally send', () => {
+    const [update] = buildBulkSubmissionStatusUpdates(['s1'], ['a1'], 'submitted')
+    expect(Object.keys(update).sort()).toEqual(['assignmentId', 'status', 'studentId'])
+    expect('score' in update).toBe(false)
+  })
+
+  it('the server-side Edge Function tool this calls (write-tools.ts) also only ever writes { status } — bulk checking is structurally incapable of creating a score', () => {
+    const writeToolsSource = readFileSync(
+      new URL('../../supabase/functions/teacher-agent-tools/tools/write-tools.ts', import.meta.url),
+      'utf-8',
+    )
+    expect(writeToolsSource).toContain('Never creates or changes a score or note.')
+    const upsertCallStart = writeToolsSource.indexOf('.upsert(', writeToolsSource.indexOf('async function markSubmissionStatus'))
+    const upsertArgsBlock = writeToolsSource.slice(upsertCallStart, writeToolsSource.indexOf(')', upsertCallStart))
+    expect(upsertArgsBlock).toContain('{ assignment_id: args.assignmentId, student_id: args.studentId, status: args.status }')
+    expect(upsertArgsBlock).not.toContain('score')
+  })
+})
