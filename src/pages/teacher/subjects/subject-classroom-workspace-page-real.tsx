@@ -1,7 +1,9 @@
+import { Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/select'
 import { AssignmentsTab } from '@/features/subjects-real/tabs/assignments-tab'
 import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
@@ -31,7 +33,15 @@ type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'assignments'
  * Nothing else about the underlying submission-check or grades UI
  * changed — only where it's reached from. Every other tab keeps its
  * prior relative order/key, so no other existing ?tab= deep link
- * changes. */
+ * changes.
+ *
+ * นักเรียน stays a fully valid tab (isTabKey/`?tab=students` deep links —
+ * e.g. buildClassroomTabPath-style links from elsewhere — keep working
+ * exactly as before) but is no longer rendered as one of the pill
+ * buttons in PILL_TABS below: it's reached instead through the
+ * "รายชื่อนักเรียน" action button next to the ห้อง selector, so the main
+ * tab row stays focused on the day-to-day ภาพรวม/เช็กชื่อ/บทเรียน/งาน/
+ * ตรวจงานและคะแนน flow. StudentsTab itself is completely unchanged. */
 export const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: 'ภาพรวม' },
   { key: 'students', label: 'นักเรียน' },
@@ -40,6 +50,12 @@ export const TABS: { key: TabKey; label: string }[] = [
   { key: 'assignments', label: 'งาน' },
   { key: 'checkAndGrades', label: 'ตรวจงานและคะแนน' },
 ]
+
+/** The tabs actually rendered as pill buttons — TABS minus นักเรียน (see
+ * the doc comment above). Exported alongside TABS so both the full
+ * valid-key set and the visible pill set are independently
+ * unit-testable. */
+export const PILL_TABS = TABS.filter((tab) => tab.key !== 'students')
 
 /**
  * The subject + classroom workspace — "Subjects → open Subject → choose
@@ -164,27 +180,38 @@ export function SubjectClassroomWorkspacePageReal() {
             </p>
           </div>
 
-          {links.length > 1 && (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">ห้อง:</span>
-              <NativeSelect
-                value={activeClassroomId}
-                onChange={(e) => navigate(buildSubjectClassroomPath(subjectId, e.target.value))}
-                className="w-auto"
-                aria-label="สลับห้องเรียน"
-              >
-                {links.map((link) => (
-                  <option key={link.id} value={link.classroomId}>
-                    {link.classroomName}
-                  </option>
-                ))}
-              </NativeSelect>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {links.length > 1 && (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">ห้อง:</span>
+                <NativeSelect
+                  value={activeClassroomId}
+                  onChange={(e) => navigate(buildSubjectClassroomPath(subjectId, e.target.value))}
+                  className="w-auto"
+                  aria-label="สลับห้องเรียน"
+                >
+                  {links.map((link) => (
+                    <option key={link.id} value={link.classroomId}>
+                      {link.classroomName}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
+            )}
+            <Button
+              type="button"
+              variant={activeTab === 'students' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleTabClick('students')}
+            >
+              <Users className="size-4" />
+              รายชื่อนักเรียน
+            </Button>
+          </div>
         </div>
 
         <div className="flex gap-1 overflow-x-auto">
-          {TABS.map((tab) => (
+          {PILL_TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"

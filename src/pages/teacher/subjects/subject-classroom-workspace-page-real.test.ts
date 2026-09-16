@@ -62,3 +62,28 @@ describe('subject-classroom-workspace-page-real.tsx — ตรวจงานแ
     expect(source).toContain("{ key: 'checkAndGrades', label: 'ตรวจงานและคะแนน' }")
   })
 })
+
+describe('subject-classroom-workspace-page-real.tsx — navigation simplification: นักเรียน reached via a top action button, not a pill tab', () => {
+  const source = readSource()
+
+  it('PILL_TABS (what actually renders as tab buttons) excludes นักเรียน; TABS (the full valid-key set, e.g. for ?tab=students deep links) still includes it', () => {
+    expect(source).toContain("export const PILL_TABS = TABS.filter((tab) => tab.key !== 'students')")
+    expect(source).toContain("{ key: 'students', label: 'นักเรียน' }")
+  })
+
+  it('the tab button row maps over PILL_TABS, not TABS directly', () => {
+    expect(source).toContain('{PILL_TABS.map((tab) =>')
+  })
+
+  it('has a "รายชื่อนักเรียน" action button next to the ห้อง selector that switches to the students tab via the SAME handleTabClick used by every pill (so ?tab=students still syncs to the URL)', () => {
+    const headerBlock = source.slice(source.indexOf('links.length > 1 &&'), source.indexOf('{PILL_TABS.map((tab) =>'))
+    expect(headerBlock).toContain('รายชื่อนักเรียน')
+    expect(headerBlock).toContain("onClick={() => handleTabClick('students')}")
+  })
+
+  it('StudentsTab itself is untouched — still rendered exactly as before, just from a different trigger', () => {
+    expect(source).toContain("activeTab === 'students'")
+    expect(source).toContain('<StudentsTab')
+    expect(source).toContain('subjectName={subject.name}')
+  })
+})

@@ -2,9 +2,13 @@ import { getSupabaseClient } from '@/lib/supabase'
 
 /**
  * Browser-side client for the Teacher Agent Tool Layer's Edge Function
- * (supabase/functions/teacher-agent-tools) — used ONLY by the temporary
- * developer diagnostic panel (agent-tools-dev-page.tsx), never by any
- * real teacher-facing feature yet (that is a later phase).
+ * (supabase/functions/teacher-agent-tools). Originally used only by the
+ * temporary developer diagnostic panel (agent-tools-dev-page.tsx); now
+ * also the web app's own bulk submission-status write path (see
+ * submission-bulk-service.ts's bulkMarkSubmissionStatus, used by the
+ * ตรวจสอบงาน matrix) — the SAME `mark_submission_status_bulk` tool
+ * Hermes calls, through this SAME client, so there is exactly one write
+ * path for that tool regardless of caller.
  *
  * Auth: `supabase.functions.invoke` automatically attaches the CURRENT
  * signed-in session's access token as the request's Authorization
