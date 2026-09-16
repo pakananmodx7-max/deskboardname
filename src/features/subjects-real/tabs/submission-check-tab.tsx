@@ -80,9 +80,10 @@ function studentDisplayName(student: ClassroomStudent): string {
  * DISPLAY derivation of the existing (status, score) pair — see
  * assignment-service.ts's computeSubmissionCellState (score !== null
  * always wins; a submitted-but-ungraded cell is never treated as 0). A
- * submitted (or late) status renders the green ✓ directly — "ตรวจแล้ว"
- * — the instant Hermes or a teacher marks it that way; there is no
- * separate "awaiting review" step in between.
+ * submitted (or late) status renders the green ✓ directly — "ส่งแล้ว"
+ * — the instant Hermes or a teacher marks it that way via
+ * mark_submission_status/mark_submission_status_bulk; grading is a
+ * separate, optional fact about the same row, never a required next step.
  *
  * "+ สร้างงาน" creates an assignment through the EXACT SAME
  * createAssignment (via AssignmentDialog) the งาน tab uses, then
@@ -403,7 +404,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
       ) : (
         <>
           <div className="grid grid-cols-3 gap-3">
-            <SummaryStat label="ตรวจแล้ว" value={tally.checked} tone="success" />
+            <SummaryStat label="ส่งแล้ว" value={tally.submitted} tone="success" />
             <SummaryStat label="ให้คะแนนแล้ว" value={tally.graded} tone="default" />
             <SummaryStat label="ยังไม่ส่ง" value={tally.notSubmitted} tone="muted" />
           </div>
@@ -737,13 +738,13 @@ function SummaryStat({ label, value, tone }: { label: string; value: number; ton
 }
 
 /**
- * The 4 visual states: neutral "—" (not submitted), a green ✓ for a
- * submitted (or late) item with no score yet — "ตรวจแล้ว", NEVER shown
- * as/confused with 0 — a muted "ขาดส่ง" tag, and a check + score (e.g.
- * "8/10", or "0/10" for an explicit zero) once graded. There is no
- * separate "awaiting review" visual — a submitted item is already
- * ตรวจแล้ว the moment its status says so, whether that came from a
- * teacher or from Hermes.
+ * The 4 visual states: neutral "—" (no recorded submission state), a
+ * green ✓ for a submitted (or late) item with no score yet — "ส่งแล้ว",
+ * NEVER shown as/confused with 0 — a muted "ขาดส่ง" tag, and a check +
+ * score (e.g. "8/10", or "0/10" for an explicit zero) once graded.
+ * Submission and grading are independent facts about the same row —
+ * whether that ✓ came from a teacher or from Hermes, it means exactly
+ * "ส่งแล้ว," never any other invented intermediate/review label.
  */
 function SubmissionCellVisual({
   state,

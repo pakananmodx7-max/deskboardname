@@ -228,7 +228,7 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
                           const status = row?.statusByAssignment[assignment.id] ?? 'not_submitted'
                           const cellKey = `${assignment.id}:${student.id}`
                           // Blank ≠ "not submitted" here — a submitted-but-
-                          // ungraded cell (already ตรวจแล้ว — see
+                          // ungraded cell (already ส่งแล้ว — see
                           // computeSubmissionCellState's own doc comment)
                           // shows a "✓" placeholder so it never reads the
                           // same as a student who never turned anything in
@@ -246,7 +246,7 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
                                   max={assignment.maxScore}
                                   defaultValue={score ?? ''}
                                   placeholder={placeholder}
-                                  title={cellState === 'submitted' ? 'ตรวจแล้ว — ยังไม่ได้ให้คะแนน ไม่นับเป็นคะแนน 0' : undefined}
+                                  title={cellState === 'submitted' ? 'ส่งแล้ว — ยังไม่ได้ให้คะแนน ไม่นับเป็นคะแนน 0' : undefined}
                                   key={`${cellKey}-${score}-${resetTicks[cellKey] ?? 0}`}
                                   onBlur={(e) => handleScoreBlur(assignment, student.id, e.target.value)}
                                   className="h-8 w-16 text-center"

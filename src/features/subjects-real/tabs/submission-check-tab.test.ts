@@ -77,7 +77,7 @@ describe('SubmissionCheckTab — "+ สร้างงาน": create assignment
   })
 })
 
-describe('SubmissionCheckTab — cell rendering: green ✓ = ตรวจแล้ว, never score 0, no "รอตรวจ"/awaiting-review treatment', () => {
+describe('SubmissionCheckTab — cell rendering: green ✓ = ส่งแล้ว (submitted), never score 0, no "ตรวจแล้ว"/"รอตรวจ"/awaiting-review treatment', () => {
   const source = readSource()
 
   it('computes each cell\'s state via computeSubmissionCellState(status, score) — status/score straight from the fetched submission, never defaulted to 0', () => {
@@ -113,9 +113,10 @@ describe('SubmissionCheckTab — cell rendering: green ✓ = ตรวจแล�
     expect(cellFn).toContain('return <span className="text-muted-foreground">—</span>')
   })
 
-  it('the tooltip/label text comes from SUBMISSION_CELL_STATE_LABEL and reads "ตรวจแล้ว" for a checked cell — never "รอตรวจ"/awaiting-review copy', () => {
+  it('the tooltip/label text comes from SUBMISSION_CELL_STATE_LABEL and reads "ส่งแล้ว" for a submitted cell — never "ตรวจแล้ว"/"รอตรวจ"/awaiting-review copy', () => {
     expect(source).toContain('title={SUBMISSION_CELL_STATE_LABEL[state]}')
     expect(source).not.toContain('รอตรวจ')
+    expect(source).not.toContain('ตรวจแล้ว')
   })
 })
 
@@ -338,15 +339,16 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
   })
 })
 
-describe('SubmissionCheckTab — summary counters and filters: no "รอตรวจ"/awaiting-review bucket anywhere', () => {
+describe('SubmissionCheckTab — summary counters and filters: no "ตรวจแล้ว"/"รอตรวจ"/awaiting-review bucket anywhere', () => {
   const source = readSource()
 
-  it('renders exactly the 3 required counters: ตรวจแล้ว, ให้คะแนนแล้ว, ยังไม่ส่ง — no separate "รอตรวจ"/"ส่งแล้ว" split', () => {
-    expect(source).toContain('label="ตรวจแล้ว" value={tally.checked}')
+  it('renders exactly the 3 required counters: ส่งแล้ว, ให้คะแนนแล้ว, ยังไม่ส่ง — no separate "รอตรวจ"/"ตรวจแล้ว" split', () => {
+    expect(source).toContain('label="ส่งแล้ว" value={tally.submitted}')
     expect(source).toContain('label="ให้คะแนนแล้ว" value={tally.graded}')
     expect(source).toContain('label="ยังไม่ส่ง" value={tally.notSubmitted}')
     expect(source).not.toContain('รอตรวจ')
-    expect(source).not.toMatch(/tally\.awaitingReview|tally\.submitted\b/)
+    expect(source).not.toContain('ตรวจแล้ว')
+    expect(source).not.toMatch(/tally\.awaitingReview|tally\.checked\b/)
   })
 
   it('the tally and filter both come from the shared pure functions, computed over the CURRENTLY VISIBLE (searched) assignment columns', () => {
@@ -354,7 +356,7 @@ describe('SubmissionCheckTab — summary counters and filters: no "รอตร�
     expect(source).toContain('filterStudentsBySubmissionCheckState(roster, visibleAssignmentIds, submissionsByAssignment, filter)')
   })
 
-  it('renders the filter buttons from SUBMISSION_CHECK_FILTERS (ทั้งหมด/ตรวจแล้ว/ให้คะแนนแล้ว/ยังไม่ส่ง) — no separate, hand-typed filter list, and no "รอตรวจ" filter option', () => {
+  it('renders the filter buttons from SUBMISSION_CHECK_FILTERS (ทั้งหมด/ส่งแล้ว/ให้คะแนนแล้ว/ยังไม่ส่ง) — no separate, hand-typed filter list, and no "รอตรวจ"/"ตรวจแล้ว" filter option', () => {
     expect(source).toContain('SUBMISSION_CHECK_FILTERS.map((f) =>')
   })
 
@@ -365,7 +367,7 @@ describe('SubmissionCheckTab — summary counters and filters: no "รอตร�
   })
 })
 
-describe('SubmissionCheckTab — green ✓ IS "ตรวจแล้ว": no separate reviewed/checked state, score stays fully optional', () => {
+describe('SubmissionCheckTab — green ✓ IS "ส่งแล้ว": no separate reviewed/checked/"ตรวจแล้ว" state, score stays fully optional', () => {
   const source = readSource()
 
   it('a submitted (including Hermes-marked) cell with no score renders the green ✓ directly — clicking it opens the SAME dialog as any other cell, never a forced/mandatory score step', () => {
@@ -375,12 +377,13 @@ describe('SubmissionCheckTab — green ✓ IS "ตรวจแล้ว": no sep
     expect(saveFn).not.toMatch(/scoreDraft is required/i)
   })
 
-  it('never reintroduces a reviewed/checked concept distinct from status — no reviewedAt, no setSubmissionReviewed/bulkSetSubmissionsReviewed, no "checked" cell state, no separate "ตรวจแล้ว" bulk-mark action', () => {
+  it('never reintroduces a reviewed/checked concept distinct from status — no reviewedAt, no setSubmissionReviewed/bulkSetSubmissionsReviewed, no "checked" cell state, no "ตรวจแล้ว" label or bulk-mark action anywhere', () => {
     expect(source).not.toMatch(/reviewedAt/)
     expect(source).not.toContain('setSubmissionReviewed')
     expect(source).not.toContain('bulkSetSubmissionsReviewed')
     expect(source).not.toContain("state === 'checked'")
-    expect(source).not.toContain("label: 'ตรวจแล้วทั้งห้อง'")
+    expect(source).not.toContain('ตรวจแล้ว')
+    expect(source).not.toContain('รอตรวจ')
     expect(source).not.toContain('runBulkReviewUpdate')
   })
 
