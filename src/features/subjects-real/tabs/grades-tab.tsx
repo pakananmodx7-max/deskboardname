@@ -112,7 +112,16 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
           ...prev,
           [assignment.id]: {
             ...prev[assignment.id],
-            [studentId]: { ...existing, score, status: nextStatusAfterScore(currentStatus, score) },
+            // setSubmissionScore always stamps reviewed_at (any score
+            // entry implies review) — kept in sync here so a cell
+            // cleared back to blank still shows "✓ ตรวจแล้ว" instead of
+            // stale "รอตรวจ" until the next refresh.
+            [studentId]: {
+              ...existing,
+              score,
+              status: nextStatusAfterScore(currentStatus, score),
+              reviewedAt: new Date().toISOString(),
+            },
           },
         }
       })
@@ -226,17 +235,26 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
                         {assignments.map((assignment) => {
                           const score = row?.scoresByAssignment[assignment.id] ?? null
                           const status = row?.statusByAssignment[assignment.id] ?? 'not_submitted'
+                          const reviewedAt = submissionsByAssignment[assignment.id]?.[student.id]?.reviewedAt ?? null
                           const cellKey = `${assignment.id}:${student.id}`
-                          // Blank ≠ "not submitted" here — a submitted-but-
-                          // ungraded cell shows a distinct "รอตรวจ"
-                          // placeholder so it never reads the same as a
+                          // Blank ≠ "not submitted" here — an unreviewed
+                          // submitted/late cell shows "รอตรวจ" and an
+                          // already-checked-but-ungraded cell shows "✓
+                          // ตรวจแล้ว", so neither ever reads the same as a
                           // student who never turned anything in at all
                           // (see computeSubmissionCellState's own doc
                           // comment: score !== null is the ONLY thing that
-                          // counts as graded, never `!score` / falsy).
-                          const cellState = computeSubmissionCellState(status, score)
+                          // counts as graded, never `!score` / falsy, and
+                          // "checked" is a separate, score-independent
+                          // teacher action from ตรวจงานและคะแนน's own
+                          // ตรวจสอบงาน sub-tab).
+                          const cellState = computeSubmissionCellState(status, score, reviewedAt)
                           const placeholder =
-                            cellState === 'submitted_ungraded' || cellState === 'late_ungraded' ? 'รอตรวจ' : '—'
+                            cellState === 'checked'
+                              ? '✓ ตรวจแล้ว'
+                              : cellState === 'submitted_ungraded' || cellState === 'late_ungraded'
+                                ? 'รอตรวจ'
+                                : '—'
                           return (
                             <td key={assignment.id} className="px-3 py-2 text-center">
                               <div className="flex items-center justify-center gap-1">
@@ -246,7 +264,13 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
                                   max={assignment.maxScore}
                                   defaultValue={score ?? ''}
                                   placeholder={placeholder}
-                                  title={cellState === 'submitted_ungraded' || cellState === 'late_ungraded' ? 'ส่งแล้ว · รอตรวจ — ยังไม่นับเป็นคะแนน 0' : undefined}
+                                  title={
+                                    cellState === 'checked'
+                                      ? 'ตรวจแล้ว — ยังไม่ได้ให้คะแนน ไม่นับเป็นคะแนน 0'
+                                      : cellState === 'submitted_ungraded' || cellState === 'late_ungraded'
+                                        ? 'ส่งแล้ว · รอตรวจ — ยังไม่นับเป็นคะแนน 0'
+                                        : undefined
+                                  }
                                   key={`${cellKey}-${score}-${resetTicks[cellKey] ?? 0}`}
                                   onBlur={(e) => handleScoreBlur(assignment, student.id, e.target.value)}
                                   className="h-8 w-16 text-center"
