@@ -61,8 +61,14 @@ describe('SubmissionCheckTab — "+ สร้างงาน": create assignment
     expect(source).toContain('<AssignmentDialog open={createOpen} onOpenChange={setCreateOpen} subjectId={subject.id} classroomId={classroomId} onSaved={refresh} />')
   })
 
-  it('never calls navigate/useNavigate for the create flow — the teacher stays on this page', () => {
-    expect(source).not.toMatch(/useNavigate|navigate\(/)
+  it('never calls navigate for the create flow — the teacher stays on this page (a real navigate() call exists elsewhere, for "ดูรายละเอียด")', () => {
+    expect(source).toContain('onClick={() => setCreateOpen(true)}')
+    const createDialogLine = source.slice(
+      source.indexOf('<AssignmentDialog open={createOpen}'),
+      source.indexOf('\n', source.indexOf('<AssignmentDialog open={createOpen}')),
+    )
+    expect(createDialogLine).toContain('onSaved={refresh}')
+    expect(createDialogLine).not.toMatch(/navigate\(/)
   })
 
   it('onSaved is refresh — the same refetch that builds the visible columns, so a newly created assignment appears as a new column with no separate "add column" code path', () => {
@@ -297,16 +303,18 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
     expect(headerBlock).toContain('<RowActionsMenu')
   })
 
-  it('the menu offers แก้ไขงาน, เลือกทั้งคอลัมน์, ส่งแล้วทั้งห้อง, ขาดส่งทั้งห้อง, then เก็บถาวรงาน/ลบงาน separated and destructive-marked — no invented destructive action', () => {
+  it('the menu offers แก้ไขงาน, ดูรายละเอียด, เลือกทั้งคอลัมน์, ส่งแล้วทั้งห้อง, ขาดส่งทั้งห้อง, then เก็บถาวรงาน/ลบงาน separated and destructive-marked — no invented destructive action', () => {
     const menuBlock = headerBlock.slice(headerBlock.indexOf('actions={['), headerBlock.indexOf(']}\n                            />'))
     const editIdx = menuBlock.indexOf("label: 'แก้ไขงาน'")
+    const viewDetailIdx = menuBlock.indexOf("label: 'ดูรายละเอียด'")
     const selectColIdx = menuBlock.indexOf("label: 'เลือกทั้งคอลัมน์'")
     const submittedIdx = menuBlock.indexOf("label: 'ส่งแล้วทั้งห้อง'")
     const missingIdx = menuBlock.indexOf("label: 'ขาดส่งทั้งห้อง'")
     const archiveIdx = menuBlock.indexOf("label: 'เก็บถาวรงาน'")
     const deleteIdx = menuBlock.indexOf("label: 'ลบงาน'")
     expect(editIdx).toBeGreaterThan(-1)
-    expect(selectColIdx).toBeGreaterThan(editIdx)
+    expect(viewDetailIdx).toBeGreaterThan(editIdx)
+    expect(selectColIdx).toBeGreaterThan(viewDetailIdx)
     expect(submittedIdx).toBeGreaterThan(selectColIdx)
     expect(missingIdx).toBeGreaterThan(submittedIdx)
     expect(archiveIdx).toBeGreaterThan(missingIdx)
@@ -316,6 +324,12 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
     expect(archiveAction).toContain('separatorBefore: true')
     const deleteAction = menuBlock.slice(deleteIdx)
     expect(deleteAction).toContain('destructive: true')
+  })
+
+  it('ดูรายละเอียด navigates to the existing real assignment detail route via buildAssignmentDetailPath — no new route invented', () => {
+    expect(source).toContain("from '@/features/subjects-shared/subject-classroom-nav'")
+    expect(source).toContain('buildAssignmentDetailPath(subject.id, classroomId, assignment.id)')
+    expect(source).toContain('const navigate = useNavigate()')
   })
 
   it('archive/delete reuse the EXACT same functions and confirm-dialog flow as the งาน tab (assignments-tab.tsx) — archiveAssignment, hasAssignmentSubmissions + deleteAssignmentPermanently, both behind ConfirmDialog — no new destructive behavior invented', () => {

@@ -1,5 +1,6 @@
 import { Check, CheckCircle2, Clock3, Plus, Search, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -11,6 +12,7 @@ import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
 import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
+import { buildAssignmentDetailPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import {
@@ -97,6 +99,7 @@ function studentDisplayName(student: ClassroomStudent): string {
  */
 export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabProps) {
   const { toast } = useToast()
+  const navigate = useNavigate()
 
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [students, setStudents] = useState<ClassroomStudent[]>([])
@@ -494,6 +497,11 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                             <RowActionsMenu
                               actions={[
                                 { key: 'edit', label: 'แก้ไขงาน', onSelect: () => setEditingAssignment(assignment) },
+                                {
+                                  key: 'view-detail',
+                                  label: 'ดูรายละเอียด',
+                                  onSelect: () => navigate(buildAssignmentDetailPath(subject.id, classroomId, assignment.id)),
+                                },
                                 {
                                   key: 'select-column',
                                   label: 'เลือกทั้งคอลัมน์',

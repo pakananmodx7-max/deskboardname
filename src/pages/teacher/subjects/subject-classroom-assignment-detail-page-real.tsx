@@ -612,11 +612,11 @@ export function SubjectClassroomAssignmentDetailPageReal() {
       <div>
         <button
           type="button"
-          onClick={() => navigate(buildSubjectClassroomTabPath(subjectId, classroomId, 'assignments'))}
+          onClick={() => navigate(buildSubjectClassroomTabPath(subjectId, classroomId, 'checkAndGrades'))}
           className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" />
-          กลับไปหน้างาน
+          กลับไปตรวจงานและคะแนน
         </button>
 
         <div className="flex flex-wrap items-start justify-between gap-3">

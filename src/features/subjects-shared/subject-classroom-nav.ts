@@ -82,11 +82,19 @@ export function buildAssignmentDetailPath(subjectId: string, classroomId: string
  * "เช็คชื่อ"/"ดู/แก้ไข" and "ให้คะแนน" deep links (Sections 3-4) so a
  * click goes straight to the real เช็คชื่อ/คะแนน tab, never a rebuilt
  * dashboard-local editor.
+ *
+ * 'assignments' and the bare 'grades' value are kept in the union only
+ * because the workspace page's own legacy-redirect logic still accepts
+ * them as INPUT (an old bookmark/link built before ตรวจสอบงาน/คะแนน were
+ * merged) — neither is a real tab to land on anymore; the page silently
+ * resolves both to 'checkAndGrades'. 'checkAndGrades' is the one every
+ * new caller (e.g. the assignment detail page's own "back" link) should
+ * actually pass.
  */
 export function buildSubjectClassroomTabPath(
   subjectId: string,
   classroomId: string,
-  tab: 'students' | 'attendance' | 'assignments' | 'grades',
+  tab: 'students' | 'attendance' | 'assignments' | 'grades' | 'checkAndGrades',
 ): string {
   return `${buildSubjectClassroomPath(subjectId, classroomId)}?tab=${tab}`
 }

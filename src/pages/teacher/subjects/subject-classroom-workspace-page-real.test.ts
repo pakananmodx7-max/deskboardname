@@ -34,9 +34,45 @@ describe('subject-classroom-workspace-page-real.tsx — ?tab= stays in sync with
     expect(fn).toContain('{ replace: true }')
   })
 
-  it('the initial tab still comes from the URL on mount, falling back to overview — unchanged from before', () => {
+  it('the initial tab still comes from the URL on mount, via resolveInitialTab, falling back to overview', () => {
     expect(source).toContain("const initialTabParam = searchParams.get('tab')")
-    expect(source).toContain("isTabKey(initialTabParam) ? initialTabParam : 'overview'")
+    expect(source).toContain('resolveInitialTab(initialTabParam)')
+  })
+})
+
+describe('subject-classroom-workspace-page-real.tsx — งาน removed as a top-level tab; assignments now live only inside ตรวจงานและคะแนน (the matrix)', () => {
+  const source = readSource()
+
+  it('TabKey/TABS no longer include an "assignments" entry or a "งาน" label', () => {
+    expect(source).not.toMatch(/'overview' \| 'students' \| 'attendance' \| 'assignments'/)
+    expect(source).not.toContain("{ key: 'assignments', label: 'งาน' }")
+    expect(source).not.toMatch(/key: 'assignments'/)
+  })
+
+  it('no longer imports or renders AssignmentsTab on this page (it is still used elsewhere, by classroom-detail-page-real.tsx — just not imported HERE)', () => {
+    expect(source).not.toMatch(/from '@\/features\/subjects-real\/tabs\/assignments-tab'/)
+    expect(source).not.toContain('<AssignmentsTab')
+  })
+
+  it('a legacy ?tab=assignments (or ?tab=grades) deep link resolves to checkAndGrades via LEGACY_TAB_REDIRECTS, never falling back to overview or erroring', () => {
+    expect(source).toContain('const LEGACY_TAB_REDIRECTS: Record<string, TabKey> = {')
+    expect(source).toContain("assignments: 'checkAndGrades',")
+    expect(source).toContain("grades: 'checkAndGrades',")
+  })
+
+  it('resolveInitialTab is a pure function: a real TabKey passes through, a legacy key redirects, anything else falls back to overview', () => {
+    const fn = source.slice(source.indexOf('function resolveInitialTab'), source.indexOf('/**\n * The subject + classroom workspace'))
+    expect(fn).toContain('if (isTabKey(value)) return value')
+    expect(fn).toContain('if (value && value in LEGACY_TAB_REDIRECTS) return LEGACY_TAB_REDIRECTS[value]')
+    expect(fn).toContain("return 'overview'")
+  })
+
+  it('a one-time effect rewrites a legacy ?tab= value in the URL itself (via setSearchParams), keyed off the ORIGINAL initialTabParam so it only ever fires once per legacy link', () => {
+    const fn = source.slice(source.indexOf('useEffect(() => {\n    if (initialTabParam'), source.indexOf('const [subject, setSubject]'))
+    expect(fn).toContain('if (initialTabParam && initialTabParam in LEGACY_TAB_REDIRECTS)')
+    expect(fn).toContain("next.set('tab', LEGACY_TAB_REDIRECTS[initialTabParam])")
+    expect(fn).toContain('{ replace: true }')
+    expect(fn).toContain('}, [])')
   })
 })
 

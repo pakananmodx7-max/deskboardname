@@ -9,13 +9,14 @@ function readSource(): string {
 describe('Teacher assignment detail — back navigation (Section 1)', () => {
   const source = readSource()
 
-  it('the back button label is "กลับไปหน้างาน", not "กลับไปที่ห้องเรียน"', () => {
-    expect(source).toContain('กลับไปหน้างาน')
+  it('the back button label is "กลับไปตรวจงานและคะแนน" — the งาน tab is gone, assignments now live inside ตรวจงานและคะแนน — not "กลับไปที่ห้องเรียน"', () => {
+    expect(source).toContain('กลับไปตรวจงานและคะแนน')
     expect(source).not.toContain('กลับไปที่ห้องเรียน')
+    expect(source).not.toContain('กลับไปหน้างาน')
   })
 
-  it('deep-links to the Subject + Classroom + งาน tab via the existing canonical route builder, never a hand-built path back to the classroom picker', () => {
-    expect(source).toContain("buildSubjectClassroomTabPath(subjectId, classroomId, 'assignments')")
+  it('deep-links to the Subject + Classroom + ตรวจงานและคะแนน tab via the existing canonical route builder, never a hand-built path back to the classroom picker', () => {
+    expect(source).toContain("buildSubjectClassroomTabPath(subjectId, classroomId, 'checkAndGrades')")
   })
 })
 

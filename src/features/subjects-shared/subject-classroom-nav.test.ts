@@ -89,10 +89,14 @@ describe('buildSubjectClassroomTabPath — Dashboard "เช็คชื่อ"/
     expect(path).not.toContain('/teacher/attendance')
   })
 
-  it('supports every real workspace tab', () => {
+  it('supports every real workspace tab, including the legacy assignments/grades values still consumed by the workspace page\'s own redirect logic', () => {
     expect(buildSubjectClassroomTabPath('s', 'c', 'grades')).toContain('?tab=grades')
     expect(buildSubjectClassroomTabPath('s', 'c', 'assignments')).toContain('?tab=assignments')
     expect(buildSubjectClassroomTabPath('s', 'c', 'students')).toContain('?tab=students')
+  })
+
+  it('supports the current ตรวจงานและคะแนน tab — what every new caller (e.g. the assignment detail page\'s "back" link) should pass', () => {
+    expect(buildSubjectClassroomTabPath('s', 'c', 'checkAndGrades')).toBe('/teacher/subjects/s/classrooms/c?tab=checkAndGrades')
   })
 })
 
