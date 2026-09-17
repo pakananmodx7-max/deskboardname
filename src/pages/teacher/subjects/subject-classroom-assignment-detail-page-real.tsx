@@ -738,7 +738,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
             <span className="font-semibold">{summary.missing}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">ตรวจแล้ว / ยังไม่ตรวจ</span>
+            <span className="text-muted-foreground">ให้คะแนนแล้ว / ยังไม่ได้ให้คะแนน</span>
             <span className="font-semibold">
               {gradedTally.graded} / {gradedTally.notGraded}
             </span>

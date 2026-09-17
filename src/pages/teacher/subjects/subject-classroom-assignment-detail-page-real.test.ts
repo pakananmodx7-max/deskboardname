@@ -60,6 +60,14 @@ describe('SubjectClassroomAssignmentDetailPageReal — structural guards', () =>
   it('filters and search only ever narrow the TABLE (visibleRoster), never the roster used for summary counts', () => {
     expect(source).toMatch(/const visibleRoster = searchRoster\(filterRosterByStatus\(roster, submissions, statusFilter\), search\)/)
   })
+
+  it('the graded/not-graded summary counter uses the same "ให้คะแนนแล้ว" wording as the ตรวจงานและคะแนน matrix — never "ตรวจแล้ว"/"รอตรวจ" language, and never a separate reviewed/checked state', () => {
+    expect(source).toContain('ให้คะแนนแล้ว / ยังไม่ได้ให้คะแนน')
+    expect(source).toContain('{gradedTally.graded} / {gradedTally.notGraded}')
+    expect(source).not.toContain('ตรวจแล้ว')
+    expect(source).not.toContain('รอตรวจ')
+    expect(source).not.toMatch(/ยังไม่ตรวจ\b/)
+  })
 })
 
 describe('Deep links into the assignment detail page reuse the one canonical path builder', () => {
