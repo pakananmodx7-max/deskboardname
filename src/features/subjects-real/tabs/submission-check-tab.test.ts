@@ -569,17 +569,27 @@ describe('SubmissionCheckTab — bulk grading controls: exactly one assignment s
     expect(fn).toMatch(/ไม่สำเร็จ \$\{result\.failedCount\} คน/)
   })
 
-  it('a partial failure sets bulkGradeFailures (named per student, with the server\'s own message) — this is what makes "partial failures must be visible" true beyond a transient toast', () => {
+  it('every write sets bulkScoreResult with changed/unchanged/failed counts and named failures (with the server\'s own message) — this is what makes "show changed / unchanged / failed counts, partial failures must be visible" true beyond a transient toast', () => {
     const fn = source.slice(source.indexOf('async function runBulkScoreUpdate'), source.indexOf('async function handleConfirmBulkGrade'))
-    expect(fn).toContain('setBulkGradeFailures(')
+    expect(fn).toContain('setBulkScoreResult({')
+    expect(fn).toContain('changedCount: result.changedCount')
+    expect(fn).toContain('unchangedCount: result.unchangedCount')
+    expect(fn).toContain('failedCount: result.failedCount')
     expect(fn).toContain('result.failures.map((f) =>')
     expect(fn).toContain('studentDisplayName(student)')
   })
 
-  it('the failures panel is a persistent, dismissible inline box (not just a toast), rendered only when bulkGradeFailures is non-empty', () => {
-    expect(source).toContain('bulkGradeFailures.length > 0 &&')
-    expect(source).toContain('ให้คะแนนไม่สำเร็จ {bulkGradeFailures.length} คน')
-    expect(source).toContain('onClick={() => setBulkGradeFailures([])}')
+  it('bulkScoreResult is reset to null at the start of every runBulkScoreUpdate call — a stale result from a previous bulk action never lingers on screen for a new one', () => {
+    const fn = source.slice(source.indexOf('async function runBulkScoreUpdate'), source.indexOf('async function handleConfirmBulkGrade'))
+    expect(fn).toContain('setBulkScoreResult(null)')
+  })
+
+  it('the result panel is a persistent, dismissible inline box (not just a toast), rendered only when bulkScoreResult is set', () => {
+    expect(source).toContain('{bulkScoreResult && (')
+    expect(source).toContain('ให้คะแนนสำเร็จ {bulkScoreResult.changedCount} คน')
+    expect(source).toContain('ไม่เปลี่ยนแปลง {bulkScoreResult.unchangedCount}')
+    expect(source).toContain('ไม่สำเร็จ {bulkScoreResult.failedCount}')
+    expect(source).toContain('onClick={() => setBulkScoreResult(null)}')
   })
 
   it('handleConfirmBulkGrade closes the dialog THEN runs the write — the dialog is never left open during the write', () => {
@@ -665,7 +675,7 @@ describe('SubmissionCheckTab — the ONE bulk-status action button matches ส�
   it('never renders a 3-button STATUS_ACTIONS picker in the selection bar (that stays exclusive to the per-cell dialog)', () => {
     const selectionBarBlock = source.slice(
       source.indexOf('{(selectedStudentIds.size > 0 || selectedAssignmentIds.size > 0) && ('),
-      source.indexOf('{bulkGradeFailures.length > 0 &&'),
+      source.indexOf('{bulkScoreResult && ('),
     )
     expect(selectionBarBlock).not.toContain('STATUS_ACTIONS.map((action) =>')
   })

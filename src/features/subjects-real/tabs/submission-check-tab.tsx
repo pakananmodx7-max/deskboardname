@@ -156,7 +156,12 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   const [pendingBulkGrade, setPendingBulkGrade] = useState<{ assignment: Assignment; studentIds: string[]; score: number } | null>(
     null,
   )
-  const [bulkGradeFailures, setBulkGradeFailures] = useState<{ studentName: string; message: string }[]>([])
+  const [bulkScoreResult, setBulkScoreResult] = useState<{
+    changedCount: number
+    unchangedCount: number
+    failedCount: number
+    failures: { studentName: string; message: string }[]
+  } | null>(null)
   const [bulkStatusResult, setBulkStatusResult] = useState<{
     changedCount: number
     unchangedCount: number
@@ -443,28 +448,35 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
    * RE-FETCHES the matrix from the real source of truth (unlike the
    * status quick actions, which apply an optimistic local patch) so
    * every score/status/tally on screen is guaranteed correct after a
-   * grading action, before reporting counts and any partial failures.
+   * grading action, then reports a concise, honest result —
+   * changed/unchanged/failed counts, with every failure named — via
+   * bulkScoreResult, a persistent dismissible panel, not just a toast
+   * (the same pattern runBulkStatusUpdate already uses).
    */
   async function runBulkScoreUpdate(studentIds: string[], assignmentId: string, score: number) {
     if (studentIds.length === 0) return
     const updates = buildBulkScoreUpdates(studentIds, assignmentId, score)
     setBulkBusy(true)
-    setBulkGradeFailures([])
+    setBulkScoreResult(null)
     try {
       const result = await bulkSetAssignmentScores(updates)
       await refresh()
+
+      setBulkScoreResult({
+        changedCount: result.changedCount,
+        unchangedCount: result.unchangedCount,
+        failedCount: result.failedCount,
+        failures: result.failures.map((f) => {
+          const student = roster.find((s) => s.id === f.studentId)
+          return { studentName: student ? studentDisplayName(student) : f.studentId, message: f.message }
+        }),
+      })
 
       if (result.failedCount === 0) {
         toast(`ให้คะแนนแล้ว ${result.changedCount + result.unchangedCount}/${result.requestedCount} คน`)
       } else {
         toast(
           `ให้คะแนนสำเร็จ ${result.requestedCount - result.failedCount}/${result.requestedCount} คน — ไม่สำเร็จ ${result.failedCount} คน`,
-        )
-        setBulkGradeFailures(
-          result.failures.map((f) => {
-            const student = roster.find((s) => s.id === f.studentId)
-            return { studentName: student ? studentDisplayName(student) : f.studentId, message: f.message }
-          }),
         )
       }
     } catch (err) {
@@ -852,26 +864,43 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
             </div>
           )}
 
-          {bulkGradeFailures.length > 0 && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-medium text-destructive">ให้คะแนนไม่สำเร็จ {bulkGradeFailures.length} คน</p>
+          {/* The concise, honest result of the LAST bulk grading save
+              ("ให้คะแนนคนที่ส่งแล้ว"/"เต็มคะแนนคนที่ส่งแล้ว" or a column
+              quick action) — persistent and dismissible, never just a
+              transient toast, mirroring the exact same pattern used for
+              bulkStatusResult above: how many changed, how many already
+              had that exact score (unchanged), and how many failed, each
+              failure named. Set fresh (to null) at the start of every
+              runBulkScoreUpdate call, so a stale result from a previous
+              action never lingers on screen. */}
+          {bulkScoreResult && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-0.5">
+                  <p className="font-medium text-success">ให้คะแนนสำเร็จ {bulkScoreResult.changedCount} คน</p>
+                  <p className="text-muted-foreground">ไม่เปลี่ยนแปลง {bulkScoreResult.unchangedCount}</p>
+                  <p className={bulkScoreResult.failedCount > 0 ? 'font-medium text-destructive' : 'text-muted-foreground'}>
+                    ไม่สำเร็จ {bulkScoreResult.failedCount}
+                  </p>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setBulkGradeFailures([])}
+                  onClick={() => setBulkScoreResult(null)}
                   className="text-muted-foreground hover:text-foreground"
                   aria-label="ปิด"
                 >
                   <X className="size-4" />
                 </button>
               </div>
-              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
-                {bulkGradeFailures.map((f, i) => (
-                  <li key={i}>
-                    {f.studentName}: {f.message}
-                  </li>
-                ))}
-              </ul>
+              {bulkScoreResult.failures.length > 0 && (
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                  {bulkScoreResult.failures.map((f, i) => (
+                    <li key={i}>
+                      {f.studentName}: {f.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 
