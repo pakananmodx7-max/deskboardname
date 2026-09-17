@@ -9,14 +9,17 @@ import {
   computeClassGradeStats,
   computeGradedTally,
   computeGradeRows,
+  computeModeCellDisplay,
+  computeModeItemCount,
   computeSubmissionCellState,
-  computeSubmissionCheckTally,
   deriveAssignmentRoster,
   deriveGradeRoster,
   filterRosterByStatus,
-  filterStudentsBySubmissionCheckState,
+  filterStudentsByCheckMode,
   getSubmissionSummary,
+  isMissingStatus,
   isSubmissionCellGradable,
+  isSubmittedStatus,
   mergeSubmissionsWithDefaults,
   nextScoreFocusIndex,
   nextStatusAfterScore,
@@ -27,6 +30,8 @@ import {
   searchAssignmentsByTitle,
   searchRoster,
   SUBMISSION_CELL_STATE_LABEL,
+  SUBMISSION_CHECK_MODE_COUNT_LABEL,
+  SUBMISSION_CHECK_MODES,
   validateMaxScoreChange,
 } from '@/services/assignment-service'
 import type { Assignment, AssignmentSubmission } from '@/types/assignment'
@@ -842,86 +847,166 @@ describe('No reviewed/checked/awaiting-review database state exists — the gree
   })
 })
 
-describe('computeSubmissionCheckTally — the 3 summary counters (ส่งแล้ว/ให้คะแนนแล้ว/ยังไม่ส่ง) — no separate "รอตรวจ" bucket', () => {
-  it('tallies a mix of states correctly across students and assignments', () => {
-    const submissionsByAssignment = {
-      a1: {
-        s1: submission('s1', null, 'submitted'), // submitted, no score
-        s2: submission('s2', 8, 'submitted'), // submitted + graded
-        s3: submission('s3', null, 'not_submitted'), // not submitted
-      },
-      a2: {
-        s1: submission('s1', 15, 'late'), // submitted + graded (even though late)
-        s2: submission('s2', null, 'late'), // submitted, no score (late)
-        // s3 has no row at all -> defaults to not_submitted
-      },
+describe('SUBMISSION_CHECK_MODES — exactly 3 modes, no "รอตรวจ"/awaiting-review/reviewed/checked mode', () => {
+  it('has exactly submitted, missing, score — in that order', () => {
+    expect(SUBMISSION_CHECK_MODES.map((m) => m.key)).toEqual(['submitted', 'missing', 'score'])
+    expect(SUBMISSION_CHECK_MODES.map((m) => m.label)).toEqual(['ส่งแล้ว', 'ขาดส่ง', 'ให้คะแนน'])
+  })
+
+  it('never mentions รอตรวจ/reviewed/checked/awaiting-review anywhere in its labels', () => {
+    for (const mode of SUBMISSION_CHECK_MODES) {
+      expect(mode.label).not.toContain('รอตรวจ')
+      expect(mode.label).not.toContain('ตรวจแล้ว')
     }
-    const tally = computeSubmissionCheckTally(['s1', 's2', 's3'], ['a1', 'a2'], submissionsByAssignment)
-    expect(tally.submitted).toBe(4) // a1/s1, a1/s2, a2/s1, a2/s2 — ALL of them, scored or not
-    expect(tally.graded).toBe(2) // a1/s2, a2/s1 — subset of submitted
-    expect(tally.notSubmitted).toBe(2) // a1/s3, a2/s3 (missing row)
   })
 
-  it('every cell is counted exactly once — submitted + notSubmitted === total cells (students x assignments)', () => {
-    const submissionsByAssignment = {
-      a1: { s1: submission('s1', null, 'submitted'), s2: submission('s2', 5, 'submitted') },
-      a2: { s1: submission('s1', null, 'missing') },
-    }
-    const tally = computeSubmissionCheckTally(['s1', 's2'], ['a1', 'a2'], submissionsByAssignment)
-    const totalCells = 2 * 2
-    expect(tally.submitted + tally.notSubmitted).toBe(totalCells)
-  })
-
-  it('graded is always a subset of submitted — a graded cell is also always counted as submitted', () => {
-    const submissionsByAssignment = { a1: { s1: submission('s1', 0, 'submitted') } }
-    const tally = computeSubmissionCheckTally(['s1'], ['a1'], submissionsByAssignment)
-    expect(tally.submitted).toBe(1)
-    expect(tally.graded).toBe(1)
-    expect(tally.notSubmitted).toBe(0)
-  })
-
-  it('empty roster/assignment list tallies to all zeros', () => {
-    expect(computeSubmissionCheckTally([], [], {})).toEqual({ submitted: 0, graded: 0, notSubmitted: 0 })
+  it('SUBMISSION_CHECK_MODE_COUNT_LABEL has one counter label per mode, worded past-tense for score ("ให้คะแนนแล้ว") distinct from the mode toggle label ("ให้คะแนน")', () => {
+    expect(SUBMISSION_CHECK_MODE_COUNT_LABEL).toEqual({ submitted: 'ส่งแล้ว', missing: 'ขาดส่ง', score: 'ให้คะแนนแล้ว' })
   })
 })
 
-describe('filterStudentsBySubmissionCheckState — row filter (ทั้งหมด/ส่งแล้ว/ให้คะแนนแล้ว/ยังไม่ส่ง) — no "รอตรวจ"/awaiting-review option', () => {
+describe('isSubmittedStatus / isMissingStatus — the 2 independent predicates every mode is built from', () => {
+  it('submitted and late both count as submitted; not_submitted and missing do not', () => {
+    expect(isSubmittedStatus('submitted')).toBe(true)
+    expect(isSubmittedStatus('late')).toBe(true)
+    expect(isSubmittedStatus('not_submitted')).toBe(false)
+    expect(isSubmittedStatus('missing')).toBe(false)
+  })
+
+  it('only the explicit missing status counts as missing — not_submitted (the silent default) never does', () => {
+    expect(isMissingStatus('missing')).toBe(true)
+    expect(isMissingStatus('not_submitted')).toBe(false)
+    expect(isMissingStatus('submitted')).toBe(false)
+    expect(isMissingStatus('late')).toBe(false)
+  })
+})
+
+describe('computeModeCellDisplay — THE bug fix: a cell that does not match the active mode renders blank, never a status borrowed from another mode', () => {
+  it('REGRESSION — Student A: Assignment 1 submitted, Assignment 2 missing (the exact bug reported in the old row-filter UI)', () => {
+    // Old bug: filtering rows to "ส่งแล้ว" kept Student A as a row (because
+    // assignment 1 matched) but then rendered assignment 2's cell with
+    // its REAL state anyway, showing a red "ขาดส่ง" tag inside "ส่งแล้ว"
+    // mode. The fix: cell display is now a pure function of (mode,
+    // status, score) alone — a non-matching cell is ALWAYS blank.
+    const a1 = submission('a1', null, 'submitted')
+    const a2 = submission('a2', null, 'missing')
+
+    // mode = ส่งแล้ว: assignment 1 shows submitted, assignment 2 is blank — NEVER ขาดส่ง
+    expect(computeModeCellDisplay('submitted', a1.status, a1.score)).toEqual({ kind: 'submitted' })
+    expect(computeModeCellDisplay('submitted', a2.status, a2.score)).toEqual({ kind: 'blank' })
+
+    // mode = ขาดส่ง: assignment 1 is blank — NEVER ✓ — assignment 2 shows missing
+    expect(computeModeCellDisplay('missing', a1.status, a1.score)).toEqual({ kind: 'blank' })
+    expect(computeModeCellDisplay('missing', a2.status, a2.score)).toEqual({ kind: 'missing' })
+
+    // mode = ให้คะแนน: neither cell renders ✓ or ขาดส่ง — only score info (both — here, no score entered)
+    expect(computeModeCellDisplay('score', a1.status, a1.score)).toEqual({ kind: 'score', score: null })
+    expect(computeModeCellDisplay('score', a2.status, a2.score)).toEqual({ kind: 'score', score: null })
+  })
+
+  it('score mode never looks at status — a missing or not_submitted assignment with a score still shows that score', () => {
+    expect(computeModeCellDisplay('score', 'missing', 5)).toEqual({ kind: 'score', score: 5 })
+    expect(computeModeCellDisplay('score', 'not_submitted', 0)).toEqual({ kind: 'score', score: 0 })
+  })
+
+  it('submitted/missing mode never look at score — a graded submission still shows as submitted under ส่งแล้ว mode, not as a score', () => {
+    expect(computeModeCellDisplay('submitted', 'submitted', 10)).toEqual({ kind: 'submitted' })
+    expect(computeModeCellDisplay('submitted', 'late', 0)).toEqual({ kind: 'submitted' })
+  })
+
+  it('not_submitted (no recorded state) renders blank in BOTH ส่งแล้ว and ขาดส่ง mode — it is neither', () => {
+    expect(computeModeCellDisplay('submitted', 'not_submitted', null)).toEqual({ kind: 'blank' })
+    expect(computeModeCellDisplay('missing', 'not_submitted', null)).toEqual({ kind: 'blank' })
+  })
+
+  it('explicit score 0 is never confused with blank in score mode', () => {
+    expect(computeModeCellDisplay('score', 'submitted', 0)).toEqual({ kind: 'score', score: 0 })
+    expect(computeModeCellDisplay('score', 'submitted', null)).toEqual({ kind: 'score', score: null })
+  })
+})
+
+describe('filterStudentsByCheckMode — row visibility per mode', () => {
   const students = [rosterStudent({ id: 's1' }), rosterStudent({ id: 's2' }), rosterStudent({ id: 's3' })]
   const submissionsByAssignment = {
+    a1: { s1: submission('s1', null, 'submitted') }, // s1 submitted a1
+    a2: { s1: submission('s1', null, 'missing'), s2: submission('s2', null, 'missing') }, // s1 AND s2 missing a2
+    // s3 has no row anywhere -> not_submitted everywhere
+  }
+
+  it('REGRESSION — the same Student A (submitted a1, missing a2) appears under BOTH ส่งแล้ว and ขาดส่ง mode — each mode looks only at its own concept, independently', () => {
+    expect(filterStudentsByCheckMode(students, ['a1', 'a2'], submissionsByAssignment, 'submitted').map((s) => s.id)).toContain('s1')
+    expect(filterStudentsByCheckMode(students, ['a1', 'a2'], submissionsByAssignment, 'missing').map((s) => s.id)).toContain('s1')
+  })
+
+  it('ส่งแล้ว mode keeps only students with at least one submitted cell in scope', () => {
+    const result = filterStudentsByCheckMode(students, ['a1', 'a2'], submissionsByAssignment, 'submitted')
+    expect(result.map((s) => s.id)).toEqual(['s1'])
+  })
+
+  it('ขาดส่ง mode keeps only students with at least one explicit missing cell in scope', () => {
+    const result = filterStudentsByCheckMode(students, ['a1', 'a2'], submissionsByAssignment, 'missing')
+    expect(result.map((s) => s.id).sort()).toEqual(['s1', 's2'])
+  })
+
+  it('a student with nothing but not_submitted cells never appears under ส่งแล้ว or ขาดส่ง mode', () => {
+    expect(filterStudentsByCheckMode(students, ['a1', 'a2'], submissionsByAssignment, 'submitted').map((s) => s.id)).not.toContain('s3')
+    expect(filterStudentsByCheckMode(students, ['a1', 'a2'], submissionsByAssignment, 'missing').map((s) => s.id)).not.toContain('s3')
+  })
+
+  it('ให้คะแนน mode never filters — the full roster is always shown, including students with no score yet', () => {
+    const result = filterStudentsByCheckMode(students, ['a1', 'a2'], submissionsByAssignment, 'score')
+    expect(result.map((s) => s.id)).toEqual(['s1', 's2', 's3'])
+  })
+
+  it('the returned array is a fresh copy in score mode, never the same reference as the input', () => {
+    const result = filterStudentsByCheckMode(students, ['a1'], submissionsByAssignment, 'score')
+    expect(result).not.toBe(students)
+    expect(result).toEqual(students)
+  })
+})
+
+describe('computeModeItemCount — the top counter, always an ITEM count (assignment submissions / scored items), never a student headcount', () => {
+  const submissionsByAssignment = {
     a1: {
-      s1: submission('s1', null, 'submitted'), // submitted, no score
-      s2: submission('s2', 9, 'submitted'), // submitted + graded
-      // s3: no row -> not_submitted
+      s1: submission('s1', null, 'submitted'),
+      s2: submission('s2', 8, 'submitted'), // submitted AND scored
+      s3: submission('s3', null, 'missing'),
+    },
+    a2: {
+      s1: submission('s1', 15, 'late'), // submitted AND scored
+      s2: submission('s2', null, 'missing'),
+      // s3 has no row -> not_submitted
     },
   }
 
-  it("'all' returns every student unchanged", () => {
-    expect(filterStudentsBySubmissionCheckState(students, ['a1'], submissionsByAssignment, 'all').map((s) => s.id)).toEqual([
-      's1',
-      's2',
-      's3',
-    ])
+  it('ส่งแล้ว mode counts every submitted/late CELL, scored or not — matches the "ส่งแล้ว 198 รายการ" example shape (item-level, not student-level)', () => {
+    expect(computeModeItemCount(['s1', 's2', 's3'], ['a1', 'a2'], submissionsByAssignment, 'submitted')).toBe(3) // a1/s1, a1/s2, a2/s1
   })
 
-  it("'submitted' keeps students with at least one submitted OR graded cell — s1 (submitted, no score) AND s2 (graded) both match, since both are ส่งแล้ว", () => {
-    const result = filterStudentsBySubmissionCheckState(students, ['a1'], submissionsByAssignment, 'submitted')
-    expect(result.map((s) => s.id)).toEqual(['s1', 's2'])
+  it('ขาดส่ง mode counts every explicit missing CELL', () => {
+    expect(computeModeItemCount(['s1', 's2', 's3'], ['a1', 'a2'], submissionsByAssignment, 'missing')).toBe(2) // a1/s3, a2/s2
   })
 
-  it("'graded' keeps only students with at least one cell that has an explicit score — s1 (submitted but no score) is excluded", () => {
-    const result = filterStudentsBySubmissionCheckState(students, ['a1'], submissionsByAssignment, 'graded')
-    expect(result.map((s) => s.id)).toEqual(['s2'])
+  it('ให้คะแนน mode counts every cell with a non-null score, regardless of status', () => {
+    expect(computeModeItemCount(['s1', 's2', 's3'], ['a1', 'a2'], submissionsByAssignment, 'score')).toBe(2) // a1/s2, a2/s1
   })
 
-  it("'not_submitted' keeps students with a not_submitted OR missing cell (no score, never turned in)", () => {
-    const result = filterStudentsBySubmissionCheckState(students, ['a1'], submissionsByAssignment, 'not_submitted')
-    expect(result.map((s) => s.id)).toEqual(['s3'])
+  it('never double counts a student — 2 assignments both submitted by the same student count as 2 items, not 1', () => {
+    const both = { a1: { s1: submission('s1', null, 'submitted') }, a2: { s1: submission('s1', null, 'submitted') } }
+    expect(computeModeItemCount(['s1'], ['a1', 'a2'], both, 'submitted')).toBe(2)
   })
 
-  it('a student graded 0 is never matched by the not_submitted filter', () => {
-    const zeroGraded = { a1: { s1: submission('s1', 0, 'submitted') } }
-    const result = filterStudentsBySubmissionCheckState([rosterStudent({ id: 's1' })], ['a1'], zeroGraded, 'not_submitted')
-    expect(result).toHaveLength(0)
+  it('empty roster/assignment scope counts to zero for every mode', () => {
+    expect(computeModeItemCount([], [], {}, 'submitted')).toBe(0)
+    expect(computeModeItemCount([], [], {}, 'missing')).toBe(0)
+    expect(computeModeItemCount([], [], {}, 'score')).toBe(0)
+  })
+
+  it('a missing row (no submission at all) never counts toward any mode', () => {
+    const noRow = { a1: {} }
+    expect(computeModeItemCount(['s1'], ['a1'], noRow, 'submitted')).toBe(0)
+    expect(computeModeItemCount(['s1'], ['a1'], noRow, 'missing')).toBe(0)
+    expect(computeModeItemCount(['s1'], ['a1'], noRow, 'score')).toBe(0)
   })
 })
 
@@ -961,16 +1046,15 @@ describe('Hermes-written submission states render correctly in ตรวจง�
     expect(isSubmissionCellGradable(computeSubmissionCellState(hermesWritten.status, hermesWritten.score))).toBe(true)
   })
 
-  it('11 Hermes-marked-submitted assignments all count as "ส่งแล้ว" (submitted) in the tally, none as graded, none as score 0, none in a separate "awaiting review" bucket', () => {
+  it('11 Hermes-marked-submitted assignments all count as "ส่งแล้ว" (submitted) in the ส่งแล้ว mode counter, none as scored, none in a separate "awaiting review" bucket', () => {
     const submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>> = {}
     const assignmentIds = Array.from({ length: 11 }, (_, i) => `a${i}`)
     for (const id of assignmentIds) {
       submissionsByAssignment[id] = { s1: submission('s1', null, 'submitted') }
     }
-    const tally = computeSubmissionCheckTally(['s1'], assignmentIds, submissionsByAssignment)
-    expect(tally.submitted).toBe(11)
-    expect(tally.graded).toBe(0)
-    expect(tally.notSubmitted).toBe(0)
+    expect(computeModeItemCount(['s1'], assignmentIds, submissionsByAssignment, 'submitted')).toBe(11)
+    expect(computeModeItemCount(['s1'], assignmentIds, submissionsByAssignment, 'score')).toBe(0)
+    expect(computeModeItemCount(['s1'], assignmentIds, submissionsByAssignment, 'missing')).toBe(0)
   })
 
   it('a score Hermes writes via mark_submission_status_bulk (still just status, never score) never appears as graded until a teacher enters one here — the "late" submission still renders the SAME green ✓/ส่งแล้ว as "submitted", never a separate awaiting state', () => {

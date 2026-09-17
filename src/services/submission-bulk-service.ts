@@ -39,8 +39,8 @@ export interface BulkSubmissionStatusResult {
  * product the matrix's multi-select bulk bar (and each column's own
  * "ทั้งห้อง" quick action, a 1-assignment special case of the same
  * shape) builds before calling bulkMarkSubmissionStatus. Assignment-
- * major order, matching computeSubmissionCheckTally's own iteration
- * order elsewhere in this codebase.
+ * major order, matching computeModeItemCount's own iteration order
+ * elsewhere in this codebase.
  */
 export function buildBulkSubmissionStatusUpdates(
   studentIds: string[],

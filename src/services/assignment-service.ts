@@ -1002,89 +1002,128 @@ export function isSubmissionCellGradable(state: SubmissionCellState): boolean {
   return state === 'submitted' || state === 'graded'
 }
 
-export interface SubmissionCheckTally {
-  /** "ส่งแล้ว" — every submitted/late cell, whether or not it has a
-   * score yet (cell state 'submitted' OR 'graded'). A submission is
-   * counted here the instant its status says so — there is no separate
-   * "awaiting review" bucket in between. */
-  submitted: number
-  /** Subset of `submitted` that also has an explicit, non-null score —
-   * "ให้คะแนนแล้ว". */
-  graded: number
-  /** 'not_submitted' or 'missing' — no recorded submission — "ยังไม่ส่ง". */
-  notSubmitted: number
-}
+export type SubmissionCheckMode = 'submitted' | 'missing' | 'score'
 
 /**
- * Tallies every (student, assignment) cell in the matrix into exactly
- * one bucket of the 3 top-of-tab counters. Iterates the full
- * `studentIds` × `assignmentIds` cross product so a student/assignment
- * with NO submission row at all still counts as 'not_submitted' — the
- * same "missing row = not_submitted" default buildDefaultSubmissions
- * uses everywhere else in this file.
+ * The ONLY 3 modes the ตรวจงานและคะแนน matrix supports. Each mode
+ * controls, together, what every cell renders as, which students appear
+ * as rows, the top counter's number, and which bulk actions are
+ * available — there is no "all"/mixed mode and no fourth "รอตรวจ"/
+ * reviewed/checked mode. A cell that does not match the active mode's
+ * own concept always renders blank, never a status borrowed from a
+ * different mode: a student shown under "ส่งแล้ว" mode because THIS
+ * assignment was submitted must never also show a red "ขาดส่ง" tag for
+ * a DIFFERENT assignment in the same row — that exact mismatch (row-
+ * level filtering combined with full-state cell rendering) was the bug
+ * this replaced.
  */
-export function computeSubmissionCheckTally(
-  studentIds: string[],
-  assignmentIds: string[],
-  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
-): SubmissionCheckTally {
-  let submitted = 0
-  let graded = 0
-  let notSubmitted = 0
-
-  for (const assignmentId of assignmentIds) {
-    for (const studentId of studentIds) {
-      const submission = submissionsByAssignment[assignmentId]?.[studentId]
-      const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)
-      if (state === 'graded') {
-        graded += 1
-        submitted += 1
-      } else if (state === 'submitted') {
-        submitted += 1
-      } else {
-        notSubmitted += 1
-      }
-    }
-  }
-
-  return { submitted, graded, notSubmitted }
-}
-
-export type SubmissionCheckFilter = 'all' | 'submitted' | 'graded' | 'not_submitted'
-
-export const SUBMISSION_CHECK_FILTERS: { key: SubmissionCheckFilter; label: string }[] = [
-  { key: 'all', label: 'ทั้งหมด' },
+export const SUBMISSION_CHECK_MODES: { key: SubmissionCheckMode; label: string }[] = [
   { key: 'submitted', label: 'ส่งแล้ว' },
-  { key: 'graded', label: 'ให้คะแนนแล้ว' },
-  { key: 'not_submitted', label: 'ยังไม่ส่ง' },
+  { key: 'missing', label: 'ขาดส่ง' },
+  { key: 'score', label: 'ให้คะแนน' },
 ]
 
+/** Counter copy reads slightly differently from the mode's own toggle
+ * label ("ให้คะแนน" the mode vs. "ให้คะแนนแล้ว" the count of
+ * already-scored items) — kept as its own map so the two names never
+ * drift out of sync with each other. */
+export const SUBMISSION_CHECK_MODE_COUNT_LABEL: Record<SubmissionCheckMode, string> = {
+  submitted: 'ส่งแล้ว',
+  missing: 'ขาดส่ง',
+  score: 'ให้คะแนนแล้ว',
+}
+
+/** A submitted OR late status counts as "ส่งแล้ว" for mode purposes,
+ * independent of whether it has been scored yet — the exact same
+ * grouping computeSubmissionCellState already uses for its own
+ * 'submitted' cell state. */
+export function isSubmittedStatus(status: SubmissionStatus): boolean {
+  return status === 'submitted' || status === 'late'
+}
+
+/** Only an EXPLICIT 'missing' status counts as "ขาดส่ง" — the untouched
+ * 'not_submitted' default (no row, or a row nobody has acted on yet) is
+ * a silent "no recorded state," never rendered as the red ขาดส่ง tag.
+ * This is the exact same existing database status value
+ * computeSubmissionCellState already treats as 'missing' — no new
+ * status is invented here, and no database migration is needed. */
+export function isMissingStatus(status: SubmissionStatus): boolean {
+  return status === 'missing'
+}
+
+export type ModeCellDisplay = { kind: 'submitted' } | { kind: 'missing' } | { kind: 'score'; score: number | null } | { kind: 'blank' }
+
 /**
- * Filters the student roster to only those with AT LEAST ONE cell (among
- * `assignmentIds`, the assignments currently shown) matching the filter
- * — "who's submitted", "who hasn't turned in anything yet", etc.
- * `'all'` returns the roster unchanged. Never touches the summary tally
- * above, which always reflects every shown assignment regardless of
- * this filter — same "summary counts stay truthful regardless of the
- * current table filter" rule as filterRosterByStatus.
+ * The single source of truth for what one (assignment, student) cell
+ * shows under the current mode — this IS the fix for the original bug:
+ * a cell that does not match the active mode's own concept always
+ * renders `{ kind: 'blank' }`, never a status borrowed from a different
+ * mode. Submission and score stay fully independent: 'score' mode never
+ * looks at `status` at all, and 'submitted'/'missing' mode never look at
+ * `score` — a submitted-but-ungraded cell is 'submitted' under
+ * 'submitted' mode and `{ kind: 'score', score: null }` (rendered "—")
+ * under 'score' mode, never conflated.
  */
-export function filterStudentsBySubmissionCheckState<T extends { id: string }>(
+export function computeModeCellDisplay(mode: SubmissionCheckMode, status: SubmissionStatus, score: number | null): ModeCellDisplay {
+  if (mode === 'score') return { kind: 'score', score }
+  if (mode === 'submitted') return isSubmittedStatus(status) ? { kind: 'submitted' } : { kind: 'blank' }
+  return isMissingStatus(status) ? { kind: 'missing' } : { kind: 'blank' }
+}
+
+/**
+ * Which students appear as rows under the current mode. 'score' mode
+ * never filters — grading needs the full roster in front of the
+ * teacher, not just already-scored students. 'submitted'/'missing' mode
+ * keeps only students with AT LEAST ONE matching cell among
+ * `assignmentIds` (the assignments currently shown/searched) — a
+ * student with zero submitted work in scope never appears under
+ * "ส่งแล้ว" mode, and a student with zero missing work never appears
+ * under "ขาดส่ง" mode.
+ */
+export function filterStudentsByCheckMode<T extends { id: string }>(
   students: T[],
   assignmentIds: string[],
   submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
-  filter: SubmissionCheckFilter,
+  mode: SubmissionCheckMode,
 ): T[] {
-  if (filter === 'all') return [...students]
+  if (mode === 'score') return [...students]
 
   return students.filter((student) =>
     assignmentIds.some((assignmentId) => {
-      const submission = submissionsByAssignment[assignmentId]?.[student.id]
-      const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)
-      if (filter === 'submitted') return state === 'submitted' || state === 'graded'
-      if (filter === 'graded') return state === 'graded'
-      return state === 'not_submitted' || state === 'missing'
+      const status = submissionsByAssignment[assignmentId]?.[student.id]?.status ?? 'not_submitted'
+      return mode === 'submitted' ? isSubmittedStatus(status) : isMissingStatus(status)
     }),
   )
+}
+
+/**
+ * The top counter's number — an ITEM count (one (student, assignment)
+ * cell = one item: one assignment submission, or one scored item),
+ * never a student headcount. Always computed over the FULL `studentIds`
+ * × `assignmentIds` (the shown/searched columns), regardless of the
+ * current row filter above, so the number stays mathematically honest
+ * even though 'submitted'/'missing' mode hides some rows — e.g. "ส่งแล้ว
+ * 198 รายการ" counts every submitted CELL, not every student who has
+ * submitted at least one thing.
+ */
+export function computeModeItemCount(
+  studentIds: string[],
+  assignmentIds: string[],
+  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
+  mode: SubmissionCheckMode,
+): number {
+  let count = 0
+  for (const assignmentId of assignmentIds) {
+    for (const studentId of studentIds) {
+      const submission = submissionsByAssignment[assignmentId]?.[studentId]
+      const status = submission?.status ?? 'not_submitted'
+      const score = submission?.score ?? null
+      if (mode === 'submitted' && isSubmittedStatus(status)) count += 1
+      else if (mode === 'missing' && isMissingStatus(status)) count += 1
+      else if (mode === 'score' && score !== null) count += 1
+    }
+  }
+  return count
 }
 
 /** Narrows the assignment COLUMNS shown — the tab's optional "search

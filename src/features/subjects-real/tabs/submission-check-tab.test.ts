@@ -77,46 +77,60 @@ describe('SubmissionCheckTab — "+ สร้างงาน": create assignment
   })
 })
 
-describe('SubmissionCheckTab — cell rendering: green ✓ = ส่งแล้ว (submitted), never score 0, no "ตรวจแล้ว"/"รอตรวจ"/awaiting-review treatment', () => {
+describe('SubmissionCheckTab — cell rendering: exactly what computeModeCellDisplay says, never a status borrowed from another mode', () => {
   const source = readSource()
 
-  it('computes each cell\'s state via computeSubmissionCellState(status, score) — status/score straight from the fetched submission, never defaulted to 0', () => {
-    const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
-    expect(cellFn).toContain('state === ')
+  it('computes each cell\'s display via computeModeCellDisplay(mode, status, score) — status/score straight from the fetched submission, never defaulted to 0', () => {
+    const cellFn = source.slice(source.indexOf('function ModeCellVisual'))
+    expect(cellFn).toContain('display.kind === ')
     expect(source).toContain(
-      "const state = computeSubmissionCellState(submission?.status ?? 'not_submitted', submission?.score ?? null)",
+      "const display = computeModeCellDisplay(mode, submission?.status ?? 'not_submitted', submission?.score ?? null)",
     )
   })
 
-  it('the graded branch renders the REAL score, never a literal 0 fallback for a null score', () => {
-    const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'), source.indexOf('function SubmissionCellVisual') + 800)
-    expect(cellFn).toMatch(/if \(state === 'graded'\)/)
-    expect(cellFn).toContain('{score}/{maxScore}')
+  it('the score branch renders the REAL score, never a literal 0 fallback for a null score, and shows "—" when there is no score yet', () => {
+    const cellFn = source.slice(source.indexOf('function ModeCellVisual'), source.indexOf('function ModeCellVisual') + 800)
+    expect(cellFn).toMatch(/if \(display\.kind === 'score'\)/)
+    expect(cellFn).toContain('{display.score}/{maxScore}')
+    expect(cellFn).toContain('display.score === null')
     expect(cellFn).not.toContain('score ?? 0')
   })
 
-  it('"submitted" (covering both submitted and late statuses with no score) renders a green check (CheckCircle2) with NO score text next to it — visually distinct from the graded "score/max" branch, and with NO separate amber/"awaiting" treatment for late', () => {
-    const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
-    const submittedBranch = cellFn.slice(cellFn.indexOf("state === 'submitted'"), cellFn.indexOf("state === 'missing'"))
+  it('"submitted" renders a green check (CheckCircle2) with NO score text next to it — visually distinct from the score branch, and with NO separate amber/"awaiting" treatment for late', () => {
+    const cellFn = source.slice(source.indexOf('function ModeCellVisual'))
+    const submittedBranch = cellFn.slice(cellFn.indexOf("display.kind === 'submitted'"), cellFn.indexOf("display.kind === 'missing'"))
     expect(submittedBranch).toContain('CheckCircle2')
     expect(submittedBranch).not.toMatch(/\{score\}/)
-    expect(cellFn).not.toContain("state === 'submitted_ungraded'")
-    expect(cellFn).not.toContain("state === 'late_ungraded'")
+    expect(cellFn).not.toContain("display.kind === 'submitted_ungraded'")
+    expect(cellFn).not.toContain("display.kind === 'late_ungraded'")
     expect(cellFn).not.toContain('สาย')
     expect(cellFn).not.toContain('Clock3')
   })
 
-  it('missing renders "ขาดส่ง", not_submitted renders a neutral "—"', () => {
-    const cellFn = source.slice(source.indexOf('function SubmissionCellVisual'))
-    const missingBranch = cellFn.slice(cellFn.indexOf("state === 'missing'"))
+  it('missing renders "ขาดส่ง", and a non-matching ("blank") cell renders the same neutral "—" as no-score — never another mode\'s status', () => {
+    const cellFn = source.slice(source.indexOf('function ModeCellVisual'))
+    const missingBranch = cellFn.slice(cellFn.indexOf("display.kind === 'missing'"))
     expect(missingBranch).toContain('ขาดส่ง')
     expect(cellFn).toContain('return <span className="text-muted-foreground">—</span>')
   })
 
-  it('the tooltip/label text comes from SUBMISSION_CELL_STATE_LABEL and reads "ส่งแล้ว" for a submitted cell — never "ตรวจแล้ว"/"รอตรวจ"/awaiting-review copy', () => {
-    expect(source).toContain('title={SUBMISSION_CELL_STATE_LABEL[state]}')
+  it('the tooltip/label text comes from modeCellTitle and reads "ส่งแล้ว"/"ขาดส่ง" for their own matching cells — never "ตรวจแล้ว"/"รอตรวจ"/awaiting-review copy', () => {
+    expect(source).toContain('title={modeCellTitle(display)}')
+    const titleFn = source.slice(source.indexOf('function modeCellTitle'), source.indexOf('function ModeCellVisual'))
+    expect(titleFn).toContain("return 'ส่งแล้ว'")
+    expect(titleFn).toContain("return 'ขาดส่ง'")
     expect(source).not.toContain('รอตรวจ')
     expect(source).not.toContain('ตรวจแล้ว')
+  })
+
+  it('REGRESSION — the exact bug: Student A (assignment 1 submitted, assignment 2 missing) never shows ขาดส่ง under ส่งแล้ว mode nor ✓ under ขาดส่ง mode — this is a thin wiring guard; the real behavioral proof lives in computeModeCellDisplay\'s own tests (assignment-service.test.ts)', () => {
+    expect(source).toContain('computeModeCellDisplay(mode, submission?.status')
+    // the component itself never branches on mode when computing display —
+    // it delegates entirely to the pure function, so there is no separate
+    // per-mode rendering path here that could reintroduce the mismatch.
+    const cellComputation = source.slice(source.indexOf('{visibleAssignments.map((assignment) => {'), source.indexOf('</td>\n                            )\n                          })}'))
+    const modeMatches = cellComputation.match(/\bmode\b/g) ?? []
+    expect(modeMatches).toHaveLength(1) // only the one computeModeCellDisplay(mode, ...) call
   })
 })
 
@@ -339,25 +353,28 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
   })
 })
 
-describe('SubmissionCheckTab — summary counters and filters: no "ตรวจแล้ว"/"รอตรวจ"/awaiting-review bucket anywhere', () => {
+describe('SubmissionCheckTab — exactly 3 modes (ส่งแล้ว/ขาดส่ง/ให้คะแนน), ONE mathematically-honest item counter per mode, no "รอตรวจ"/"ตรวจแล้ว"/awaiting-review bucket anywhere', () => {
   const source = readSource()
 
-  it('renders exactly the 3 required counters: ส่งแล้ว, ให้คะแนนแล้ว, ยังไม่ส่ง — no separate "รอตรวจ"/"ตรวจแล้ว" split', () => {
-    expect(source).toContain('label="ส่งแล้ว" value={tally.submitted}')
-    expect(source).toContain('label="ให้คะแนนแล้ว" value={tally.graded}')
-    expect(source).toContain('label="ยังไม่ส่ง" value={tally.notSubmitted}')
+  it('renders exactly ONE counter, matching the active mode, built from SUBMISSION_CHECK_MODE_COUNT_LABEL + an ITEM count — never a 3-way split into unrelated buckets', () => {
+    expect(source).toContain('label={`${SUBMISSION_CHECK_MODE_COUNT_LABEL[mode]} ${modeItemCount} รายการ`}')
     expect(source).not.toContain('รอตรวจ')
     expect(source).not.toContain('ตรวจแล้ว')
-    expect(source).not.toMatch(/tally\.awaitingReview|tally\.checked\b/)
+    expect(source).not.toMatch(/tally\.awaitingReview|tally\.checked\b|modeItemCount\.checked/)
   })
 
-  it('the tally and filter both come from the shared pure functions, computed over the CURRENTLY VISIBLE (searched) assignment columns', () => {
-    expect(source).toContain('computeSubmissionCheckTally(')
-    expect(source).toContain('filterStudentsBySubmissionCheckState(roster, visibleAssignmentIds, submissionsByAssignment, filter)')
+  it('the counter and the row filter both come from the shared pure mode functions, computed over the CURRENTLY VISIBLE (searched) assignment columns', () => {
+    expect(source).toContain('computeModeItemCount(')
+    expect(source).toContain('filterStudentsByCheckMode(roster, visibleAssignmentIds, submissionsByAssignment, mode)')
   })
 
-  it('renders the filter buttons from SUBMISSION_CHECK_FILTERS (ทั้งหมด/ส่งแล้ว/ให้คะแนนแล้ว/ยังไม่ส่ง) — no separate, hand-typed filter list, and no "รอตรวจ"/"ตรวจแล้ว" filter option', () => {
-    expect(source).toContain('SUBMISSION_CHECK_FILTERS.map((f) =>')
+  it('renders the mode toggle buttons from SUBMISSION_CHECK_MODES — no separate, hand-typed mode list, and no "รอตรวจ"/"ตรวจแล้ว" mode option', () => {
+    expect(source).toContain('SUBMISSION_CHECK_MODES.map((m) =>')
+    expect(source).toContain('onClick={() => setMode(m.key)}')
+  })
+
+  it('defaults to ส่งแล้ว mode on first load — the most common "who has turned in work" check', () => {
+    expect(source).toContain("useState<SubmissionCheckMode>('submitted')")
   })
 
   it('has an optional assignment search box that only appears once there are enough assignments to make the matrix wide', () => {
@@ -377,17 +394,18 @@ describe('SubmissionCheckTab — green ✓ IS "ส่งแล้ว": no separa
     expect(saveFn).not.toMatch(/scoreDraft is required/i)
   })
 
-  it('never reintroduces a reviewed/checked concept distinct from status — no reviewedAt, no setSubmissionReviewed/bulkSetSubmissionsReviewed, no "checked" cell state, no "ตรวจแล้ว" label or bulk-mark action anywhere', () => {
+  it('never reintroduces a reviewed/checked concept distinct from status/score — no reviewedAt, no setSubmissionReviewed/bulkSetSubmissionsReviewed, no "checked"/"รอตรวจ" mode or cell kind, no "ตรวจแล้ว" label or bulk-mark action anywhere', () => {
     expect(source).not.toMatch(/reviewedAt/)
     expect(source).not.toContain('setSubmissionReviewed')
     expect(source).not.toContain('bulkSetSubmissionsReviewed')
-    expect(source).not.toContain("state === 'checked'")
+    expect(source).not.toContain("kind === 'checked'")
+    expect(source).not.toContain("mode === 'checked'")
     expect(source).not.toContain('ตรวจแล้ว')
     expect(source).not.toContain('รอตรวจ')
     expect(source).not.toContain('runBulkReviewUpdate')
   })
 
-  it('bulk actions only ever write `status` — the optimistic update spreads `existing` and overrides only `status`; the sole `score:` reference left is the untouched `null` default on a brand-new local record, and setSubmissionScore is never called from a bulk path', () => {
+  it('bulk STATUS actions only ever write `status` — the optimistic update spreads `existing` and overrides only `status`; the sole `score:` reference left is the untouched `null` default on a brand-new local record, and setSubmissionScore is never called from that path', () => {
     const fn = source.slice(source.indexOf('async function runBulkStatusUpdate'), source.indexOf('function handleColumnQuickAction'))
     const scoreMatches = fn.match(/score:/g) ?? []
     const scoreNullMatches = fn.match(/score: null/g) ?? []
@@ -442,6 +460,10 @@ describe('SubmissionCheckTab — bulk grading (score) controls: exactly one assi
   it('singleSelectedAssignment is derived ONLY when exactly one assignment is selected — the bulk grading bar has no meaning across multiple assignment columns', () => {
     expect(source).toContain('selectedAssignmentIds.size === 1 ? Array.from(selectedAssignmentIds)[0] : null')
     expect(source).toContain('singleSelectedAssignment && selectedStudentIds.size > 0')
+  })
+
+  it('the score bar only ever renders in ให้คะแนน mode — never alongside the ส่งแล้ว/ขาดส่ง bulk-status button', () => {
+    expect(source).toContain("mode === 'score' && singleSelectedAssignment && selectedStudentIds.size > 0")
   })
 
   it('changing the selected assignment resets the score draft — a score typed for one assignment\'s max never silently carries over to another', () => {
@@ -556,5 +578,41 @@ describe('SubmissionCheckTab — assignment header menu: ให้คะแน�
   it('menu items are disabled while a bulk action is in flight, same as the existing ทั้งห้อง status shortcuts', () => {
     expect(menuBlock).toMatch(/label: 'ให้คะแนนทั้งห้อง',\s*disabled: bulkBusy/)
     expect(menuBlock).toMatch(/label: 'เต็มคะแนนทั้งห้อง',\s*disabled: bulkBusy/)
+  })
+
+  it('each "ทั้งห้อง" quick action is gated behind its OWN matching mode — never all 3 shown at once, and never a status/scoring shortcut for a different mode than what is on screen', () => {
+    expect(menuBlock).toContain("...(mode === 'submitted'")
+    expect(menuBlock).toContain("...(mode === 'missing'")
+    expect(menuBlock).toContain("...(mode === 'score'")
+    // the mark-submitted item lives INSIDE the mode === 'submitted' branch, not unconditionally
+    const submittedBranch = menuBlock.slice(menuBlock.indexOf("...(mode === 'submitted'"), menuBlock.indexOf("...(mode === 'missing'"))
+    expect(submittedBranch).toContain("label: 'ส่งแล้วทั้งห้อง'")
+    const missingBranch = menuBlock.slice(menuBlock.indexOf("...(mode === 'missing'"), menuBlock.indexOf("...(mode === 'score'"))
+    expect(missingBranch).toContain("label: 'ขาดส่งทั้งห้อง'")
+    const scoreBranch = menuBlock.slice(menuBlock.indexOf("...(mode === 'score'"), menuBlock.indexOf("key: 'archive'"))
+    expect(scoreBranch).toContain("label: 'ให้คะแนนทั้งห้อง'")
+    expect(scoreBranch).toContain("label: 'เต็มคะแนนทั้งห้อง'")
+  })
+})
+
+describe('SubmissionCheckTab — the ONE bulk-status action button matches the active mode exactly', () => {
+  const source = readSource()
+
+  it('MODE_BULK_STATUS_ACTION maps ส่งแล้ว mode to a "submitted" write and ขาดส่ง mode to a "missing" write — no multi-button status picker in the bulk bar', () => {
+    expect(source).toContain("submitted: { status: 'submitted', label: 'ทำเครื่องหมายว่าส่งแล้ว' }")
+    expect(source).toContain("missing: { status: 'missing', label: 'ทำเครื่องหมายว่าขาดส่ง' }")
+  })
+
+  it('the bulk-status button renders only in ส่งแล้ว/ขาดส่ง mode — never in ให้คะแนน mode', () => {
+    expect(source).toContain("(mode === 'submitted' || mode === 'missing') &&")
+    expect(source).toContain('onClick={() => handleSelectionBulkAction(MODE_BULK_STATUS_ACTION[mode].status)}')
+  })
+
+  it('never renders a 3-button STATUS_ACTIONS picker in the selection bar (that stays exclusive to the per-cell dialog)', () => {
+    const selectionBarBlock = source.slice(
+      source.indexOf('{(selectedStudentIds.size > 0 || selectedAssignmentIds.size > 0) && ('),
+      source.indexOf('{bulkGradeFailures.length > 0 &&'),
+    )
+    expect(selectionBarBlock).not.toContain('STATUS_ACTIONS.map((action) =>')
   })
 })
