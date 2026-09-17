@@ -1005,18 +1005,17 @@ export function isSubmissionCellGradable(state: SubmissionCellState): boolean {
 export type SubmissionCheckMode = 'all' | 'submitted' | 'missing'
 
 /**
- * The 3 modes the ตรวจงานและคะแนน matrix supports — ONE master matrix,
- * where EVERY mode renders the exact same cell content (submission
- * status AND score together, via computeCellDisplay); modes differ
- * ONLY in which student ROWS are visible, never in what a visible cell
- * shows. ทั้งหมด (the default) is the full classroom overview — every
- * student, every assignment. ส่งแล้ว/ขาดส่ง narrow the ROWS to students
- * with at least one matching assignment in scope — they are filters on
- * the SAME matrix, never a separate status-only or score-only view.
- * There is no fourth "ให้คะแนน"/score-only mode: grading always happens
- * in place, on whichever rows are currently visible, via the per-cell
- * dialog or the bulk grading bar — never by navigating to a page that
- * hides submission status.
+ * The 3 modes the ตรวจงานและคะแนน matrix supports. ทั้งหมด (the default)
+ * is the ONLY mode that combines submission status AND grading — every
+ * cell shows exactly ✓ (with its score alongside, or a "no score yet"
+ * placeholder), or ขาดส่ง. ส่งแล้ว and ขาดส่ง are pure, SCORE-FREE views:
+ * ส่งแล้ว shows ONLY a checkmark for submitted work (no score, no "/10",
+ * no placeholder, ever) and leaves a non-matching cell truly empty;
+ * ขาดส่ง shows ONLY ขาดส่ง for missing work and leaves a submitted cell
+ * truly empty. Grading (both the per-cell dialog's score field and the
+ * bulk grading bar) is available ONLY while ทั้งหมด is active — there is
+ * no fourth "ให้คะแนน" mode, but there is also no grading UI leaking
+ * into the 2 narrow views.
  */
 export const SUBMISSION_CHECK_MODES: { key: SubmissionCheckMode; label: string }[] = [
   { key: 'all', label: 'ทั้งหมด' },
@@ -1059,23 +1058,37 @@ export function isMissingStatus(status: SubmissionStatus): boolean {
   return !isSubmittedStatus(status)
 }
 
-export type CellDisplay = { kind: 'submitted'; score: number | null } | { kind: 'missing' }
+export type CellDisplay =
+  | { kind: 'submitted'; score: number | null } // ONLY produced in 'all' mode — the one place score is shown
+  | { kind: 'submitted-plain' } // ONLY produced in 'submitted' mode — a bare ✓, score never rendered
+  | { kind: 'missing' } // produced in 'all' mode (exhaustively) and in 'missing' mode (for matching cells)
+  | { kind: 'blank' } // a cell that doesn't match the active narrow mode's own concept — truly empty
 
 /**
  * The single source of truth for what ONE (assignment, student) cell
- * shows — the same for every mode (ทั้งหมด/ส่งแล้ว/ขาดส่ง only ever
- * change which rows are visible, never what a visible cell shows, so
- * there is exactly one rendering to reason about, not one per mode). A
- * submitted/late cell always carries its score alongside the ✓ — `null`
- * (no score entered yet) and `0` (an explicit zero) are two distinct
- * values, never conflated: the caller renders `null` as an empty
- * placeholder ("—") and `0` as the literal score "0". A missing cell
- * (explicit 'missing', explicit 'not_submitted', or no submission row
- * at all) always shows ขาดส่ง and carries NO score field — there is no
- * score to show or enter for work that was never submitted.
+ * shows under the CURRENT mode. ทั้งหมด is exhaustive and the ONLY mode
+ * that ever reveals a score: a submitted/late cell becomes
+ * `{ kind: 'submitted', score }` — `null` (no score entered yet) and `0`
+ * (an explicit zero) are two distinct values the caller must never
+ * conflate (render `null` as a "no score yet" placeholder, `0` as the
+ * literal score "0") — and a missing cell (explicit 'missing', explicit
+ * 'not_submitted', or no submission row at all) becomes
+ * `{ kind: 'missing' }`, never blank. ส่งแล้ว is a pure, SCORE-FREE view:
+ * a matching cell is `{ kind: 'submitted-plain' }` (a bare ✓ — the
+ * caller must never render a score, "/max", or "—" for this kind) and a
+ * non-matching cell is `{ kind: 'blank' }` (truly empty — never ขาดส่ง,
+ * which belongs to a different mode). ขาดส่ง is the mirror: a matching
+ * cell is `{ kind: 'missing' }` and a non-matching (submitted) cell is
+ * `{ kind: 'blank' }` — never a ✓.
  */
-export function computeCellDisplay(status: SubmissionStatus, score: number | null): CellDisplay {
-  return isSubmittedStatus(status) ? { kind: 'submitted', score } : { kind: 'missing' }
+export function computeCellDisplay(mode: SubmissionCheckMode, status: SubmissionStatus, score: number | null): CellDisplay {
+  if (mode === 'all') {
+    return isSubmittedStatus(status) ? { kind: 'submitted', score } : { kind: 'missing' }
+  }
+  if (mode === 'submitted') {
+    return isSubmittedStatus(status) ? { kind: 'submitted-plain' } : { kind: 'blank' }
+  }
+  return isMissingStatus(status) ? { kind: 'missing' } : { kind: 'blank' }
 }
 
 /**

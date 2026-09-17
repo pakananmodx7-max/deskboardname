@@ -893,43 +893,69 @@ describe('isSubmittedStatus / isMissingStatus — exact complements over all 4 s
   })
 })
 
-describe('computeCellDisplay — ONE master matrix: a single cell rendering shared by every mode, always exhaustive (submitted+score, or missing)', () => {
-  it('a submitted status with no score yet is {kind: submitted, score: null} — the caller renders this as ✓ plus a "—" placeholder', () => {
-    expect(computeCellDisplay('submitted', null)).toEqual({ kind: 'submitted', score: null })
+describe('computeCellDisplay — grading (score) is exclusive to ทั้งหมด; ส่งแล้ว/ขาดส่ง are pure, score-free views', () => {
+  it('ทั้งหมด: a submitted status with no score yet is {kind: submitted, score: null} — the caller renders this as ✓ plus a "—" placeholder', () => {
+    expect(computeCellDisplay('all', 'submitted', null)).toEqual({ kind: 'submitted', score: null })
   })
 
-  it('a submitted status with a real score is {kind: submitted, score} — e.g. 8/10', () => {
-    expect(computeCellDisplay('submitted', 8)).toEqual({ kind: 'submitted', score: 8 })
+  it('ทั้งหมด: a submitted status with a real score is {kind: submitted, score} — e.g. 8/10', () => {
+    expect(computeCellDisplay('all', 'submitted', 8)).toEqual({ kind: 'submitted', score: 8 })
   })
 
-  it('REGRESSION — an explicit score of 0 on a submitted assignment is {kind: submitted, score: 0}, never confused with the null/"—" case', () => {
-    expect(computeCellDisplay('submitted', 0)).toEqual({ kind: 'submitted', score: 0 })
-    expect(computeCellDisplay('submitted', 0)).not.toEqual({ kind: 'submitted', score: null })
-    expect(computeCellDisplay('submitted', null)).not.toEqual({ kind: 'submitted', score: 0 })
+  it('REGRESSION — ทั้งหมด: an explicit score of 0 on a submitted assignment is {kind: submitted, score: 0}, never confused with the null/"—" case', () => {
+    expect(computeCellDisplay('all', 'submitted', 0)).toEqual({ kind: 'submitted', score: 0 })
+    expect(computeCellDisplay('all', 'submitted', 0)).not.toEqual({ kind: 'submitted', score: null })
+    expect(computeCellDisplay('all', 'submitted', null)).not.toEqual({ kind: 'submitted', score: 0 })
   })
 
-  it('late counts as submitted, same as submitted — score carried through either way', () => {
-    expect(computeCellDisplay('late', 5)).toEqual({ kind: 'submitted', score: 5 })
-    expect(computeCellDisplay('late', null)).toEqual({ kind: 'submitted', score: null })
+  it('ทั้งหมด: late counts as submitted, same as submitted — score carried through either way', () => {
+    expect(computeCellDisplay('all', 'late', 5)).toEqual({ kind: 'submitted', score: 5 })
+    expect(computeCellDisplay('all', 'late', null)).toEqual({ kind: 'submitted', score: null })
   })
 
-  it('REGRESSION — missing/not_submitted (including "no row at all," which already defaults to not_submitted) is always {kind: missing} — no score field at all, even if a stray score value were passed in', () => {
-    expect(computeCellDisplay('missing', null)).toEqual({ kind: 'missing' })
-    expect(computeCellDisplay('not_submitted', null)).toEqual({ kind: 'missing' })
-    expect(computeCellDisplay('missing', 7)).toEqual({ kind: 'missing' })
-    expect('score' in computeCellDisplay('missing', null)).toBe(false)
+  it('REGRESSION — ทั้งหมด: missing/not_submitted (including "no row at all," which already defaults to not_submitted) is always {kind: missing} — no score field at all, even if a stray score value were passed in, and ทั้งหมด never renders blank', () => {
+    expect(computeCellDisplay('all', 'missing', null)).toEqual({ kind: 'missing' })
+    expect(computeCellDisplay('all', 'not_submitted', null)).toEqual({ kind: 'missing' })
+    expect(computeCellDisplay('all', 'missing', 7)).toEqual({ kind: 'missing' })
+    expect('score' in computeCellDisplay('all', 'missing', null)).toBe(false)
   })
 
-  it('REGRESSION — the SAME (status, score) pair produces the SAME display regardless of which mode is active, since there is no mode parameter at all — this IS the "one master matrix" design', () => {
-    // Student A: assignment 1 submitted+scored, assignment 2 missing.
-    const a1 = submission('a1', 8, 'submitted')
-    const a2 = submission('a2', null, 'missing')
-    expect(computeCellDisplay(a1.status, a1.score)).toEqual({ kind: 'submitted', score: 8 })
-    expect(computeCellDisplay(a2.status, a2.score)).toEqual({ kind: 'missing' })
-    // Calling it again (as ทั้งหมด, ส่งแล้ว, and ขาดส่ง mode would all do — each
-    // mode only changes which ROWS are visible, never how a cell renders)
-    // returns the exact same result every time.
-    expect(computeCellDisplay(a1.status, a1.score)).toEqual(computeCellDisplay(a1.status, a1.score))
+  it('REGRESSION — ส่งแล้ว mode NEVER carries a score: a matching cell is {kind: submitted-plain} regardless of the real score value, and a non-matching (missing) cell is {kind: blank}, never {kind: missing}', () => {
+    expect(computeCellDisplay('submitted', 'submitted', 8)).toEqual({ kind: 'submitted-plain' })
+    expect(computeCellDisplay('submitted', 'submitted', 0)).toEqual({ kind: 'submitted-plain' })
+    expect(computeCellDisplay('submitted', 'submitted', null)).toEqual({ kind: 'submitted-plain' })
+    expect(computeCellDisplay('submitted', 'late', null)).toEqual({ kind: 'submitted-plain' })
+    expect(computeCellDisplay('submitted', 'missing', null)).toEqual({ kind: 'blank' })
+    expect(computeCellDisplay('submitted', 'not_submitted', null)).toEqual({ kind: 'blank' })
+    expect('score' in computeCellDisplay('submitted', 'submitted', 8)).toBe(false)
+  })
+
+  it('REGRESSION — ขาดส่ง mode NEVER shows a checkmark or score: a matching (missing) cell is {kind: missing}, and a non-matching (submitted) cell is {kind: blank}, never {kind: submitted} or {kind: submitted-plain}', () => {
+    expect(computeCellDisplay('missing', 'missing', null)).toEqual({ kind: 'missing' })
+    expect(computeCellDisplay('missing', 'not_submitted', null)).toEqual({ kind: 'missing' })
+    expect(computeCellDisplay('missing', 'submitted', 8)).toEqual({ kind: 'blank' })
+    expect(computeCellDisplay('missing', 'late', null)).toEqual({ kind: 'blank' })
+  })
+
+  it('REGRESSION — the exact scenario from the task spec: Student A, assignment 1 submitted+no score, assignment 2 submitted+score 8, assignment 3 missing', () => {
+    const a1 = submission('a1', null, 'submitted')
+    const a2 = submission('a2', 8, 'submitted')
+    const a3 = submission('a3', null, 'missing')
+
+    // ทั้งหมด: A1 => ✓, A2 => ✓ 8/10, A3 => ขาดส่ง
+    expect(computeCellDisplay('all', a1.status, a1.score)).toEqual({ kind: 'submitted', score: null })
+    expect(computeCellDisplay('all', a2.status, a2.score)).toEqual({ kind: 'submitted', score: 8 })
+    expect(computeCellDisplay('all', a3.status, a3.score)).toEqual({ kind: 'missing' })
+
+    // ส่งแล้ว: A1 => ✓, A2 => ✓, A3 => empty (blank) — never a score, never ขาดส่ง
+    expect(computeCellDisplay('submitted', a1.status, a1.score)).toEqual({ kind: 'submitted-plain' })
+    expect(computeCellDisplay('submitted', a2.status, a2.score)).toEqual({ kind: 'submitted-plain' })
+    expect(computeCellDisplay('submitted', a3.status, a3.score)).toEqual({ kind: 'blank' })
+
+    // ขาดส่ง: A1 => empty, A2 => empty, A3 => ขาดส่ง — never a ✓, never a score
+    expect(computeCellDisplay('missing', a1.status, a1.score)).toEqual({ kind: 'blank' })
+    expect(computeCellDisplay('missing', a2.status, a2.score)).toEqual({ kind: 'blank' })
+    expect(computeCellDisplay('missing', a3.status, a3.score)).toEqual({ kind: 'missing' })
   })
 })
 
@@ -1169,7 +1195,7 @@ describe('Hermes-written submission states render correctly in ตรวจง�
     expect(computeModeItemCount(['s1'], assignmentIds, submissionsByAssignment, 'submitted')).toBe(11)
     expect(computeModeItemCount(['s1'], assignmentIds, submissionsByAssignment, 'missing')).toBe(0)
     for (const id of assignmentIds) {
-      expect(computeCellDisplay(submissionsByAssignment[id].s1.status, submissionsByAssignment[id].s1.score)).toEqual({
+      expect(computeCellDisplay('all', submissionsByAssignment[id].s1.status, submissionsByAssignment[id].s1.score)).toEqual({
         kind: 'submitted',
         score: null,
       })

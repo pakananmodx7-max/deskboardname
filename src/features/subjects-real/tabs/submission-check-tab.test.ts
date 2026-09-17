@@ -77,32 +77,40 @@ describe('SubmissionCheckTab — "+ สร้างงาน": create assignment
   })
 })
 
-describe('SubmissionCheckTab — ONE master matrix: cell rendering is exactly computeCellDisplay\'s output, the SAME in every mode', () => {
+describe('SubmissionCheckTab — cell rendering: grading (score) is exclusive to ทั้งหมด, ส่งแล้ว/ขาดส่ง are pure score-free views', () => {
   const source = readSource()
 
-  it('computes each cell\'s display via computeCellDisplay(status, score) — no mode parameter at all, status/score straight from the fetched submission, never defaulted to 0', () => {
+  it('computes each cell\'s display via computeCellDisplay(mode, status, score) — status/score straight from the fetched submission, never defaulted to 0', () => {
     const cellFn = source.slice(source.indexOf('function CellVisual'))
     expect(cellFn).toContain('display.kind === ')
-    expect(source).toContain("const display = computeCellDisplay(submission?.status ?? 'not_submitted', submission?.score ?? null)")
+    expect(source).toContain("const display = computeCellDisplay(mode, submission?.status ?? 'not_submitted', submission?.score ?? null)")
   })
 
-  it('REGRESSION — a submitted cell renders green ✓ PLUS its score together, never the ✓ alone — a null score renders the "—" placeholder, never a literal 0', () => {
-    const cellFn = source.slice(source.indexOf('function CellVisual'), source.indexOf('function CellVisual') + 900)
+  it('REGRESSION — the ONLY kind that ever renders a score is {kind: submitted} (produced exclusively in ทั้งหมด mode) — a null score renders the "—" placeholder, never a literal 0, and an explicit 0 renders the literal "0/{maxScore}", never "—"', () => {
+    const cellFn = source.slice(source.indexOf('function CellVisual'), source.indexOf('function CellVisual') + 1200)
     expect(cellFn).toContain('CheckCircle2')
     expect(cellFn).toContain("display.score === null ? '—' : `${display.score}/${maxScore}`")
     expect(cellFn).not.toContain('score ?? 0')
   })
 
-  it('REGRESSION — an explicit score of 0 renders the literal "0/{maxScore}", never the "—" placeholder — null and 0 take different rendering branches', () => {
-    const cellFn = source.slice(source.indexOf('function CellVisual'), source.indexOf('function CellVisual') + 900)
-    expect(cellFn).toMatch(/display\.score === null \? '—' : `\$\{display\.score\}\/\$\{maxScore\}`/)
+  it('REGRESSION — {kind: submitted-plain} (ส่งแล้ว mode\'s matching cell) renders a BARE ✓ — no score, no "/max", no "—" placeholder in that branch', () => {
+    const cellFn = source.slice(source.indexOf('function CellVisual'))
+    const plainBranch = cellFn.slice(cellFn.indexOf("display.kind === 'submitted-plain'"), cellFn.indexOf("display.kind === 'submitted'"))
+    expect(plainBranch).toContain('CheckCircle2')
+    expect(plainBranch).not.toContain('maxScore')
+    expect(plainBranch).not.toContain("'—'")
   })
 
   it('missing renders ONLY "ขาดส่ง" — no score field, no CheckCircle2, no placeholder', () => {
     const cellFn = source.slice(source.indexOf('function CellVisual'))
-    const missingBranch = cellFn.slice(cellFn.indexOf("display.kind === 'missing'"), cellFn.indexOf('return (', cellFn.indexOf("display.kind === 'missing'")))
+    const missingBranch = cellFn.slice(cellFn.indexOf("display.kind === 'missing'"), cellFn.indexOf("display.kind === 'submitted-plain'"))
     expect(missingBranch).toContain('ขาดส่ง')
     expect(missingBranch).not.toContain('CheckCircle2')
+  })
+
+  it('REGRESSION — a non-matching ("blank") cell in ส่งแล้ว/ขาดส่ง mode renders truly empty — no "—" placeholder, which would read as its own third visual state', () => {
+    const cellFn = source.slice(source.indexOf('function CellVisual'))
+    expect(cellFn).toContain('return null')
   })
 
   it('the tooltip/label text comes from cellTitle and reads "ขาดส่ง"/ส่งแล้ว copy for their own matching cells — never "ตรวจแล้ว"/"รอตรวจ"/awaiting-review copy', () => {
@@ -114,20 +122,21 @@ describe('SubmissionCheckTab — ONE master matrix: cell rendering is exactly co
     expect(source).not.toContain('ตรวจแล้ว')
   })
 
-  it('REGRESSION — cell display never branches on the active mode at all: the ONLY `mode` reference inside the cell computation is none (computeCellDisplay takes no mode argument) — this IS the fix for the old bug where a mismatched status could leak into the wrong mode', () => {
-    expect(source).toContain('computeCellDisplay(submission?.status')
-    const cellComputation = source.slice(
-      source.indexOf('{visibleAssignments.map((assignment) => {'),
-      source.indexOf('</td>\n                            )\n                          })}'),
-    )
-    const modeMatches = cellComputation.match(/\bmode\b/g) ?? []
-    expect(modeMatches).toHaveLength(0) // computeCellDisplay takes no mode argument at all
+  it('REGRESSION — cell display is computed with the CURRENT mode as its first argument — this is exactly what stops score UI from leaking into ส่งแล้ว/ขาดส่ง (the mode decides which CellDisplay kind is even possible)', () => {
+    expect(source).toContain('computeCellDisplay(mode, submission?.status')
   })
 
-  it('REGRESSION — there is no separate score-only cell kind/mode anywhere — CellDisplay is exhaustively {kind: submitted, score} | {kind: missing}, never a third "score" kind', () => {
+  it('REGRESSION — CellDisplay has exactly 4 kinds: submitted (scored, ทั้งหมด-only), submitted-plain (ส่งแล้ว), missing, and an implicit "blank" (non-matching cell in a narrow mode, handled by the trailing `return null` — never a "score"-named kind', () => {
     expect(source).not.toContain("kind === 'score'")
-    expect(source).not.toContain("kind: 'blank'")
-    expect(source).not.toContain("kind === 'blank'")
+    expect(source).toContain("kind === 'submitted-plain'")
+    const cellFn = source.slice(source.indexOf('function CellVisual'))
+    expect(cellFn.trim().endsWith('return null\n}')).toBe(true) // the blank/non-matching fallthrough
+  })
+
+  it('CellDisplay/computeCellDisplay are imported from the shared assignment-service.ts, never re-implemented in this component', () => {
+    expect(source).toContain('computeCellDisplay,')
+    expect(source).toContain('type CellDisplay,')
+    expect(source).toContain("from '@/services/assignment-service'")
   })
 })
 
@@ -474,9 +483,9 @@ describe('SubmissionCheckTab — bulk grading controls: exactly one assignment s
     expect(source).toContain('singleSelectedAssignment && selectedStudentIds.size > 0')
   })
 
-  it('REGRESSION — the grading bar is available in EVERY mode, never gated behind a "score" mode — grading is not tied to a mode at all', () => {
-    expect(source).toContain('{singleSelectedAssignment && selectedStudentIds.size > 0 && (')
-    expect(source).not.toMatch(/mode === 'score'[\s\S]{0,20}&&[\s\S]{0,20}singleSelectedAssignment/)
+  it('REGRESSION — the grading bar is gated behind ทั้งหมด mode ONLY — it never renders in ส่งแล้ว/ขาดส่ง, and there is no separate "score" mode either', () => {
+    expect(source).toContain("{mode === 'all' && singleSelectedAssignment && selectedStudentIds.size > 0 && (")
+    expect(source).not.toMatch(/mode === 'score'/)
   })
 
   it('REGRESSION — shows the submitted/ขาดส่ง split for the current selection × the one selected assignment, via computeSubmittedMissingSplit', () => {
@@ -616,22 +625,20 @@ describe('SubmissionCheckTab — assignment header menu: ให้คะแน�
     expect(menuBlock).toMatch(/label: 'เต็มคะแนนคนที่ส่งแล้วทั้งห้อง',\s*disabled: bulkBusy/)
   })
 
-  it('REGRESSION — the STATUS quick actions (ส่งแล้วทั้งห้อง/ขาดส่งทั้งห้อง) stay gated behind their own matching ส่งแล้ว/ขาดส่ง mode, but the 2 GRADING shortcuts are unconditional — grading is never tied to a mode', () => {
+  it('REGRESSION — the STATUS quick actions (ส่งแล้วทั้งห้อง/ขาดส่งทั้งห้อง) stay gated behind their own matching ส่งแล้ว/ขาดส่ง mode, and the 2 GRADING shortcuts are gated behind ทั้งหมด mode ONLY — grading never appears in ส่งแล้ว/ขาดส่ง, matching the matrix cells\' own rule', () => {
     expect(menuBlock).toContain("...(mode === 'submitted'")
     expect(menuBlock).toContain("...(mode === 'missing'")
+    expect(menuBlock).toContain("...(mode === 'all'")
     expect(menuBlock).not.toContain("...(mode === 'score'")
     // the mark-submitted item lives INSIDE the mode === 'submitted' branch, not unconditionally
     const submittedBranch = menuBlock.slice(menuBlock.indexOf("...(mode === 'submitted'"), menuBlock.indexOf("...(mode === 'missing'"))
     expect(submittedBranch).toContain("label: 'ส่งแล้วทั้งห้อง'")
-    const afterMissingBranch = menuBlock.slice(menuBlock.indexOf("...(mode === 'missing'"))
-    expect(afterMissingBranch).toContain("label: 'ขาดส่งทั้งห้อง'")
-    // the grading items appear as PLAIN (unconditional) menu entries, not inside a ...(mode === ...) spread
-    const gradeIdx = menuBlock.indexOf("key: 'grade-classroom',")
-    const gradeFullIdx = menuBlock.indexOf("key: 'grade-classroom-full',")
-    expect(gradeIdx).toBeGreaterThan(-1)
-    expect(gradeFullIdx).toBeGreaterThan(gradeIdx)
-    const betweenGradeItems = menuBlock.slice(gradeIdx, gradeFullIdx)
-    expect(betweenGradeItems).not.toContain('...(mode ===')
+    const missingBranch = menuBlock.slice(menuBlock.indexOf("...(mode === 'missing'"), menuBlock.indexOf("...(mode === 'all'"))
+    expect(missingBranch).toContain("label: 'ขาดส่งทั้งห้อง'")
+    // the grading items live INSIDE the mode === 'all' branch, not unconditionally
+    const allBranch = menuBlock.slice(menuBlock.indexOf("...(mode === 'all'"), menuBlock.indexOf("key: 'archive'"))
+    expect(allBranch).toContain("key: 'grade-classroom'")
+    expect(allBranch).toContain("key: 'grade-classroom-full'")
   })
 })
 
