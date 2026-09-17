@@ -647,6 +647,20 @@ export function parseScoreInput(raw: string, maxScore: number): ScoreValidationR
   return { value: parsed, error: null }
 }
 
+/**
+ * Same 0 <= score <= maxScore bound as parseScoreInput (reused, not
+ * re-implemented) — but blank is REQUIRED here, unlike a single cell:
+ * bulk grading always assigns one specific score to every selected
+ * student in one action, so there is no "leave ungraded" option in this
+ * flow (a teacher who wants that uses the per-cell dialog instead). A
+ * bare '0' is still a fully valid score, never confused with "not
+ * entered."
+ */
+export function parseBulkScoreInput(raw: string, maxScore: number): ScoreValidationResult {
+  if (raw.trim() === '') return { value: null, error: 'กรุณากรอกคะแนน' }
+  return parseScoreInput(raw, maxScore)
+}
+
 export interface MaxScoreChangeViolation {
   studentId: string
   score: number

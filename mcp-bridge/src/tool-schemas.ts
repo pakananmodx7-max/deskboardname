@@ -2,7 +2,7 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 
 /**
- * All 11 tools' argument shapes, descriptions, and MCP annotations,
+ * All 12 tools' argument shapes, descriptions, and MCP annotations,
  * copied verbatim (field names, required-ness, uuid/enum/number
  * constraints, descriptions) from the deployed Edge Function's own
  * registry — supabase/functions/teacher-agent-tools/tools/read-tools.ts
@@ -37,17 +37,21 @@ import { z } from 'zod'
  * mutates production data]" marker (kept separate from the verbatim
  * upstream description that follows it) so an agent reading the tool
  * list sees, unambiguously, which of the 11 tools can change data before
- * ever calling one. Their `annotations` (readOnlyHint/destructiveHint/
- * idempotentHint) are the standard MCP mechanism for the same signal,
- * for any client that reads annotations rather than (or in addition to)
- * the description text. No delete/destroy tool is registered — none
- * exists in the Edge Function's own registry.
+ * ever calling one, out of all 12. Their `annotations`
+ * (readOnlyHint/destructiveHint/idempotentHint) are the standard MCP
+ * mechanism for the same signal, for any client that reads annotations
+ * rather than (or in addition to) the description text. No delete/
+ * destroy tool is registered — none exists in the Edge Function's own
+ * registry.
  *
- * 6 read tools + 5 write tools = 11 total. get_classroom_submission_summary
+ * 6 read tools + 6 write tools = 12 total. get_classroom_submission_summary
  * is the newest read tool: a compact per-assignment submission summary for
  * every active assignment in one classroom, replacing the previously
  * expensive list_assignments -> get_missing_submissions-per-assignment
- * workflow with a single call.
+ * workflow with a single call. set_assignment_scores_bulk is the newest
+ * write tool: bulk grading (same score to many students on one
+ * assignment) in one call, backing the ตรวจงานและคะแนน matrix's bulk
+ * grading bar — never one request per student.
  */
 
 const ASSIGNMENT_STATUS_VALUES = ['active', 'archived', 'all'] as const
@@ -59,6 +63,9 @@ const SUBMISSION_STATUS_VALUES = ['not_submitted', 'submitted', 'late', 'missing
  * what this bridge lets through), but validating it here too gives
  * Hermes fast, local feedback instead of a round trip. */
 const MAX_BULK_SUBMISSION_STATUS_UPDATES = 50
+/** Mirrors write-tools.ts's own MAX_BULK_SCORE_UPDATES exactly — same
+ * reasoning as MAX_BULK_SUBMISSION_STATUS_UPDATES above. */
+const MAX_BULK_SCORE_UPDATES = 50
 
 const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
   readOnlyHint: true,
@@ -258,6 +265,34 @@ export const toolSchemas = {
         .describe(`1 to ${MAX_BULK_SUBMISSION_STATUS_UPDATES} updates per call.`),
     },
   },
+  set_assignment_scores_bulk: {
+    description:
+      WRITE_WARNING_PREFIX +
+      `Sets the score for up to ${MAX_BULK_SCORE_UPDATES} (assignment, student) pairs in one call — never one request per student. Each update goes through the exact same ownership check, classroom-membership check, and upsert path as the web app's own score entry, promoting an untouched 'not_submitted' row to 'submitted' the moment a score is recorded. Score must be >= 0 and <= that assignment's own max score. Returns compact counts (requestedCount/changedCount/unchangedCount/failedCount) and a failures[] list naming which updates failed and why — never full submission rows.`,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      // Idempotent BY DESIGN: every update in the batch runs through the
+      // same upsert-on-(assignment_id, student_id) path as every other
+      // submission write, so resubmitting the exact same batch updates
+      // the same rows rather than creating duplicates.
+      idempotentHint: true,
+      openWorldHint: false,
+    } satisfies ToolAnnotations,
+    input: {
+      updates: z
+        .array(
+          z.object({
+            assignmentId: z.string().uuid(),
+            studentId: z.string().uuid(),
+            score: z.number().min(0),
+          }),
+        )
+        .min(1)
+        .max(MAX_BULK_SCORE_UPDATES)
+        .describe(`1 to ${MAX_BULK_SCORE_UPDATES} updates per call.`),
+    },
+  },
 } as const
 
 export type ToolName = keyof typeof toolSchemas
@@ -279,4 +314,5 @@ export const WRITE_TOOL_NAMES = [
   'mark_attendance_bulk',
   'mark_submission_status',
   'mark_submission_status_bulk',
+  'set_assignment_scores_bulk',
 ] as const satisfies readonly ToolName[]

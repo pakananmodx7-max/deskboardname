@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, Plus, Search, Users } from 'lucide-react'
+import { Check, CheckCircle2, Plus, Search, Users, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -28,6 +28,7 @@ import {
   getSubmissions,
   hasAssignmentSubmissions,
   nextStatusAfterScore,
+  parseBulkScoreInput,
   parseScoreInput,
   searchAssignmentsByTitle,
   setSubmissionNote,
@@ -35,6 +36,7 @@ import {
   setSubmissionStatus,
   type SubmissionCheckFilter,
 } from '@/services/assignment-service'
+import { bulkSetAssignmentScores, buildBulkScoreUpdates } from '@/services/score-bulk-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { bulkMarkSubmissionStatus, buildBulkSubmissionStatusUpdates } from '@/services/submission-bulk-service'
 import type { Assignment, AssignmentSubmission, SubmissionStatus } from '@/types/assignment'
@@ -119,6 +121,13 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
   const [selectedAssignmentIds, setSelectedAssignmentIds] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
+
+  const [bulkScoreDraft, setBulkScoreDraft] = useState('')
+  const [bulkScoreError, setBulkScoreError] = useState<string | null>(null)
+  const [pendingBulkGrade, setPendingBulkGrade] = useState<{ assignment: Assignment; studentIds: string[]; score: number } | null>(
+    null,
+  )
+  const [bulkGradeFailures, setBulkGradeFailures] = useState<{ studentName: string; message: string }[]>([])
 
   const [createOpen, setCreateOpen] = useState(false)
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null)
@@ -216,6 +225,30 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   const allVisibleSelected = filteredRoster.length > 0 && filteredRoster.every((s) => selectedStudentIds.has(s.id))
   const selectionCellCount = selectedStudentIds.size * selectedAssignmentIds.size
 
+  // The bulk GRADING bar (as opposed to the status quick actions above,
+  // which can target several assignment columns at once) only ever
+  // targets exactly ONE assignment — a score is meaningless without
+  // knowing which assignment's max score it's bounded by.
+  const singleSelectedAssignmentId = selectedAssignmentIds.size === 1 ? Array.from(selectedAssignmentIds)[0] : null
+  const singleSelectedAssignment = singleSelectedAssignmentId
+    ? (visibleAssignments.find((a) => a.id === singleSelectedAssignmentId) ?? null)
+    : null
+
+  useEffect(() => {
+    // A score typed for one assignment must never silently carry over to
+    // a different one once the selection changes (its max score may
+    // differ entirely).
+    setBulkScoreDraft('')
+    setBulkScoreError(null)
+  }, [singleSelectedAssignmentId])
+
+  // Distinct from "select all visible" (the header checkbox, which
+  // respects the current status filter tab): this always selects the
+  // FULL roster regardless of what's currently filtered/searched.
+  function handleSelectEntireClassroom() {
+    setSelectedStudentIds(new Set(roster.map((s) => s.id)))
+  }
+
   /**
    * The one place any bulk status change actually runs — column quick
    * actions ("ส่งแล้วทั้งห้อง"/"ขาดส่งทั้งห้อง") and the multi-select bulk
@@ -273,6 +306,101 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
 
   function handleSelectionBulkAction(status: SubmissionStatus) {
     runBulkStatusUpdate(Array.from(selectedStudentIds), Array.from(selectedAssignmentIds), status)
+  }
+
+  function handleBulkScoreFullMark() {
+    if (!singleSelectedAssignment) return
+    setBulkScoreDraft(String(singleSelectedAssignment.maxScore))
+    setBulkScoreError(null)
+  }
+
+  /**
+   * Validates the bulk score draft (parseBulkScoreInput — same 0 <=
+   * score <= maxScore bound as the per-cell dialog, but blank is
+   * rejected here since bulk grading always assigns a specific score),
+   * then opens the required confirmation step ("กำลังให้คะแนน X/max แก่
+   * นักเรียน N คน") before anything is written.
+   */
+  function handleOpenBulkGradeConfirm() {
+    if (!singleSelectedAssignment || selectedStudentIds.size === 0) return
+    const { value, error: validationError } = parseBulkScoreInput(bulkScoreDraft, singleSelectedAssignment.maxScore)
+    if (validationError || value === null) {
+      setBulkScoreError(validationError ?? 'กรุณากรอกคะแนน')
+      return
+    }
+    setBulkScoreError(null)
+    setPendingBulkGrade({ assignment: singleSelectedAssignment, studentIds: Array.from(selectedStudentIds), score: value })
+  }
+
+  /**
+   * The ONE place any bulk grading write happens — the sticky bulk bar's
+   * "ให้คะแนนผู้ที่เลือกทั้งหมด" and both "ทั้งห้อง" column-menu shortcuts
+   * all end up here. Builds the full (assignment, student) update list,
+   * makes exactly one bulkSetAssignmentScores call for the whole batch
+   * (chunking happens inside that shared service, never per-student
+   * here), then RE-FETCHES the matrix from the real source of truth
+   * (unlike the status quick actions, which apply an optimistic local
+   * patch) so every score/status/tally on screen is guaranteed correct
+   * after a grading action, before reporting counts and any partial
+   * failures.
+   */
+  async function runBulkScoreUpdate(studentIds: string[], assignmentId: string, score: number) {
+    if (studentIds.length === 0) return
+    const updates = buildBulkScoreUpdates(studentIds, assignmentId, score)
+    setBulkBusy(true)
+    setBulkGradeFailures([])
+    try {
+      const result = await bulkSetAssignmentScores(updates)
+      await refresh()
+
+      if (result.failedCount === 0) {
+        toast(`ให้คะแนนแล้ว ${result.changedCount + result.unchangedCount}/${result.requestedCount} คน`)
+      } else {
+        toast(
+          `ให้คะแนนสำเร็จ ${result.requestedCount - result.failedCount}/${result.requestedCount} คน — ไม่สำเร็จ ${result.failedCount} คน`,
+        )
+        setBulkGradeFailures(
+          result.failures.map((f) => {
+            const student = roster.find((s) => s.id === f.studentId)
+            return { studentName: student ? studentDisplayName(student) : f.studentId, message: f.message }
+          }),
+        )
+      }
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถให้คะแนนได้'))
+    } finally {
+      setBulkBusy(false)
+      setBulkScoreDraft('')
+    }
+  }
+
+  async function handleConfirmBulkGrade() {
+    if (!pendingBulkGrade) return
+    const { assignment, studentIds, score } = pendingBulkGrade
+    setPendingBulkGrade(null)
+    await runBulkScoreUpdate(studentIds, assignment.id, score)
+  }
+
+  /** "ให้คะแนนทั้งห้อง" column-menu shortcut: selects this ONE assignment
+   * plus the entire classroom roster, so the sticky bulk grading bar
+   * appears ready for the teacher to type a score — no separate write
+   * path from the multi-select bar. */
+  function handleGradeWholeClassroom(assignment: Assignment) {
+    setSelectedAssignmentIds(new Set([assignment.id]))
+    setSelectedStudentIds(new Set(roster.map((s) => s.id)))
+  }
+
+  /** "เต็มคะแนนทั้งห้อง" column-menu shortcut: same selection as above,
+   * pre-filled with the assignment's max score, going straight to the
+   * SAME required confirmation dialog ("กำลังให้คะแนน max/max แก่นักเรียน
+   * N คน") — never skipping confirmation just because it's a shortcut. */
+  function handleGradeWholeClassroomFullMarks(assignment: Assignment) {
+    const studentIds = roster.map((s) => s.id)
+    setSelectedAssignmentIds(new Set([assignment.id]))
+    setSelectedStudentIds(new Set(studentIds))
+    setBulkScoreDraft(String(assignment.maxScore))
+    setBulkScoreError(null)
+    setPendingBulkGrade({ assignment, studentIds, score: assignment.maxScore })
   }
 
   function openTargetDialog(assignment: Assignment, student: ClassroomStudent) {
@@ -427,6 +555,10 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                 </button>
               ))}
             </div>
+            <Button type="button" variant="ghost" size="sm" onClick={handleSelectEntireClassroom} disabled={roster.length === 0}>
+              <Users className="size-3.5" />
+              เลือกทั้งห้อง ({roster.length})
+            </Button>
             {assignments.length > 4 && (
               <div className="relative ml-auto w-full max-w-xs">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -441,28 +573,85 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
           </div>
 
           {(selectedStudentIds.size > 0 || selectedAssignmentIds.size > 0) && (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
-              <Users className="size-4 shrink-0 text-primary" />
-              <span className="font-medium">
-                {selectedStudentIds.size} นักเรียน × {selectedAssignmentIds.size} งาน = {selectionCellCount} รายการ
-              </span>
-              <div className="ml-auto flex flex-wrap items-center gap-1.5">
-                {STATUS_ACTIONS.map((action) => (
-                  <Button
-                    key={action.key}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={bulkBusy || selectionCellCount === 0}
-                    onClick={() => handleSelectionBulkAction(action.key)}
-                  >
-                    {action.label}
+            <div className="flex flex-col gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <Users className="size-4 shrink-0 text-primary" />
+                <span className="font-medium">
+                  {selectedStudentIds.size} นักเรียน × {selectedAssignmentIds.size} งาน = {selectionCellCount} รายการ
+                </span>
+                <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                  {STATUS_ACTIONS.map((action) => (
+                    <Button
+                      key={action.key}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={bulkBusy || selectionCellCount === 0}
+                      onClick={() => handleSelectionBulkAction(action.key)}
+                    >
+                      {action.label}
+                    </Button>
+                  ))}
+                  <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={bulkBusy}>
+                    ล้างการเลือก
                   </Button>
-                ))}
-                <Button type="button" variant="ghost" size="sm" onClick={clearSelection} disabled={bulkBusy}>
-                  ล้างการเลือก
-                </Button>
+                </div>
               </div>
+
+              {singleSelectedAssignment && selectedStudentIds.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2 border-t border-primary/20 pt-2">
+                  <span>
+                    เลือกแล้ว {selectedStudentIds.size} คน · งาน: {singleSelectedAssignment.title} /{singleSelectedAssignment.maxScore}
+                  </span>
+                  <Label htmlFor="bulk-grade-score" className="sr-only">
+                    คะแนน
+                  </Label>
+                  <span className="text-muted-foreground">คะแนน:</span>
+                  <Input
+                    id="bulk-grade-score"
+                    type="number"
+                    min={0}
+                    max={singleSelectedAssignment.maxScore}
+                    value={bulkScoreDraft}
+                    onChange={(e) => {
+                      setBulkScoreDraft(e.target.value)
+                      setBulkScoreError(null)
+                    }}
+                    placeholder="0"
+                    className="h-8 w-20"
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={handleBulkScoreFullMark} disabled={bulkBusy}>
+                    เต็มคะแนน
+                  </Button>
+                  <Button type="button" size="sm" onClick={handleOpenBulkGradeConfirm} disabled={bulkBusy}>
+                    ให้คะแนนผู้ที่เลือกทั้งหมด
+                  </Button>
+                  {bulkScoreError && <span className="text-destructive">{bulkScoreError}</span>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {bulkGradeFailures.length > 0 && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-medium text-destructive">ให้คะแนนไม่สำเร็จ {bulkGradeFailures.length} คน</p>
+                <button
+                  type="button"
+                  onClick={() => setBulkGradeFailures([])}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="ปิด"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                {bulkGradeFailures.map((f, i) => (
+                  <li key={i}>
+                    {f.studentName}: {f.message}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
@@ -521,6 +710,18 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                                   label: 'ขาดส่งทั้งห้อง',
                                   disabled: bulkBusy,
                                   onSelect: () => handleColumnQuickAction(assignment, 'missing'),
+                                },
+                                {
+                                  key: 'grade-classroom',
+                                  label: 'ให้คะแนนทั้งห้อง',
+                                  disabled: bulkBusy,
+                                  onSelect: () => handleGradeWholeClassroom(assignment),
+                                },
+                                {
+                                  key: 'grade-classroom-full',
+                                  label: 'เต็มคะแนนทั้งห้อง',
+                                  disabled: bulkBusy,
+                                  onSelect: () => handleGradeWholeClassroomFullMarks(assignment),
                                 },
                                 {
                                   key: 'archive',
@@ -640,6 +841,17 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
           confirmLabel={deletingAssignment.hasSubmissions ? 'ลบงานและข้อมูลทั้งหมด' : 'ลบงาน'}
           destructive
           onConfirm={handleDeletePermanently}
+        />
+      )}
+
+      {pendingBulkGrade && (
+        <ConfirmDialog
+          open={Boolean(pendingBulkGrade)}
+          onOpenChange={(open) => !open && setPendingBulkGrade(null)}
+          title="ยืนยันการให้คะแนน"
+          description={`กำลังให้คะแนน ${pendingBulkGrade.score}/${pendingBulkGrade.assignment.maxScore} แก่นักเรียน ${pendingBulkGrade.studentIds.length} คน`}
+          confirmLabel="ให้คะแนน"
+          onConfirm={handleConfirmBulkGrade}
         />
       )}
 

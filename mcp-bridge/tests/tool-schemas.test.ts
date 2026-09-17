@@ -6,7 +6,7 @@ import { ALL_TOOL_NAMES, READ_TOOL_NAMES, WRITE_TOOL_NAMES, toolSchemas } from '
 const UUID = '11111111-1111-1111-1111-111111111111'
 const UUID_2 = '22222222-2222-2222-2222-222222222222'
 
-describe('toolSchemas — exactly the 11 tools from the Edge Function registry (6 read + 5 write)', () => {
+describe('toolSchemas — exactly the 12 tools from the Edge Function registry (6 read + 6 write)', () => {
   it('lists exactly these 6 read tool names', () => {
     expect(new Set(READ_TOOL_NAMES)).toEqual(
       new Set([
@@ -20,7 +20,7 @@ describe('toolSchemas — exactly the 11 tools from the Edge Function registry (
     )
   })
 
-  it('lists exactly these 5 write tool names', () => {
+  it('lists exactly these 6 write tool names', () => {
     expect(new Set(WRITE_TOOL_NAMES)).toEqual(
       new Set([
         'create_assignment',
@@ -28,19 +28,20 @@ describe('toolSchemas — exactly the 11 tools from the Edge Function registry (
         'mark_attendance_bulk',
         'mark_submission_status',
         'mark_submission_status_bulk',
+        'set_assignment_scores_bulk',
       ]),
     )
   })
 
-  it('ALL_TOOL_NAMES is exactly the union of read and write, 11 total, no overlap', () => {
-    expect(ALL_TOOL_NAMES).toHaveLength(11)
+  it('ALL_TOOL_NAMES is exactly the union of read and write, 12 total, no overlap', () => {
+    expect(ALL_TOOL_NAMES).toHaveLength(12)
     expect(new Set(ALL_TOOL_NAMES)).toEqual(new Set([...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]))
     for (const writeTool of WRITE_TOOL_NAMES) {
       expect(READ_TOOL_NAMES).not.toContain(writeTool)
     }
   })
 
-  it('toolSchemas itself has exactly these 11 keys — nothing registered that isn\'t named here', () => {
+  it('toolSchemas itself has exactly these 12 keys — nothing registered that isn\'t named here', () => {
     expect(Object.keys(toolSchemas).sort()).toEqual([...ALL_TOOL_NAMES].sort())
   })
 
@@ -263,6 +264,29 @@ describe('toolSchemas — WRITE argument shapes match write-tools.ts\'s contract
     const shape = z.object(toolSchemas.mark_submission_status_bulk.input)
     const duplicateUpdate = { assignmentId: UUID, studentId: UUID_2, status: 'submitted' as const }
     expect(shape.safeParse({ updates: [duplicateUpdate, duplicateUpdate] }).success).toBe(true)
+  })
+
+  it('set_assignment_scores_bulk: updates required, at least 1 item, each item shaped {assignmentId, studentId, score}', () => {
+    const shape = z.object(toolSchemas.set_assignment_scores_bulk.input)
+    expect(shape.safeParse({}).success).toBe(false) // updates missing
+    expect(shape.safeParse({ updates: [] }).success).toBe(false) // below min(1)
+    expect(shape.safeParse({ updates: [{ assignmentId: UUID, studentId: UUID_2, score: 8 }] }).success).toBe(true)
+    expect(shape.safeParse({ updates: [{ assignmentId: UUID, studentId: UUID_2 }] }).success).toBe(false) // score missing
+    expect(shape.safeParse({ updates: [{ assignmentId: UUID, score: 8 }] }).success).toBe(false) // studentId missing
+    expect(shape.safeParse({ updates: [{ assignmentId: 'not-a-uuid', studentId: UUID_2, score: 8 }] }).success).toBe(false)
+  })
+
+  it('set_assignment_scores_bulk: score must be a number >= 0 — a negative score is rejected client-side too, even though the per-assignment max is only enforceable server-side', () => {
+    const shape = z.object(toolSchemas.set_assignment_scores_bulk.input)
+    expect(shape.safeParse({ updates: [{ assignmentId: UUID, studentId: UUID_2, score: 0 }] }).success).toBe(true)
+    expect(shape.safeParse({ updates: [{ assignmentId: UUID, studentId: UUID_2, score: -1 }] }).success).toBe(false)
+  })
+
+  it('set_assignment_scores_bulk: accepts a batch of exactly 50 updates, and rejects a batch of 51 — the maximum batch size mirrors write-tools.ts\'s MAX_BULK_SCORE_UPDATES', () => {
+    const shape = z.object(toolSchemas.set_assignment_scores_bulk.input)
+    const makeUpdates = (count: number) => Array.from({ length: count }, () => ({ assignmentId: UUID, studentId: UUID_2, score: 10 }))
+    expect(shape.safeParse({ updates: makeUpdates(50) }).success).toBe(true)
+    expect(shape.safeParse({ updates: makeUpdates(51) }).success).toBe(false)
   })
 })
 

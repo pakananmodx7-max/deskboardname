@@ -582,10 +582,220 @@ export const markSubmissionStatusBulkTool: AgentTool<MarkSubmissionStatusBulkArg
   handler: (ctx, args) => markSubmissionStatusBulk(ctx, args),
 }
 
+// ==================================================
+// 11. set_assignment_scores_bulk
+//
+// Exists ONLY to avoid one write per student when a teacher grades many
+// students at once from the ตรวจงานและคะแนน matrix's bulk grading bar
+// (or its "ให้คะแนนทั้งห้อง"/"เต็มคะแนนทั้งห้อง" column-menu shortcuts).
+// Same nextStatusAfterScore promotion rule and same
+// assignment_submissions upsert shape as the browser app's own
+// setSubmissionScore (assignment-service.ts) — an untouched
+// 'not_submitted' row is promoted to 'submitted' the moment a score is
+// recorded, exactly like the single-cell score dialog, and reviewed_at
+// is bumped the same way. This Deno file cannot import that browser-only
+// module, so the (tiny, one-line) rule is duplicated here rather than
+// shared — the RULE and the TABLE it governs are still the same
+// everywhere. One source of truth, no new table, no service_role.
+// ==================================================
+
+const MAX_BULK_SCORE_UPDATES = 50
+
+interface SetAssignmentScoresBulkUpdateInput {
+  assignmentId: string
+  studentId: string
+  score: number
+}
+
+interface SetAssignmentScoresBulkArgs {
+  updates: SetAssignmentScoresBulkUpdateInput[]
+}
+
+interface SetAssignmentScoresBulkFailure {
+  assignmentId: string
+  studentId: string
+  code: string
+  message: string
+}
+
+function nextStatusAfterScore(currentStatus: string, score: number): string {
+  return currentStatus === 'not_submitted' ? 'submitted' : currentStatus
+}
+
+/**
+ * One (assignment, student) score write — the SAME ownership check,
+ * membership check (on a first-ever write), and upsert shape as
+ * markSubmissionStatus above, plus the score bound every score entry
+ * point in this app enforces: 0 <= score <= that assignment's own
+ * max_score (mirrored, not duplicated logic-wise, from
+ * assignment-service.ts's parseScoreInput — the actual numeric parsing
+ * happens client-side; this is the server-side re-check RLS itself
+ * cannot express since max_score varies per assignment row).
+ */
+async function setAssignmentScore(ctx: AgentContext, args: SetAssignmentScoresBulkUpdateInput) {
+  const { client } = ctx
+  const assignment = await requireOwnedAssignment(client, args.assignmentId)
+
+  if (!Number.isFinite(args.score) || args.score < 0) {
+    throw new ValidationError('คะแนนต้องไม่ติดลบ')
+  }
+  if (args.score > assignment.max_score) {
+    throw new ValidationError(`คะแนนต้องไม่เกิน ${assignment.max_score}`)
+  }
+
+  const { data: studentRow, error: studentError } = await client
+    .from('students')
+    .select('id, first_name, last_name, nickname, number')
+    .eq('id', args.studentId)
+    .maybeSingle()
+  if (studentError) throw studentError
+
+  const { data: existing, error: existingError } = await client
+    .from('assignment_submissions')
+    .select('status, score')
+    .eq('assignment_id', args.assignmentId)
+    .eq('student_id', args.studentId)
+    .maybeSingle()
+  if (existingError) throw existingError
+
+  if (!existing) {
+    const { data: membership, error: membershipError } = await client
+      .from('classroom_students')
+      .select('student_id')
+      .eq('classroom_id', assignment.classroom_id)
+      .eq('student_id', args.studentId)
+      .maybeSingle()
+    if (membershipError) throw membershipError
+    if (!membership) {
+      throw new NotFoundError('ไม่พบนักเรียนคนนี้ในห้องเรียนของงานนี้ หรือคุณไม่มีสิทธิ์เข้าถึง')
+    }
+  }
+
+  const previousStatus = existing?.status ?? 'not_submitted'
+  const previousScore = existing?.score ?? null
+  const status = nextStatusAfterScore(previousStatus, args.score)
+
+  // Same upsert shape as setSubmissionScore (assignment-service.ts),
+  // including the reviewed_at bump — a score recorded from this bulk
+  // tool is indistinguishable, on the next read, from one entered by
+  // hand in the per-cell dialog.
+  const { data: updated, error: updateError } = await client
+    .from('assignment_submissions')
+    .upsert(
+      {
+        assignment_id: args.assignmentId,
+        student_id: args.studentId,
+        score: args.score,
+        status,
+        reviewed_at: new Date().toISOString(),
+      },
+      { onConflict: 'assignment_id,student_id' },
+    )
+    .select('status, score, note, updated_at')
+    .single()
+  if (updateError) throw updateError
+
+  return {
+    assignmentId: assignment.id,
+    assignmentTitle: assignment.title,
+    classroomId: assignment.classroom_id,
+    studentId: args.studentId,
+    studentName: studentRow ? studentDisplayName(studentRow as StudentRow) : null,
+    previousScore,
+    score: updated.score,
+    previousStatus,
+    status: updated.status,
+    changed: previousScore !== updated.score || previousStatus !== updated.status,
+    note: updated.note,
+    updatedAt: updated.updated_at,
+  }
+}
+
+async function setAssignmentScoresBulk(ctx: AgentContext, args: SetAssignmentScoresBulkArgs) {
+  if (args.updates.length === 0) {
+    throw new ValidationError('กรุณาระบุรายการที่ต้องการให้คะแนนอย่างน้อย 1 รายการ')
+  }
+  if (args.updates.length > MAX_BULK_SCORE_UPDATES) {
+    throw new ValidationError(`ให้คะแนนได้ไม่เกิน ${MAX_BULK_SCORE_UPDATES} รายการต่อครั้ง`)
+  }
+
+  // Each update runs independently through the EXACT SAME
+  // setAssignmentScore() above — one failing (unowned/nonexistent
+  // assignment, out-of-range score, student not in the classroom, etc.)
+  // is caught and reported in `failures`, never thrown out of the whole
+  // batch and never blocking the other updates — identical "each item
+  // independent" shape as markSubmissionStatusBulk above.
+  const results = await Promise.all(
+    args.updates.map(async (update) => {
+      try {
+        const result = await setAssignmentScore(ctx, update)
+        return { ok: true as const, changed: result.changed }
+      } catch (err) {
+        return {
+          ok: false as const,
+          assignmentId: update.assignmentId,
+          studentId: update.studentId,
+          code:
+            err instanceof NotFoundError
+              ? 'not_found'
+              : err instanceof ValidationError
+                ? 'invalid_arguments'
+                : 'internal_error',
+          message: err instanceof Error ? err.message : 'ไม่สามารถให้คะแนนได้',
+        }
+      }
+    }),
+  )
+
+  const failures: SetAssignmentScoresBulkFailure[] = results
+    .filter((r): r is { ok: false; assignmentId: string; studentId: string; code: string; message: string } => !r.ok)
+    .map(({ assignmentId, studentId, code, message }) => ({ assignmentId, studentId, code, message }))
+
+  const successes = results.filter((r): r is { ok: true; changed: boolean } => r.ok)
+  const changedCount = successes.filter((r) => r.changed).length
+  const unchangedCount = successes.filter((r) => !r.changed).length
+
+  // Compact aggregate result ONLY — never the updated submission rows
+  // themselves, same shape/reasoning as mark_submission_status_bulk.
+  return {
+    requestedCount: args.updates.length,
+    changedCount,
+    unchangedCount,
+    failedCount: failures.length,
+    failures,
+  }
+}
+
+export const setAssignmentScoresBulkTool: AgentTool<SetAssignmentScoresBulkArgs> = {
+  name: 'set_assignment_scores_bulk',
+  description:
+    `Sets the score for up to ${MAX_BULK_SCORE_UPDATES} (assignment, student) pairs in one call — never one request per student. Each update goes through the exact same ownership check, classroom-membership check, and upsert path as the web app's own score entry, promoting an untouched 'not_submitted' row to 'submitted' the moment a score is recorded. Score must be >= 0 and <= that assignment's own max score. Returns compact counts (requestedCount/changedCount/unchangedCount/failedCount) and a failures[] list naming which updates failed and why — never full submission rows.`,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      updates: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            assignmentId: { type: 'string', format: 'uuid' },
+            studentId: { type: 'string', format: 'uuid' },
+            score: { type: 'number', minimum: 0 },
+          },
+          required: ['assignmentId', 'studentId', 'score'],
+        },
+      },
+    },
+    required: ['updates'],
+  },
+  handler: (ctx, args) => setAssignmentScoresBulk(ctx, args),
+}
+
 export const writeTools: AgentTool<any>[] = [
   createAssignmentTool,
   copyAssignmentToClassroomsTool,
   markAttendanceBulkTool,
   markSubmissionStatusTool,
   markSubmissionStatusBulkTool,
+  setAssignmentScoresBulkTool,
 ]

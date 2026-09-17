@@ -412,3 +412,149 @@ describe('SubmissionCheckTab — layout: sticky columns/headers, horizontally sc
     expect(source).toContain('px-2 py-1.5')
   })
 })
+
+describe('SubmissionCheckTab — three ways to select students: individual, all visible, entire classroom', () => {
+  const source = readSource()
+
+  it('a per-student checkbox and a "select all visible" header checkbox already exist (covered above) — "select entire classroom" is a THIRD, distinct action that ignores the current status filter', () => {
+    const fn = source.slice(source.indexOf('function handleSelectEntireClassroom'), source.indexOf('async function runBulkStatusUpdate'))
+    expect(fn).toContain('setSelectedStudentIds(new Set(roster.map((s) => s.id)))')
+    expect(fn).not.toContain('filteredRoster')
+  })
+
+  it('the button is labeled "เลือกทั้งห้อง" with the full roster count, disabled only when the roster is empty', () => {
+    expect(source).toContain('เลือกทั้งห้อง ({roster.length})')
+    expect(source).toContain('onClick={handleSelectEntireClassroom}')
+    expect(source).toContain('disabled={roster.length === 0}')
+  })
+})
+
+describe('SubmissionCheckTab — bulk grading (score) controls: exactly one assignment selected + one or more students', () => {
+  const source = readSource()
+
+  it('imports the bulk score write path (score-bulk-service.ts) and the bulk score validator (parseBulkScoreInput from assignment-service.ts) — never a raw write or a re-implemented validator', () => {
+    expect(source).toContain("from '@/services/score-bulk-service'")
+    expect(source).toContain('bulkSetAssignmentScores')
+    expect(source).toContain('buildBulkScoreUpdates')
+    expect(source).toContain('parseBulkScoreInput')
+  })
+
+  it('singleSelectedAssignment is derived ONLY when exactly one assignment is selected — the bulk grading bar has no meaning across multiple assignment columns', () => {
+    expect(source).toContain('selectedAssignmentIds.size === 1 ? Array.from(selectedAssignmentIds)[0] : null')
+    expect(source).toContain('singleSelectedAssignment && selectedStudentIds.size > 0')
+  })
+
+  it('changing the selected assignment resets the score draft — a score typed for one assignment\'s max never silently carries over to another', () => {
+    const fn = source.slice(source.indexOf('useEffect(() => {\n    // A score typed'), source.indexOf('[singleSelectedAssignmentId])') + 30)
+    expect(fn).toContain("setBulkScoreDraft('')")
+    expect(fn).toContain('setBulkScoreError(null)')
+  })
+
+  it('"เต็มคะแนน" quick-fills the draft with the selected assignment\'s own max score', () => {
+    const fn = source.slice(source.indexOf('function handleBulkScoreFullMark'), source.indexOf('function handleOpenBulkGradeConfirm'))
+    expect(fn).toContain('setBulkScoreDraft(String(singleSelectedAssignment.maxScore))')
+  })
+
+  it('validates via parseBulkScoreInput before opening the confirmation step — blank/negative/over-max are all rejected inline, never silently coerced', () => {
+    const fn = source.slice(source.indexOf('function handleOpenBulkGradeConfirm'), source.indexOf('async function runBulkScoreUpdate'))
+    expect(fn).toContain('parseBulkScoreInput(bulkScoreDraft, singleSelectedAssignment.maxScore)')
+    expect(fn).toContain('if (validationError || value === null)')
+    expect(fn).toContain('setBulkScoreError(')
+  })
+
+  it('opens the required confirmation dialog with the exact selected student ids/score/assignment BEFORE any write happens — pendingBulkGrade, never a direct write from the button', () => {
+    const fn = source.slice(source.indexOf('function handleOpenBulkGradeConfirm'), source.indexOf('async function runBulkScoreUpdate'))
+    expect(fn).toContain('setPendingBulkGrade({ assignment: singleSelectedAssignment, studentIds: Array.from(selectedStudentIds), score: value })')
+  })
+
+  it('the confirmation dialog text is exactly "กำลังให้คะแนน X/max แก่นักเรียน N คน"', () => {
+    expect(source).toContain(
+      'description={`กำลังให้คะแนน ${pendingBulkGrade.score}/${pendingBulkGrade.assignment.maxScore} แก่นักเรียน ${pendingBulkGrade.studentIds.length} คน`}',
+    )
+    expect(source).toContain('title="ยืนยันการให้คะแนน"')
+  })
+
+  it('runBulkScoreUpdate builds updates via buildBulkScoreUpdates and makes exactly ONE bulkSetAssignmentScores call for the whole batch — never one request per student', () => {
+    const fn = source.slice(source.indexOf('async function runBulkScoreUpdate'), source.indexOf('async function handleConfirmBulkGrade'))
+    expect(fn).toContain('buildBulkScoreUpdates(studentIds, assignmentId, score)')
+    expect(fn).toContain('await bulkSetAssignmentScores(updates)')
+    expect(fn).not.toMatch(/updates\.map\(.*await/)
+    expect(fn).not.toMatch(/for \(const .* of updates\)[\s\S]{0,80}await/)
+  })
+
+  it('after a successful write, the matrix is RE-FETCHED from the real source of truth (await refresh()) — not just an optimistic local patch', () => {
+    const fn = source.slice(source.indexOf('async function runBulkScoreUpdate'), source.indexOf('async function handleConfirmBulkGrade'))
+    const resultIndex = fn.indexOf('const result = await bulkSetAssignmentScores(updates)')
+    const refreshIndex = fn.indexOf('await refresh()')
+    expect(resultIndex).toBeGreaterThan(-1)
+    expect(refreshIndex).toBeGreaterThan(resultIndex)
+  })
+
+  it('reports changed/unchanged/failed counts via toast, distinct from the all-success message', () => {
+    const fn = source.slice(source.indexOf('async function runBulkScoreUpdate'), source.indexOf('async function handleConfirmBulkGrade'))
+    expect(fn).toContain('if (result.failedCount === 0)')
+    expect(fn).toMatch(/ให้คะแนนแล้ว \$\{result\.changedCount \+ result\.unchangedCount\}\/\$\{result\.requestedCount\} คน/)
+    expect(fn).toMatch(/ไม่สำเร็จ \$\{result\.failedCount\} คน/)
+  })
+
+  it('a partial failure sets bulkGradeFailures (named per student, with the server\'s own message) — this is what makes "partial failures must be visible" true beyond a transient toast', () => {
+    const fn = source.slice(source.indexOf('async function runBulkScoreUpdate'), source.indexOf('async function handleConfirmBulkGrade'))
+    expect(fn).toContain('setBulkGradeFailures(')
+    expect(fn).toContain('result.failures.map((f) =>')
+    expect(fn).toContain('studentDisplayName(student)')
+  })
+
+  it('the failures panel is a persistent, dismissible inline box (not just a toast), rendered only when bulkGradeFailures is non-empty', () => {
+    expect(source).toContain('bulkGradeFailures.length > 0 &&')
+    expect(source).toContain('ให้คะแนนไม่สำเร็จ {bulkGradeFailures.length} คน')
+    expect(source).toContain('onClick={() => setBulkGradeFailures([])}')
+  })
+
+  it('handleConfirmBulkGrade closes the dialog THEN runs the write — the dialog is never left open during the write', () => {
+    const fn = source.slice(source.indexOf('async function handleConfirmBulkGrade'), source.indexOf('function handleGradeWholeClassroom'))
+    const closeIndex = fn.indexOf('setPendingBulkGrade(null)')
+    const runIndex = fn.indexOf('await runBulkScoreUpdate(studentIds, assignment.id, score)')
+    expect(closeIndex).toBeGreaterThan(-1)
+    expect(runIndex).toBeGreaterThan(closeIndex)
+  })
+
+  it('individual per-cell score editing is completely untouched — the dialog\'s own handleSaveTarget still calls setSubmissionScore directly, never routed through the bulk path', () => {
+    expect(source).toContain('await setSubmissionScore(assignment.id, student.id, score, effectiveStatus)')
+  })
+})
+
+describe('SubmissionCheckTab — assignment header menu: ให้คะแนนทั้งห้อง / เต็มคะแนนทั้งห้อง shortcuts into the same bulk grading path', () => {
+  const source = readSource()
+  const headerBlock = source.slice(source.indexOf('{visibleAssignments.map((assignment) => ('), source.indexOf('</tr>\n                  </thead>'))
+  const menuBlock = headerBlock.slice(headerBlock.indexOf('actions={['), headerBlock.indexOf(']}\n                            />'))
+
+  it('both new menu items exist, positioned after the status quick actions and before archive/delete', () => {
+    const missingIdx = menuBlock.indexOf("label: 'ขาดส่งทั้งห้อง'")
+    const gradeIdx = menuBlock.indexOf("label: 'ให้คะแนนทั้งห้อง'")
+    const gradeFullIdx = menuBlock.indexOf("label: 'เต็มคะแนนทั้งห้อง'")
+    const archiveIdx = menuBlock.indexOf("label: 'เก็บถาวรงาน'")
+    expect(gradeIdx).toBeGreaterThan(missingIdx)
+    expect(gradeFullIdx).toBeGreaterThan(gradeIdx)
+    expect(archiveIdx).toBeGreaterThan(gradeFullIdx)
+  })
+
+  it('"ให้คะแนนทั้งห้อง" selects this ONE assignment plus the entire roster, letting the teacher type a score in the same sticky bar — no separate write path', () => {
+    const fn = source.slice(source.indexOf('function handleGradeWholeClassroom('), source.indexOf('function handleGradeWholeClassroomFullMarks'))
+    expect(fn).toContain('setSelectedAssignmentIds(new Set([assignment.id]))')
+    expect(fn).toContain('setSelectedStudentIds(new Set(roster.map((s) => s.id)))')
+    expect(fn).not.toContain('bulkSetAssignmentScores')
+  })
+
+  it('"เต็มคะแนนทั้งห้อง" pre-fills the max score and goes straight to the SAME required confirmation dialog — never skips confirmation', () => {
+    const fn = source.slice(source.indexOf('function handleGradeWholeClassroomFullMarks'), source.indexOf('function openTargetDialog'))
+    expect(fn).toContain('setBulkScoreDraft(String(assignment.maxScore))')
+    expect(fn).toContain('setPendingBulkGrade({ assignment, studentIds, score: assignment.maxScore })')
+    expect(fn).not.toContain('bulkSetAssignmentScores')
+    expect(fn).not.toContain('runBulkScoreUpdate(')
+  })
+
+  it('menu items are disabled while a bulk action is in flight, same as the existing ทั้งห้อง status shortcuts', () => {
+    expect(menuBlock).toMatch(/label: 'ให้คะแนนทั้งห้อง',\s*disabled: bulkBusy/)
+    expect(menuBlock).toMatch(/label: 'เต็มคะแนนทั้งห้อง',\s*disabled: bulkBusy/)
+  })
+})

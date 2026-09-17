@@ -145,7 +145,7 @@ describe('supabase-admin.ts — untouched (Google Drive integration must not reg
 })
 
 describe('registry.ts — the tool list Hermes will eventually consume', () => {
-  it('exposes exactly the 11 approved tools, no more', () => {
+  it('exposes exactly the 12 approved tools, no more', () => {
     const names = [
       'list_classrooms',
       'list_assignments',
@@ -158,6 +158,7 @@ describe('registry.ts — the tool list Hermes will eventually consume', () => {
       'mark_attendance_bulk',
       'mark_submission_status',
       'mark_submission_status_bulk',
+      'set_assignment_scores_bulk',
     ]
     for (const name of names) {
       expect(allToolFiles).toContain(`name: '${name}'`)
@@ -278,7 +279,7 @@ describe('read-tools.ts — 6 read tools, each classroom/subject/assignment-scop
   })
 })
 
-describe('write-tools.ts — the 5 approved safe writes', () => {
+describe('write-tools.ts — the 6 approved safe writes', () => {
   it('create_assignment requires classroom ownership, creates no assignment_submissions row, and enforces teacherId server-side as created_by', () => {
     const fn = writeTools.slice(writeTools.indexOf('async function createAssignment'), writeTools.indexOf('export const createAssignmentTool'))
     expect(fn).toContain('requireOwnedClassroom(client, args.classroomId)')
@@ -316,7 +317,7 @@ describe('write-tools.ts — the 5 approved safe writes', () => {
     expect(writeTools).toContain("ATTENDANCE_STATUS_VALUES = ['present', 'late', 'leave', 'absent']")
   })
 
-  it('none of the 5 write tools ever deletes a row (no .delete( call anywhere in write-tools.ts)', () => {
+  it('none of the 6 write tools ever deletes a row (no .delete( call anywhere in write-tools.ts)', () => {
     expect(writeTools).not.toMatch(/\.delete\(/)
   })
 })
@@ -502,5 +503,115 @@ describe('write-tools.ts — mark_submission_status_bulk (bulk submission status
   it('never deletes a row and never touches Storage', () => {
     expect(fn).not.toMatch(/\.delete\(/)
     expect(fn).not.toMatch(/\.storage\s*\./)
+  })
+})
+
+describe('write-tools.ts — set_assignment_scores_bulk (bulk grading write, backs the ตรวจงานและคะแนน bulk grading bar)', () => {
+  const fn = writeTools.slice(
+    writeTools.indexOf('async function setAssignmentScoresBulk'),
+    writeTools.indexOf('export const setAssignmentScoresBulkTool'),
+  )
+  const scoreFn = writeTools.slice(
+    writeTools.indexOf('async function setAssignmentScore('),
+    writeTools.indexOf('async function setAssignmentScoresBulk'),
+  )
+  const toolDef = writeTools.slice(
+    writeTools.indexOf('export const setAssignmentScoresBulkTool'),
+    writeTools.indexOf('export const writeTools:'),
+  )
+
+  it('is registered alongside the other 5 write tools, right after markSubmissionStatusBulkTool', () => {
+    expect(writeTools).toMatch(
+      /writeTools:\s*AgentTool<any>\[\]\s*=\s*\[[\s\S]*markSubmissionStatusBulkTool,\s*setAssignmentScoresBulkTool/,
+    )
+  })
+
+  // -- reuses the same ownership/membership/upsert shape as markSubmissionStatus, no separate data model --
+  it('each single-item write requires assignment ownership before touching assignment_submissions, same as markSubmissionStatus/setSubmissionScore', () => {
+    expect(scoreFn.indexOf('requireOwnedAssignment(client, args.assignmentId)')).toBeGreaterThan(-1)
+    expect(scoreFn.indexOf('requireOwnedAssignment(client, args.assignmentId)')).toBeLessThan(scoreFn.indexOf('.upsert('))
+    expect(scoreFn).toContain(".upsert(")
+    expect(scoreFn).toContain("onConflict: 'assignment_id,student_id'")
+  })
+
+  it('validates the score bound server-side: score >= 0 and score <= that assignment\'s own max_score — the check RLS itself cannot express since max_score varies per row', () => {
+    expect(scoreFn).toContain('args.score < 0')
+    expect(scoreFn).toContain('args.score > assignment.max_score')
+    expect(scoreFn).toMatch(/ValidationError\('คะแนนต้องไม่ติดลบ'\)/)
+    expect(scoreFn).toMatch(/ValidationError\(`คะแนนต้องไม่เกิน \$\{assignment\.max_score\}`\)/)
+  })
+
+  it('promotes an untouched not_submitted row to submitted the moment a score is recorded — same nextStatusAfterScore rule as assignment-service.ts, never overriding an explicit late/missing status', () => {
+    expect(writeTools).toContain('function nextStatusAfterScore(currentStatus: string, score: number): string {')
+    expect(writeTools).toContain("return currentStatus === 'not_submitted' ? 'submitted' : currentStatus")
+    expect(scoreFn).toContain('nextStatusAfterScore(previousStatus, args.score)')
+  })
+
+  it('checks classroom_students membership only on a first-ever write for a (assignment, student) pair, mirroring markSubmissionStatus', () => {
+    const membershipCheckIndex = scoreFn.indexOf("from('classroom_students')")
+    const ifNotExistingIndex = scoreFn.indexOf('if (!existing)')
+    expect(ifNotExistingIndex).toBeGreaterThan(-1)
+    expect(ifNotExistingIndex).toBeLessThan(membershipCheckIndex)
+  })
+
+  it('never uses a service-role/admin client and never forges teacherId from caller-supplied args', () => {
+    expect(scoreFn).not.toMatch(/service[_-]?role|createAdminClient/i)
+    expect(scoreFn).not.toMatch(/args\.teacherId/)
+    expect(fn).not.toMatch(/service[_-]?role|createAdminClient/i)
+  })
+
+  // -- maximum batch size ---------------------------------------------------
+  it('rejects an empty batch and a batch over MAX_BULK_SCORE_UPDATES (50) before any write is attempted', () => {
+    expect(writeTools).toContain('MAX_BULK_SCORE_UPDATES = 50')
+    const emptyCheckIndex = fn.indexOf('args.updates.length === 0')
+    const maxCheckIndex = fn.indexOf('args.updates.length > MAX_BULK_SCORE_UPDATES')
+    const promiseAllIndex = fn.indexOf('Promise.all(')
+    expect(emptyCheckIndex).toBeGreaterThan(-1)
+    expect(maxCheckIndex).toBeGreaterThan(-1)
+    expect(emptyCheckIndex).toBeLessThan(promiseAllIndex)
+    expect(maxCheckIndex).toBeLessThan(promiseAllIndex)
+  })
+
+  // -- partial failure: one bad update never blocks or rolls back the rest --
+  it("each update is independent (try/catch inside Promise.all's mapper) — one failing (e.g. an out-of-range score) never throws out of the whole batch and never blocks the others", () => {
+    expect(fn).toContain('Promise.all(')
+    expect(fn).toContain('try {')
+    expect(fn).toContain('} catch (err) {')
+    expect(fn).toContain('ok: false as const')
+  })
+
+  it('classifies a failure by error type — NotFoundError -> not_found, ValidationError (e.g. out-of-range score) -> invalid_arguments, anything else -> internal_error', () => {
+    expect(fn).toMatch(/err instanceof NotFoundError[\s\S]{0,20}'not_found'/)
+    expect(fn).toMatch(/err instanceof ValidationError[\s\S]{0,40}'invalid_arguments'/)
+    expect(fn).toContain("'internal_error'")
+  })
+
+  // -- compact result shape only — never large submission objects ---------
+  it('returns ONLY the compact aggregate shape (requestedCount/changedCount/unchangedCount/failedCount/failures) — never previousScore/score/note/updatedAt per item', () => {
+    const returnBlock = fn.slice(fn.lastIndexOf('return {'))
+    expect(returnBlock).toContain('requestedCount: args.updates.length')
+    expect(returnBlock).toContain('changedCount')
+    expect(returnBlock).toContain('unchangedCount')
+    expect(returnBlock).toContain('failedCount: failures.length')
+    expect(returnBlock).toContain('failures')
+    expect(returnBlock).not.toMatch(/previousScore|updatedAt/)
+  })
+
+  it("the tool's inputSchema requires `updates` as an array of {assignmentId, studentId, score} objects, and never lets score go unbounded below 0", () => {
+    expect(toolDef).toContain("required: ['updates']")
+    expect(toolDef).toMatch(/updates:\s*\{\s*type:\s*'array'/)
+    expect(toolDef).toContain("required: ['assignmentId', 'studentId', 'score']")
+    expect(toolDef).toContain("score: { type: 'number', minimum: 0 }")
+  })
+
+  it('the description explicitly names the batch limit and that it never sends one request per student', () => {
+    expect(writeTools).toMatch(/Sets the score for up to \$\{MAX_BULK_SCORE_UPDATES\} \(assignment, student\) pairs in one call — never one request per student/)
+  })
+
+  it('never deletes a row and never touches Storage', () => {
+    expect(fn).not.toMatch(/\.delete\(/)
+    expect(fn).not.toMatch(/\.storage\s*\./)
+    expect(scoreFn).not.toMatch(/\.delete\(/)
+    expect(scoreFn).not.toMatch(/\.storage\s*\./)
   })
 })

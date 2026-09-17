@@ -20,6 +20,7 @@ import {
   mergeSubmissionsWithDefaults,
   nextScoreFocusIndex,
   nextStatusAfterScore,
+  parseBulkScoreInput,
   parsePastedScores,
   parseScoreInput,
   planScorePaste,
@@ -153,6 +154,31 @@ describe('parseScoreInput — score validation (0 <= score <= maxScore)', () => 
     const result = parseScoreInput('abc', 10)
     expect(result.value).toBeNull()
     expect(result.error).toBeTruthy()
+  })
+})
+
+describe('parseBulkScoreInput — same bound as parseScoreInput, but blank is REQUIRED (bulk grading always assigns a specific score)', () => {
+  it('rejects a blank/whitespace-only entry — unlike the single-cell parseScoreInput, blank is not valid here', () => {
+    expect(parseBulkScoreInput('', 10)).toEqual({ value: null, error: 'กรุณากรอกคะแนน' })
+    expect(parseBulkScoreInput('   ', 10)).toEqual({ value: null, error: 'กรุณากรอกคะแนน' })
+  })
+
+  it('accepts 0 as a fully valid score, never confused with blank', () => {
+    expect(parseBulkScoreInput('0', 10)).toEqual({ value: 0, error: null })
+  })
+
+  it('accepts any in-range score, delegating to parseScoreInput\'s own numeric/range check', () => {
+    expect(parseBulkScoreInput('8', 10)).toEqual({ value: 8, error: null })
+    expect(parseBulkScoreInput('10', 10)).toEqual({ value: 10, error: null })
+  })
+
+  it('rejects a negative score and a score above maxScore, same messages as parseScoreInput', () => {
+    expect(parseBulkScoreInput('-1', 10)).toEqual(parseScoreInput('-1', 10))
+    expect(parseBulkScoreInput('11', 10)).toEqual(parseScoreInput('11', 10))
+  })
+
+  it('rejects non-numeric input, same message as parseScoreInput', () => {
+    expect(parseBulkScoreInput('abc', 10)).toEqual(parseScoreInput('abc', 10))
   })
 })
 
