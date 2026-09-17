@@ -98,15 +98,17 @@ function studentDisplayName(student: ClassroomStudent): string {
  * (computeModeCellDisplay), which students appear as rows
  * (filterStudentsByCheckMode), the top counter (computeModeItemCount),
  * and which bulk action is available. A cell that does not match the
- * active mode's own concept ALWAYS renders blank/neutral, never a
- * status borrowed from a different mode — this is what replaced the old
- * bug where a row kept because ONE assignment matched a filter would
- * still render a DIFFERENT assignment's real (mismatched) state, e.g. a
- * red "ขาดส่ง" cell showing up while looking at "ส่งแล้ว." Submission and
- * score stay fully independent concepts throughout: "ให้คะแนน" mode
- * never shows ✓/ขาดส่ง, only score info, and a submitted-but-ungraded
- * cell is a green ✓ under "ส่งแล้ว" mode and "—" (never 0) under
- * "ให้คะแนน" mode. There is no reviewed/checked/awaiting-review mode or
+ * active mode's own concept ALWAYS renders a truly EMPTY cell (never a
+ * "—" placeholder — that reads as its own third visual state, which is
+ * exactly the confusion this avoids), never a status borrowed from a
+ * different mode — this is what replaced the old bug where a row kept
+ * because ONE assignment matched a filter would still render a
+ * DIFFERENT assignment's real (mismatched) state, e.g. a red "ขาดส่ง"
+ * cell showing up while looking at "ส่งแล้ว." Submission and score stay
+ * fully independent concepts throughout: "ให้คะแนน" mode never shows
+ * ✓/ขาดส่ง, only a numeric score or an empty cell, and a submitted-but-
+ * ungraded cell is a green ✓ under "ส่งแล้ว" mode and EMPTY (never 0)
+ * under "ให้คะแนน" mode. There is no reviewed/checked/awaiting-review mode or
  * state anywhere — never an intermediate holding status between
  * submitted and scored.
  *
@@ -1008,14 +1010,18 @@ function modeCellTitle(display: ModeCellDisplay): string {
 }
 
 /**
- * Exactly what the current mode says a cell should show — nothing else.
- * A cell that does not match the active mode (`kind: 'blank'`) ALWAYS
- * renders the same neutral "—" as "no score yet," never another mode's
- * status: this is the visual half of the bug fix (computeModeCellDisplay
- * is the logic half) — a red "ขาดส่ง" tag can never appear while viewing
- * "ส่งแล้ว" mode, and a green ✓ can never appear while viewing "ขาดส่ง"
- * mode. Submission and score stay fully independent: 'score' mode never
- * shows ✓ or ขาดส่ง, only "—"/"8/10"/"0/10" score info.
+ * Exactly what the current mode says a cell should show — nothing else,
+ * and NOTHING VISIBLE at all when there's nothing to say. A cell that
+ * does not match the active mode (`kind: 'blank'`) — and, in ให้คะแนน
+ * mode, a cell with no score yet — renders a truly EMPTY cell (`null`),
+ * never a "—" placeholder: a "—" reads as its own third visual state,
+ * which is exactly the confusion this avoids. This is the visual half
+ * of the bug fix (computeModeCellDisplay is the logic half) — a red
+ * "ขาดส่ง" tag can never appear while viewing "ส่งแล้ว" mode, and a green
+ * ✓ can never appear while viewing "ขาดส่ง" mode. The 3 modes stay
+ * visually independent: "ส่งแล้ว" mode shows ONLY ✓ or empty, "ขาดส่ง"
+ * mode shows ONLY ขาดส่ง or empty, "ให้คะแนน" mode shows ONLY a numeric
+ * score (e.g. "8/10", "0/10") or empty.
  */
 function ModeCellVisual({ display, maxScore }: { display: ModeCellDisplay; maxScore: number }) {
   if (display.kind === 'submitted') {
@@ -1025,7 +1031,7 @@ function ModeCellVisual({ display, maxScore }: { display: ModeCellDisplay; maxSc
     return <span className="text-xs font-medium text-destructive">ขาดส่ง</span>
   }
   if (display.kind === 'score') {
-    if (display.score === null) return <span className="text-muted-foreground">—</span>
+    if (display.score === null) return null
     return (
       <span className="inline-flex items-center gap-1 font-semibold text-success">
         <Check className="size-3.5" />
@@ -1033,5 +1039,5 @@ function ModeCellVisual({ display, maxScore }: { display: ModeCellDisplay; maxSc
       </span>
     )
   }
-  return <span className="text-muted-foreground">—</span>
+  return null
 }

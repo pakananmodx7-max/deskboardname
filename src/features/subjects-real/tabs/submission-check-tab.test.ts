@@ -88,11 +88,11 @@ describe('SubmissionCheckTab — cell rendering: exactly what computeModeCellDis
     )
   })
 
-  it('the score branch renders the REAL score, never a literal 0 fallback for a null score, and shows "—" when there is no score yet', () => {
+  it('the score branch renders the REAL score, never a literal 0 fallback for a null score, and renders a truly EMPTY cell (null) when there is no score yet — never a "—" placeholder', () => {
     const cellFn = source.slice(source.indexOf('function ModeCellVisual'), source.indexOf('function ModeCellVisual') + 800)
     expect(cellFn).toMatch(/if \(display\.kind === 'score'\)/)
     expect(cellFn).toContain('{display.score}/{maxScore}')
-    expect(cellFn).toContain('display.score === null')
+    expect(cellFn).toContain('if (display.score === null) return null')
     expect(cellFn).not.toContain('score ?? 0')
   })
 
@@ -107,11 +107,32 @@ describe('SubmissionCheckTab — cell rendering: exactly what computeModeCellDis
     expect(cellFn).not.toContain('Clock3')
   })
 
-  it('missing renders "ขาดส่ง", and a non-matching ("blank") cell renders the same neutral "—" as no-score — never another mode\'s status', () => {
+  it('missing renders "ขาดส่ง", and a non-matching ("blank") cell renders a truly EMPTY cell (null) — never a "—" placeholder and never another mode\'s status', () => {
     const cellFn = source.slice(source.indexOf('function ModeCellVisual'))
     const missingBranch = cellFn.slice(cellFn.indexOf("display.kind === 'missing'"))
     expect(missingBranch).toContain('ขาดส่ง')
-    expect(cellFn).toContain('return <span className="text-muted-foreground">—</span>')
+    expect(cellFn).toContain('return null')
+  })
+
+  it('REGRESSION — no "—" placeholder is ever rendered anywhere in ModeCellVisual — an empty cell is a real empty cell (null), never a dash that reads as its own third visual state', () => {
+    const cellFn = source.slice(source.indexOf('function ModeCellVisual'), source.indexOf('function ModeCellVisual') + 800)
+    expect(cellFn).not.toContain('—')
+    expect(cellFn).not.toContain('text-muted-foreground')
+    const nullReturns = cellFn.match(/return null/g) ?? []
+    expect(nullReturns).toHaveLength(2) // the blank-mode-match branch AND the null-score branch
+  })
+
+  it('REGRESSION — the "submitted" branch (rendered under ส่งแล้ว mode) never contains "ขาดส่ง" — a missing assignment can never show that tag while viewing ส่งแล้ว mode (the thin wiring guard; the real behavioral proof lives in computeModeCellDisplay\'s own tests in assignment-service.test.ts)', () => {
+    const cellFn = source.slice(source.indexOf('function ModeCellVisual'))
+    const submittedBranch = cellFn.slice(cellFn.indexOf("display.kind === 'submitted'"), cellFn.indexOf("display.kind === 'missing'"))
+    expect(submittedBranch).not.toContain('ขาดส่ง')
+  })
+
+  it('REGRESSION — ให้คะแนน mode never shows ✓ (CheckCircle2) or ขาดส่ง for a non-scored cell — only a numeric score or nothing', () => {
+    const cellFn = source.slice(source.indexOf('function ModeCellVisual'))
+    const scoreBranch = cellFn.slice(cellFn.indexOf("display.kind === 'score'"), cellFn.indexOf('return null\n}'))
+    expect(scoreBranch).not.toContain('CheckCircle2')
+    expect(scoreBranch).not.toContain('ขาดส่ง')
   })
 
   it('the tooltip/label text comes from modeCellTitle and reads "ส่งแล้ว"/"ขาดส่ง" for their own matching cells — never "ตรวจแล้ว"/"รอตรวจ"/awaiting-review copy', () => {
