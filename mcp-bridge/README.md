@@ -2,7 +2,7 @@
 
 A **local** MCP (Model Context Protocol) stdio server that exposes the
 already-deployed production `teacher-agent-tools` Supabase Edge
-Function's 5 read tools and 5 safe write tools to an MCP client such as
+Function's 6 read tools and 6 safe write tools to an MCP client such as
 Hermes.
 
 It runs entirely on the teacher's own machine (this is what makes it a
@@ -30,15 +30,17 @@ it, exactly as it does for the real web app.
 - Not a place with a delete/destroy tool — none exists on the Edge
   Function, so none is exposed here.
 
-## Tools exposed (10 total)
+## Tools exposed (12 total)
 
-**Read (5)** — `list_classrooms`, `list_assignments`,
-`get_missing_submissions`, `get_classroom_summary`, `get_student_summary`.
+**Read (6)** — `list_classrooms`, `list_assignments`,
+`get_missing_submissions`, `get_classroom_summary`, `get_student_summary`,
+`get_classroom_submission_summary`.
 
-**Write (5)** — `create_assignment`, `copy_assignment_to_classrooms`,
+**Write (6)** — `create_assignment`, `copy_assignment_to_classrooms`,
 `mark_attendance_bulk`, `mark_submission_status`,
-`mark_submission_status_bulk`. Each of these **mutates real production
-data** through the same production Edge Function every read tool uses:
+`mark_submission_status_bulk`, `set_assignment_scores_bulk`. Each of
+these **mutates real production data** through the same production Edge
+Function every read tool uses:
 
 - Their MCP tool description is prefixed with
   `[WRITE — mutates production data]`, ahead of the exact upstream
@@ -69,11 +71,22 @@ data** through the same production Edge Function every read tool uses:
   `failures[]` list naming which pairs failed and why) — never the full
   updated submission rows. One failing pair never blocks or rolls back
   the others.
+- `set_assignment_scores_bulk` sets the score for up to 50
+  `{ assignmentId, studentId, score }` pairs in ONE call — the SAME write
+  path the KrunameClass web app's own ตรวจงานและคะแนน bulk grading bar
+  uses (one shared server-side implementation, not a separate one for
+  Hermes). `score` must be `>= 0` and `<= ` that assignment's own max
+  score, enforced server-side since max score varies per assignment row;
+  `0` is a valid, explicit score, never confused with "no score." An
+  untouched `not_submitted` row is promoted to `submitted` the moment a
+  score is recorded. Same compact result shape and same "one failing
+  pair never blocks the others" guarantee as `mark_submission_status_bulk`.
 - Ownership/authorization is still enforced entirely server-side: a
   classroom, assignment, subject, or student the calling teacher doesn't
-  own (or, for `mark_submission_status`, a student who isn't a member of
-  the assignment's classroom on a first-ever write) is refused by the
-  Edge Function's own RLS-scoped checks, not by anything in this bridge.
+  own (or, for `mark_submission_status`/`set_assignment_scores_bulk`, a
+  student who isn't a member of the assignment's classroom on a
+  first-ever write) is refused by the Edge Function's own RLS-scoped
+  checks, not by anything in this bridge.
 
 ## How authentication works
 

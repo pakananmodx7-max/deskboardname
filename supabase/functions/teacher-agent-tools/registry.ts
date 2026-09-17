@@ -23,11 +23,13 @@
  * with ZERO duplication of any handler/business logic — the handlers
  * themselves never change when a new caller (Hermes) is wired up later.
  *
- * ONLY read tools and the four explicitly-approved safe write tools
- * exist here. There is intentionally no delete_* tool, no arbitrary
- * table/SQL access, and no Storage access of any kind — see this
- * repository's Phase 1 report for the full list of what was
- * deliberately left out and why.
+ * ONLY read tools and the six explicitly-approved safe write tools
+ * (create_assignment, copy_assignment_to_classrooms, mark_attendance_bulk,
+ * mark_submission_status, mark_submission_status_bulk,
+ * set_assignment_scores_bulk) exist here. There is intentionally no
+ * delete_* tool, no arbitrary table/SQL access, and no Storage access of
+ * any kind — see this repository's Phase 1 report for the full list of
+ * what was deliberately left out and why.
  */
 import { readTools } from './tools/read-tools.ts'
 import { writeTools } from './tools/write-tools.ts'

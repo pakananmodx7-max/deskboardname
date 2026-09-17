@@ -2,7 +2,7 @@
   "name": "teacher-agent-mcp-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "Local stdio MCP server that exposes the deployed teacher-agent-tools Supabase Edge Function's READ tools to an MCP client (Hermes). Runs entirely on the teacher's own machine; never touches the database directly and never handles service-role credentials.",
+  "description": "Local stdio MCP server that exposes the deployed teacher-agent-tools Supabase Edge Function's read and write tools to an MCP client (Hermes). Runs entirely on the teacher's own machine; never touches the database directly and never handles service-role credentials.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

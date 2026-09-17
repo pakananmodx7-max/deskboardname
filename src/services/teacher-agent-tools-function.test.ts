@@ -614,4 +614,19 @@ describe('write-tools.ts — set_assignment_scores_bulk (bulk grading write, bac
     expect(scoreFn).not.toMatch(/\.delete\(/)
     expect(scoreFn).not.toMatch(/\.storage\s*\./)
   })
+
+  it('REGRESSION — an explicit score of 0 is valid and is never rejected: the only lower-bound check is `args.score < 0`, so 0 passes it, and 0 is written through the same upsert as any other score — never coerced to null or dropped', () => {
+    expect(scoreFn).toContain('if (!Number.isFinite(args.score) || args.score < 0)')
+    expect(scoreFn).not.toMatch(/args\.score\s*<=\s*0/)
+    expect(scoreFn).not.toMatch(/args\.score\s*===\s*0[\s\S]{0,40}(throw|continue|return)/)
+    expect(scoreFn).toContain('score: args.score,')
+  })
+
+  it('REGRESSION — idempotent: setting a student\'s score to the SAME value twice reports `changed: false` the second time (contributing to unchangedCount, not changedCount) — this is what lets Hermes/the web UI safely retry or re-run a bulk grade without inflating "changed" counts', () => {
+    expect(scoreFn).toContain('changed: previousScore !== updated.score || previousStatus !== updated.status')
+    const changedIndex = fn.indexOf('successes.filter((r) => r.changed).length')
+    const unchangedIndex = fn.indexOf('successes.filter((r) => !r.changed).length')
+    expect(changedIndex).toBeGreaterThan(-1)
+    expect(unchangedIndex).toBeGreaterThan(-1)
+  })
 })

@@ -42,6 +42,38 @@ export function scrubPossibleTokens(text: string): string {
   return text.replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[redacted]')
 }
 
+/**
+ * Error codes the Edge Function's own request-routing layer (index.ts)
+ * can return that are protocol/implementation details — a tool name
+ * that isn't (yet, or anymore) deployed, a malformed request shape, a
+ * disallowed HTTP method — never something a teacher caused or can act
+ * on. Every OTHER code (unauthorized/forbidden/not_found/
+ * invalid_arguments/internal_error) already carries a Thai message
+ * written for a teacher to read (see agent-context.ts, tool-schema.ts,
+ * and each write tool's own ValidationError/NotFoundError text) and is
+ * passed through unchanged.
+ *
+ * This is what stops a deploy-lag bug (a tool implemented and committed
+ * here, but not yet deployed to the live Edge Function) from ever
+ * surfacing as a raw `ไม่รู้จัก tool ชื่อ "set_assignment_scores_bulk"`
+ * in the bulk grading failures list — a teacher should never see an
+ * internal tool name at all, whatever caused the mismatch.
+ */
+const INTERNAL_ONLY_ERROR_CODES = new Set(['unknown_tool', 'missing_tool', 'invalid_json', 'method_not_allowed'])
+
+const GENERIC_SYSTEM_ERROR_MESSAGE = 'เกิดข้อผิดพลาดของระบบ กรุณาลองใหม่อีกครั้ง หรือแจ้งผู้ดูแลระบบหากยังพบปัญหา'
+
+/**
+ * Replaces an internal-only error code's raw message with a safe,
+ * generic one; every teacher-facing code's message passes through
+ * verbatim. The raw `code` itself is still returned unchanged by
+ * callTeacherAgentTool (a caller can still branch on it), only the
+ * human-readable `message` is ever sanitized.
+ */
+export function sanitizeAgentToolErrorMessage(code: string, message: string): string {
+  return INTERNAL_ONLY_ERROR_CODES.has(code) ? GENERIC_SYSTEM_ERROR_MESSAGE : message
+}
+
 interface FunctionsHttpErrorLike {
   message?: string
   context?: Response
@@ -87,13 +119,21 @@ export async function callTeacherAgentTool<T = unknown>(
     const httpStatus = context?.status ?? null
 
     if (parsed && parsed.ok === false) {
+      const rawMessage = scrubPossibleTokens(parsed.error.message)
+      if (INTERNAL_ONLY_ERROR_CODES.has(parsed.error.code)) {
+        // Logged for developers only — never returned to the caller,
+        // which is exactly the point: a teacher must never see an
+        // internal tool-routing detail like a missing/undeployed tool
+        // name, only that something went wrong and to try again.
+        console.error(`[teacher-agent-tools] ${parsed.error.code}: ${rawMessage}`)
+      }
       return {
         ok: false,
         tool: parsed.tool,
         httpStatus,
         error: {
           code: parsed.error.code,
-          message: scrubPossibleTokens(parsed.error.message),
+          message: sanitizeAgentToolErrorMessage(parsed.error.code, rawMessage),
         },
       }
     }
