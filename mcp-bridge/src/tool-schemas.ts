@@ -2,7 +2,7 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 
 /**
- * All 9 tools' argument shapes, descriptions, and MCP annotations,
+ * All 11 tools' argument shapes, descriptions, and MCP annotations,
  * copied verbatim (field names, required-ness, uuid/enum/number
  * constraints, descriptions) from the deployed Edge Function's own
  * registry — supabase/functions/teacher-agent-tools/tools/read-tools.ts
@@ -36,12 +36,18 @@ import { z } from 'zod'
  * Each one's `description` below is prefixed with an explicit "[WRITE —
  * mutates production data]" marker (kept separate from the verbatim
  * upstream description that follows it) so an agent reading the tool
- * list sees, unambiguously, which of the 9 tools can change data before
+ * list sees, unambiguously, which of the 11 tools can change data before
  * ever calling one. Their `annotations` (readOnlyHint/destructiveHint/
  * idempotentHint) are the standard MCP mechanism for the same signal,
  * for any client that reads annotations rather than (or in addition to)
  * the description text. No delete/destroy tool is registered — none
  * exists in the Edge Function's own registry.
+ *
+ * 6 read tools + 5 write tools = 11 total. get_classroom_submission_summary
+ * is the newest read tool: a compact per-assignment submission summary for
+ * every active assignment in one classroom, replacing the previously
+ * expensive list_assignments -> get_missing_submissions-per-assignment
+ * workflow with a single call.
  */
 
 const ASSIGNMENT_STATUS_VALUES = ['active', 'archived', 'all'] as const
@@ -114,6 +120,14 @@ export const toolSchemas = {
         .optional()
         .describe('Disambiguates when a student is in more than one of your classrooms.'),
       subjectId: z.string().uuid().optional().describe('Scopes attendance/assignments to one subject only.'),
+    },
+  },
+  get_classroom_submission_summary: {
+    description:
+      'Compact per-assignment submission summary for every active (non-archived) assignment in one classroom, in a single call — title, submittedCount, missingCount, and missingStudentNumbers per assignment. Replaces calling list_assignments then get_missing_submissions per assignment.',
+    annotations: READ_ONLY_ANNOTATIONS,
+    input: {
+      classroomId: z.string().uuid(),
     },
   },
 
@@ -256,6 +270,7 @@ export const READ_TOOL_NAMES = [
   'get_missing_submissions',
   'get_classroom_summary',
   'get_student_summary',
+  'get_classroom_submission_summary',
 ] as const satisfies readonly ToolName[]
 
 export const WRITE_TOOL_NAMES = [

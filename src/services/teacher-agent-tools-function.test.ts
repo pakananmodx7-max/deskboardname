@@ -145,13 +145,14 @@ describe('supabase-admin.ts — untouched (Google Drive integration must not reg
 })
 
 describe('registry.ts — the tool list Hermes will eventually consume', () => {
-  it('exposes exactly the 10 approved tools, no more', () => {
+  it('exposes exactly the 11 approved tools, no more', () => {
     const names = [
       'list_classrooms',
       'list_assignments',
       'get_missing_submissions',
       'get_student_summary',
       'get_classroom_summary',
+      'get_classroom_submission_summary',
       'create_assignment',
       'copy_assignment_to_classrooms',
       'mark_attendance_bulk',
@@ -208,7 +209,7 @@ describe('shared.ts — ownership lookups (classroom/subject/assignment) used by
   })
 })
 
-describe('read-tools.ts — 5 read tools, each classroom/subject/assignment-scoped', () => {
+describe('read-tools.ts — 6 read tools, each classroom/subject/assignment-scoped', () => {
   it('list_classrooms requires ownership of the subject when subjectId is given, and derives student counts from classroom_students', () => {
     expect(readTools).toContain('requireOwnedSubject(client, args.subjectId)')
     expect(readTools).toContain("from('classroom_students')")
@@ -249,6 +250,31 @@ describe('read-tools.ts — 5 read tools, each classroom/subject/assignment-scop
     expect(readTools).toContain('DEFAULT_MISSING_ASSIGNMENTS_THRESHOLD = 2')
     expect(readTools).toContain('DEFAULT_SCORE_THRESHOLD_PERCENT = 50')
     expect(readTools).toContain('rulesApplied')
+  })
+
+  it('get_classroom_submission_summary requires classroom ownership before querying assignments, reuses getClassroomRoster + assignment_submissions, and delegates aggregation to the shared computeClassroomSubmissionSummary — no parallel data model', () => {
+    const fn = readTools.slice(
+      readTools.indexOf('async function getClassroomSubmissionSummary'),
+      readTools.indexOf('export const getClassroomSubmissionSummaryTool'),
+    )
+    expect(fn.indexOf('requireOwnedClassroom(client, args.classroomId)')).toBeLessThan(fn.indexOf("from('assignments')"))
+    expect(fn).toContain('getClassroomRoster(client, args.classroomId)')
+    expect(fn).toContain("from('assignment_submissions')")
+    expect(fn).toContain('computeClassroomSubmissionSummary(')
+    expect(fn).toContain('SUBMITTED_STATUSES')
+    expect(fn).not.toContain('createAdminClient')
+  })
+
+  it('get_classroom_submission_summary imports its aggregation logic from submission-summary.ts rather than reimplementing it inline', () => {
+    expect(readTools).toContain("import { computeClassroomSubmissionSummary } from './submission-summary.ts'")
+  })
+
+  it('get_classroom_submission_summary is read-only: no insert/update/upsert/delete call anywhere in its handler', () => {
+    const fn = readTools.slice(
+      readTools.indexOf('async function getClassroomSubmissionSummary'),
+      readTools.indexOf('export const getClassroomSubmissionSummaryTool'),
+    )
+    expect(fn).not.toMatch(/\.(insert|update|upsert|delete)\(/)
   })
 })
 

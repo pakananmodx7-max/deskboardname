@@ -8,14 +8,14 @@ function fakeClient(callTool: ReturnType<typeof vi.fn>): EdgeFunctionClient {
   return { callTool } as unknown as EdgeFunctionClient
 }
 
-describe('createServer — registers exactly the 10 tools (5 read + 5 write)', () => {
+describe('createServer — registers exactly the 11 tools (6 read + 5 write)', () => {
   it('registers exactly ALL_TOOL_NAMES, no more, no fewer', () => {
     const { registeredTools } = createServer(fakeClient(vi.fn()))
     expect(Object.keys(registeredTools).sort()).toEqual([...ALL_TOOL_NAMES].sort())
-    expect(Object.keys(registeredTools)).toHaveLength(10)
+    expect(Object.keys(registeredTools)).toHaveLength(11)
   })
 
-  it('registers all 5 read tools', () => {
+  it('registers all 6 read tools', () => {
     const { registeredTools } = createServer(fakeClient(vi.fn()))
     for (const name of READ_TOOL_NAMES) {
       expect(registeredTools[name]).toBeDefined()
@@ -94,6 +94,35 @@ describe('createServer — read tool handler success/error paths (unchanged beha
     await registeredTools.get_missing_submissions.handler({ assignmentId: 'abc-123' }, {} as never)
 
     expect(callTool).toHaveBeenCalledExactlyOnceWith('get_missing_submissions', { assignmentId: 'abc-123' })
+  })
+
+  it('get_classroom_submission_summary: forwards classroomId and returns the compact per-assignment summary unmodified', async () => {
+    const data = {
+      classroomId: 'c1',
+      assignments: [
+        { assignmentId: 'a1', title: 'รัฐฟูนัน', totalStudents: 31, submittedCount: 28, missingCount: 3, missingStudentNumbers: [4, 12, 19] },
+      ],
+    }
+    const callTool = vi.fn().mockResolvedValue({ ok: true, tool: 'get_classroom_submission_summary', data })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.get_classroom_submission_summary.handler({ classroomId: 'c1' }, {} as never)
+
+    expect(callTool).toHaveBeenCalledExactlyOnceWith('get_classroom_submission_summary', { classroomId: 'c1' })
+    expect(result.isError).toBeUndefined()
+    expect(result.structuredContent).toEqual(data)
+  })
+
+  it('get_classroom_submission_summary: an unowned classroom surfaces as isError, never a silent empty result', async () => {
+    const callTool = vi
+      .fn()
+      .mockResolvedValue({ ok: false, tool: 'get_classroom_submission_summary', error: { code: 'not_found', message: 'ไม่พบห้องเรียนนี้ หรือคุณไม่มีสิทธิ์เข้าถึง' } })
+    const { registeredTools } = createServer(fakeClient(callTool))
+
+    const result = await registeredTools.get_classroom_submission_summary.handler({ classroomId: 'not-mine' }, {} as never)
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toEqual([{ type: 'text', text: 'not_found: ไม่พบห้องเรียนนี้ หรือคุณไม่มีสิทธิ์เข้าถึง' }])
   })
 
   it('maps an { ok: false } result to isError: true with the code and message visible in the text content', async () => {

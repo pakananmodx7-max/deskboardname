@@ -6,10 +6,17 @@ import { ALL_TOOL_NAMES, READ_TOOL_NAMES, WRITE_TOOL_NAMES, toolSchemas } from '
 const UUID = '11111111-1111-1111-1111-111111111111'
 const UUID_2 = '22222222-2222-2222-2222-222222222222'
 
-describe('toolSchemas — exactly the 10 tools from the Edge Function registry (5 read + 5 write)', () => {
-  it('lists exactly these 5 read tool names', () => {
+describe('toolSchemas — exactly the 11 tools from the Edge Function registry (6 read + 5 write)', () => {
+  it('lists exactly these 6 read tool names', () => {
     expect(new Set(READ_TOOL_NAMES)).toEqual(
-      new Set(['list_classrooms', 'list_assignments', 'get_missing_submissions', 'get_classroom_summary', 'get_student_summary']),
+      new Set([
+        'list_classrooms',
+        'list_assignments',
+        'get_missing_submissions',
+        'get_classroom_summary',
+        'get_student_summary',
+        'get_classroom_submission_summary',
+      ]),
     )
   })
 
@@ -25,15 +32,15 @@ describe('toolSchemas — exactly the 10 tools from the Edge Function registry (
     )
   })
 
-  it('ALL_TOOL_NAMES is exactly the union of read and write, 10 total, no overlap', () => {
-    expect(ALL_TOOL_NAMES).toHaveLength(10)
+  it('ALL_TOOL_NAMES is exactly the union of read and write, 11 total, no overlap', () => {
+    expect(ALL_TOOL_NAMES).toHaveLength(11)
     expect(new Set(ALL_TOOL_NAMES)).toEqual(new Set([...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]))
     for (const writeTool of WRITE_TOOL_NAMES) {
       expect(READ_TOOL_NAMES).not.toContain(writeTool)
     }
   })
 
-  it('toolSchemas itself has exactly these 9 keys — nothing registered that isn\'t named here', () => {
+  it('toolSchemas itself has exactly these 11 keys — nothing registered that isn\'t named here', () => {
     expect(Object.keys(toolSchemas).sort()).toEqual([...ALL_TOOL_NAMES].sort())
   })
 
@@ -83,6 +90,13 @@ describe('toolSchemas — READ argument shapes match the deployed Edge Function\
     expect(shape.safeParse({}).success).toBe(false)
     expect(shape.safeParse({ studentId: UUID }).success).toBe(true)
     expect(shape.safeParse({ studentId: UUID, classroomId: UUID_2, subjectId: UUID_2 }).success).toBe(true)
+  })
+
+  it('get_classroom_submission_summary: classroomId required, no other fields', () => {
+    const shape = z.object(toolSchemas.get_classroom_submission_summary.input)
+    expect(shape.safeParse({}).success).toBe(false)
+    expect(shape.safeParse({ classroomId: UUID }).success).toBe(true)
+    expect(shape.safeParse({ classroomId: 'not-a-uuid' }).success).toBe(false)
   })
 })
 

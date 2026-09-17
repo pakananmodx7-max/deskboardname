@@ -18,7 +18,7 @@ export interface CreatedServer {
 
 /**
  * Builds the MCP server and registers exactly the tools declared in
- * tool-schemas.ts (currently 10: 5 read + 5 write) — nothing else, and
+ * tool-schemas.ts (currently 11: 6 read + 5 write) — nothing else, and
  * this loop itself never distinguishes read from write: whether a given tool
  * mutates data is entirely a property of tool-schemas.ts's own
  * `annotations`/description for that entry, not of anything here. Each

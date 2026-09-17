@@ -11,6 +11,7 @@ import {
   SUBMITTED_STATUSES,
   type StudentRow,
 } from './shared.ts'
+import { computeClassroomSubmissionSummary } from './submission-summary.ts'
 
 // ==================================================
 // 1. list_classrooms
@@ -618,10 +619,67 @@ export const getClassroomSummaryTool: AgentTool<GetClassroomSummaryArgs> = {
   handler: (ctx, args) => getClassroomSummary(ctx, args),
 }
 
+// ==================================================
+// 6. get_classroom_submission_summary
+// ==================================================
+
+interface GetClassroomSubmissionSummaryArgs {
+  classroomId: string
+}
+
+async function getClassroomSubmissionSummary(ctx: AgentContext, args: GetClassroomSubmissionSummaryArgs) {
+  const { client } = ctx
+  const classroom = await requireOwnedClassroom(client, args.classroomId)
+  const roster = await getClassroomRoster(client, args.classroomId)
+
+  const { data: assignments, error: assignmentsError } = await client
+    .from('assignments')
+    .select('id, title, is_archived')
+    .eq('classroom_id', args.classroomId)
+  if (assignmentsError) throw assignmentsError
+  const assignmentRows = (assignments ?? []) as { id: string; title: string; is_archived: boolean }[]
+
+  const activeAssignmentIds = assignmentRows.filter((a) => !a.is_archived).map((a) => a.id)
+  let submissionRows: { assignment_id: string; student_id: string; status: string }[] = []
+  if (activeAssignmentIds.length > 0) {
+    const { data: submissions, error: submissionsError } = await client
+      .from('assignment_submissions')
+      .select('assignment_id, student_id, status')
+      .in('assignment_id', activeAssignmentIds)
+    if (submissionsError) throw submissionsError
+    submissionRows = (submissions ?? []) as typeof submissionRows
+  }
+
+  const assignmentSummaries = computeClassroomSubmissionSummary(
+    assignmentRows.map((a) => ({ id: a.id, title: a.title, isArchived: a.is_archived })),
+    roster.map((s) => ({ id: s.id, number: s.number })),
+    submissionRows.map((s) => ({ assignmentId: s.assignment_id, studentId: s.student_id, status: s.status })),
+    SUBMITTED_STATUSES,
+  )
+
+  return {
+    classroomId: classroom.id,
+    assignments: assignmentSummaries,
+  }
+}
+
+export const getClassroomSubmissionSummaryTool: AgentTool<GetClassroomSubmissionSummaryArgs> = {
+  name: 'get_classroom_submission_summary',
+  description:
+    'Compact per-assignment submission summary for every active (non-archived) assignment in one classroom, in a single call — title, submittedCount, missingCount, and missingStudentNumbers per assignment. Replaces calling list_assignments then get_missing_submissions per assignment.',
+  inputSchema: {
+    type: 'object',
+    properties: { classroomId: { type: 'string', format: 'uuid' } },
+    required: ['classroomId'],
+  },
+  handler: (ctx, args) => getClassroomSubmissionSummary(ctx, args),
+}
+
 export const readTools: AgentTool<any>[] = [
   listClassroomsTool,
   listAssignmentsTool,
   getMissingSubmissionsTool,
   getStudentSummaryTool,
   getClassroomSummaryTool,
+  getClassroomSubmissionSummaryTool,
 ]
