@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, Plus, Search, Users, X } from 'lucide-react'
+import { CheckCircle2, Plus, Search, Users, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -20,13 +20,15 @@ import {
   SUBMISSION_CHECK_MODE_COUNT_LABEL,
   SUBMISSION_CHECK_MODES,
   archiveAssignment,
+  computeCellDisplay,
   computeExpectedItemCount,
-  computeModeCellDisplay,
   computeModeItemCount,
   computeSubmissionCellState,
+  computeSubmittedMissingSplit,
   deleteAssignmentPermanently,
   deriveGradeRoster,
   filterStudentsByCheckMode,
+  filterSubmittedStudentIds,
   getAssignments,
   getSubmissions,
   hasAssignmentSubmissions,
@@ -37,7 +39,7 @@ import {
   setSubmissionNote,
   setSubmissionScore,
   setSubmissionStatus,
-  type ModeCellDisplay,
+  type CellDisplay,
   type SubmissionCheckMode,
 } from '@/services/assignment-service'
 import { bulkSetAssignmentScores, buildBulkScoreUpdates } from '@/services/score-bulk-service'
@@ -94,27 +96,23 @@ function studentDisplayName(student: ClassroomStudent): string {
  * data as งาน/คะแนน (via getAssignments/getSubmissions) — no new table,
  * no mock data, no invented database status.
  *
- * Exactly 4 MODES (SUBMISSION_CHECK_MODES) — ทั้งหมด / ส่งแล้ว / ขาดส่ง /
- * ให้คะแนน, defaulting to ทั้งหมด — govern the whole workspace at once:
- * which cells render as matching (computeModeCellDisplay), which
- * students appear as rows (filterStudentsByCheckMode), the top counter
- * (computeModeItemCount), and which bulk action is available. ทั้งหมด is
- * the full classroom overview: every student, every assignment, and
- * every cell resolved to EXACTLY ✓ or ขาดส่ง — a cell with no submission
- * record at all is not a third "no data" state, it IS ขาดส่ง (the
- * student has not submitted), so ทั้งหมด mode never renders a blank or
- * "—" cell. In the two narrower modes (ส่งแล้ว/ขาดส่ง), a cell that does
- * not match the active mode's own concept ALWAYS renders a truly EMPTY
- * cell (never a "—" placeholder — that reads as its own third visual
- * state, which is exactly the confusion this avoids), never a status
- * borrowed from a different mode — this is what replaced the old bug
- * where a row kept because ONE assignment matched a filter would still
- * render a DIFFERENT assignment's real (mismatched) state, e.g. a red
- * "ขาดส่ง" cell showing up while looking at "ส่งแล้ว." Submission and
- * score stay fully independent concepts throughout: "ให้คะแนน" mode
- * never shows ✓/ขาดส่ง, only a numeric score or an empty cell, and a
- * submitted-but-ungraded cell is a green ✓ under "ส่งแล้ว"/"ทั้งหมด" mode
- * and EMPTY (never 0) under "ให้คะแนน" mode. There is no
+ * ONE master matrix — a SINGLE cell rendering (computeCellDisplay) shows
+ * BOTH submission status and score together, in every mode: a submitted
+ * cell is always a green ✓ plus its score (a "—" placeholder when not
+ * yet graded, the literal "0" for an explicit zero — never conflated),
+ * and a missing cell (explicit 'missing', explicit 'not_submitted', or
+ * no submission row at all) is always red "ขาดส่ง" with no score field
+ * at all. There is no separate score-only "ให้คะแนน" mode/page — grading
+ * always happens in place, without navigating away from this matrix.
+ *
+ * Exactly 3 MODES (SUBMISSION_CHECK_MODES) — ทั้งหมด / ส่งแล้ว / ขาดส่ง,
+ * defaulting to ทั้งหมด — control ONLY which student ROWS are visible
+ * (filterStudentsByCheckMode) and the top counter (computeModeItemCount);
+ * they never change what a visible cell shows, which is exactly what
+ * replaced the old bug where a row kept because ONE assignment matched a
+ * filter would still render a DIFFERENT assignment's real (mismatched)
+ * state. ทั้งหมด shows the full roster; ส่งแล้ว/ขาดส่ง narrow the rows to
+ * students with at least one matching assignment in scope. There is no
  * reviewed/checked/awaiting-review mode or state anywhere — never an
  * intermediate holding status between submitted and scored.
  *
@@ -277,6 +275,14 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
     ? (visibleAssignments.find((a) => a.id === singleSelectedAssignmentId) ?? null)
     : null
 
+  // Drives the "ส่งแล้ว N · ขาดส่ง M" readout in the bulk grading bar —
+  // always computed over the CURRENT selection × the one selected
+  // assignment, so it reflects exactly which of the selected students
+  // will actually be graded (never the whole roster/classroom).
+  const selectionSubmittedMissingSplit = singleSelectedAssignmentId
+    ? computeSubmittedMissingSplit(Array.from(selectedStudentIds), singleSelectedAssignmentId, submissionsByAssignment)
+    : { submittedCount: 0, missingCount: 0 }
+
   useEffect(() => {
     // A score typed for one assignment must never silently carry over to
     // a different one once the selection changes (its max score may
@@ -358,11 +364,15 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   }
 
   /**
-   * Validates the bulk score draft (parseBulkScoreInput — same 0 <=
-   * score <= maxScore bound as the per-cell dialog, but blank is
-   * rejected here since bulk grading always assigns a specific score),
-   * then opens the required confirmation step ("กำลังให้คะแนน X/max แก่
-   * นักเรียน N คน") before anything is written.
+   * "ให้คะแนนคนที่ส่งแล้ว": validates the bulk score draft
+   * (parseBulkScoreInput — same 0 <= score <= maxScore bound as the
+   * per-cell dialog, but blank is rejected here since bulk grading
+   * always assigns a specific score), then narrows the selection down to
+   * only the SUBMITTED students via filterSubmittedStudentIds — a
+   * missing student in the same selection is always skipped, never
+   * assigned a 0 or any score — before opening the required confirmation
+   * step ("กำลังให้คะแนน X/max แก่นักเรียน N คน", N already reflecting
+   * only the submitted count).
    */
   function handleOpenBulkGradeConfirm() {
     if (!singleSelectedAssignment || selectedStudentIds.size === 0) return
@@ -371,21 +381,56 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
       setBulkScoreError(validationError ?? 'กรุณากรอกคะแนน')
       return
     }
+    const submittedStudentIds = filterSubmittedStudentIds(
+      Array.from(selectedStudentIds),
+      singleSelectedAssignment.id,
+      submissionsByAssignment,
+    )
+    if (submittedStudentIds.length === 0) {
+      setBulkScoreError('ไม่มีนักเรียนที่ส่งงานแล้วในกลุ่มที่เลือก')
+      return
+    }
     setBulkScoreError(null)
-    setPendingBulkGrade({ assignment: singleSelectedAssignment, studentIds: Array.from(selectedStudentIds), score: value })
+    setPendingBulkGrade({ assignment: singleSelectedAssignment, studentIds: submittedStudentIds, score: value })
+  }
+
+  /**
+   * "เต็มคะแนนคนที่ส่งแล้ว": one click grades every SUBMITTED student in
+   * the current selection with the assignment's own max score, straight
+   * to the SAME required confirmation dialog — never skipping
+   * confirmation, and (via the same filterSubmittedStudentIds gate)
+   * never touching a missing student in the same selection.
+   */
+  function handleBulkGradeSubmittedFullMarks() {
+    if (!singleSelectedAssignment || selectedStudentIds.size === 0) return
+    const submittedStudentIds = filterSubmittedStudentIds(
+      Array.from(selectedStudentIds),
+      singleSelectedAssignment.id,
+      submissionsByAssignment,
+    )
+    if (submittedStudentIds.length === 0) {
+      setBulkScoreError('ไม่มีนักเรียนที่ส่งงานแล้วในกลุ่มที่เลือก')
+      return
+    }
+    setBulkScoreDraft(String(singleSelectedAssignment.maxScore))
+    setBulkScoreError(null)
+    setPendingBulkGrade({ assignment: singleSelectedAssignment, studentIds: submittedStudentIds, score: singleSelectedAssignment.maxScore })
   }
 
   /**
    * The ONE place any bulk grading write happens — the sticky bulk bar's
-   * "ให้คะแนนผู้ที่เลือกทั้งหมด" and both "ทั้งห้อง" column-menu shortcuts
-   * all end up here. Builds the full (assignment, student) update list,
-   * makes exactly one bulkSetAssignmentScores call for the whole batch
-   * (chunking happens inside that shared service, never per-student
-   * here), then RE-FETCHES the matrix from the real source of truth
-   * (unlike the status quick actions, which apply an optimistic local
-   * patch) so every score/status/tally on screen is guaranteed correct
-   * after a grading action, before reporting counts and any partial
-   * failures.
+   * "ให้คะแนนคนที่ส่งแล้ว"/"เต็มคะแนนคนที่ส่งแล้ว" and the "ทั้งห้อง"
+   * column-menu shortcuts all end up here, and every one of those
+   * callers has ALREADY narrowed `studentIds` down to submitted students
+   * only (via filterSubmittedStudentIds) before reaching this function —
+   * this never receives a missing student to grade. Builds the full
+   * (assignment, student) update list, makes exactly one
+   * bulkSetAssignmentScores call for the whole batch (chunking happens
+   * inside that shared service, never per-student here), then
+   * RE-FETCHES the matrix from the real source of truth (unlike the
+   * status quick actions, which apply an optimistic local patch) so
+   * every score/status/tally on screen is guaranteed correct after a
+   * grading action, before reporting counts and any partial failures.
    */
   async function runBulkScoreUpdate(studentIds: string[], assignmentId: string, score: number) {
     if (studentIds.length === 0) return
@@ -433,17 +478,23 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
     setSelectedStudentIds(new Set(roster.map((s) => s.id)))
   }
 
-  /** "เต็มคะแนนทั้งห้อง" column-menu shortcut: same selection as above,
-   * pre-filled with the assignment's max score, going straight to the
-   * SAME required confirmation dialog ("กำลังให้คะแนน max/max แก่นักเรียน
-   * N คน") — never skipping confirmation just because it's a shortcut. */
+  /** "เต็มคะแนนคนที่ส่งแล้วทั้งห้อง" column-menu shortcut: same selection
+   * as "ให้คะแนนทั้งห้อง" above, pre-filled with the assignment's max
+   * score, going straight to the SAME required confirmation dialog
+   * ("กำลังให้คะแนน max/max แก่นักเรียน N คน") — never skipping
+   * confirmation just because it's a shortcut, and (via the same
+   * filterSubmittedStudentIds gate every bulk grading write uses) never
+   * assigning a score to a student who hasn't submitted this assignment,
+   * even though the WHOLE classroom was selected. */
   function handleGradeWholeClassroomFullMarks(assignment: Assignment) {
-    const studentIds = roster.map((s) => s.id)
+    const allStudentIds = roster.map((s) => s.id)
+    const submittedStudentIds = filterSubmittedStudentIds(allStudentIds, assignment.id, submissionsByAssignment)
     setSelectedAssignmentIds(new Set([assignment.id]))
-    setSelectedStudentIds(new Set(studentIds))
+    setSelectedStudentIds(new Set(allStudentIds))
     setBulkScoreDraft(String(assignment.maxScore))
-    setBulkScoreError(null)
-    setPendingBulkGrade({ assignment, studentIds, score: assignment.maxScore })
+    setBulkScoreError(submittedStudentIds.length === 0 ? 'ไม่มีนักเรียนที่ส่งงานแล้วในกลุ่มที่เลือก' : null)
+    if (submittedStudentIds.length === 0) return
+    setPendingBulkGrade({ assignment, studentIds: submittedStudentIds, score: assignment.maxScore })
   }
 
   function openTargetDialog(assignment: Assignment, student: ClassroomStudent) {
@@ -656,10 +707,17 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                 </div>
               </div>
 
-              {mode === 'score' && singleSelectedAssignment && selectedStudentIds.size > 0 && (
+              {/* The bulk GRADING bar: available regardless of the active
+                  ทั้งหมด/ส่งแล้ว/ขาดส่ง filter — grading is never tied to a
+                  separate mode. Shows the submitted/ขาดส่ง split for
+                  EXACTLY this selection × this one assignment column, so
+                  the teacher sees up front how many of the selected
+                  students will actually be graded. */}
+              {singleSelectedAssignment && selectedStudentIds.size > 0 && (
                 <div className="flex flex-wrap items-center gap-2 border-t border-primary/20 pt-2">
                   <span>
-                    เลือกแล้ว {selectedStudentIds.size} คน · งาน: {singleSelectedAssignment.title} /{singleSelectedAssignment.maxScore}
+                    เลือกแล้ว {selectedStudentIds.size} คน · งาน: {singleSelectedAssignment.title} /{singleSelectedAssignment.maxScore} ·
+                    ส่งแล้ว {selectionSubmittedMissingSplit.submittedCount} · ขาดส่ง {selectionSubmittedMissingSplit.missingCount}
                   </span>
                   <Label htmlFor="bulk-grade-score" className="sr-only">
                     คะแนน
@@ -681,8 +739,26 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                   <Button type="button" variant="outline" size="sm" onClick={handleBulkScoreFullMark} disabled={bulkBusy}>
                     เต็มคะแนน
                   </Button>
-                  <Button type="button" size="sm" onClick={handleOpenBulkGradeConfirm} disabled={bulkBusy}>
-                    ให้คะแนนผู้ที่เลือกทั้งหมด
+                  {/* Bulk grading NEVER touches a missing student by
+                      default — both buttons act only on the submitted
+                      subset of the current selection (filterSubmittedStudentIds),
+                      hence both disabled once that subset is empty. */}
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleOpenBulkGradeConfirm}
+                    disabled={bulkBusy || selectionSubmittedMissingSplit.submittedCount === 0}
+                  >
+                    ให้คะแนนคนที่ส่งแล้ว
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleBulkGradeSubmittedFullMarks}
+                    disabled={bulkBusy || selectionSubmittedMissingSplit.submittedCount === 0}
+                  >
+                    เต็มคะแนนคนที่ส่งแล้ว
                   </Button>
                   {bulkScoreError && <span className="text-destructive">{bulkScoreError}</span>}
                 </div>
@@ -757,10 +833,14 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                                   label: 'เลือกทั้งคอลัมน์',
                                   onSelect: () => toggleAssignmentSelected(assignment.id),
                                 },
-                                // The "ทั้งห้อง" quick action shown here always
-                                // matches the currently active mode — never a
-                                // status/scoring shortcut that belongs to a
-                                // different mode than what's on screen.
+                                // The "ทั้งห้อง" STATUS quick actions shown
+                                // here always match the currently active
+                                // ส่งแล้ว/ขาดส่ง mode — never a status
+                                // shortcut that belongs to a different mode
+                                // than what's on screen. The 2 GRADING
+                                // shortcuts below are mode-independent
+                                // (grading is never tied to a mode) and
+                                // always skip missing students by default.
                                 ...(mode === 'submitted'
                                   ? [
                                       {
@@ -781,22 +861,18 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                                       },
                                     ]
                                   : []),
-                                ...(mode === 'score'
-                                  ? [
-                                      {
-                                        key: 'grade-classroom',
-                                        label: 'ให้คะแนนทั้งห้อง',
-                                        disabled: bulkBusy,
-                                        onSelect: () => handleGradeWholeClassroom(assignment),
-                                      },
-                                      {
-                                        key: 'grade-classroom-full',
-                                        label: 'เต็มคะแนนทั้งห้อง',
-                                        disabled: bulkBusy,
-                                        onSelect: () => handleGradeWholeClassroomFullMarks(assignment),
-                                      },
-                                    ]
-                                  : []),
+                                {
+                                  key: 'grade-classroom',
+                                  label: 'ให้คะแนนทั้งห้อง',
+                                  disabled: bulkBusy,
+                                  onSelect: () => handleGradeWholeClassroom(assignment),
+                                },
+                                {
+                                  key: 'grade-classroom-full',
+                                  label: 'เต็มคะแนนคนที่ส่งแล้วทั้งห้อง',
+                                  disabled: bulkBusy,
+                                  onSelect: () => handleGradeWholeClassroomFullMarks(assignment),
+                                },
                                 {
                                   key: 'archive',
                                   label: 'เก็บถาวรงาน',
@@ -850,16 +926,16 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                           </td>
                           {visibleAssignments.map((assignment) => {
                             const submission = submissionsByAssignment[assignment.id]?.[student.id]
-                            const display = computeModeCellDisplay(mode, submission?.status ?? 'not_submitted', submission?.score ?? null)
+                            const display = computeCellDisplay(submission?.status ?? 'not_submitted', submission?.score ?? null)
                             return (
                               <td key={assignment.id} className="px-2 py-1.5 text-center">
                                 <button
                                   type="button"
                                   onClick={() => openTargetDialog(assignment, student)}
-                                  title={modeCellTitle(display)}
+                                  title={cellTitle(display)}
                                   className="inline-flex h-8 min-w-14 items-center justify-center gap-1 rounded-md px-2 text-sm transition-colors hover:bg-accent"
                                 >
-                                  <ModeCellVisual display={display} maxScore={assignment.maxScore} />
+                                  <CellVisual display={display} maxScore={assignment.maxScore} />
                                 </button>
                               </td>
                             )
@@ -1024,47 +1100,36 @@ function SummaryStat({ label, tone }: { label: string; tone: 'warning' | 'succes
 }
 
 /**
- * The tooltip text for one cell under the active mode — reads "ไม่ตรง
- * กับโหมดนี้" (does not match this mode) for a blank cell, so a teacher
- * hovering a non-matching cell understands why it's empty rather than
- * assuming it means "no data at all."
+ * The tooltip text for ONE cell — the same regardless of the active
+ * mode, since a cell's content never changes across modes. A submitted
+ * cell distinguishes "ยังไม่มีคะแนน" (score still null) from an actual
+ * score so hovering never implies a 0 that was never entered.
  */
-function modeCellTitle(display: ModeCellDisplay): string {
-  if (display.kind === 'submitted') return 'ส่งแล้ว'
+function cellTitle(display: CellDisplay): string {
   if (display.kind === 'missing') return 'ขาดส่ง'
-  if (display.kind === 'score') return display.score === null ? 'ยังไม่มีคะแนน' : `คะแนน ${display.score}`
-  return 'ไม่ตรงกับโหมดนี้'
+  return display.score === null ? 'ส่งแล้ว — ยังไม่มีคะแนน' : `ส่งแล้ว — คะแนน ${display.score}`
 }
 
 /**
- * Exactly what the current mode says a cell should show — nothing else,
- * and NOTHING VISIBLE at all when there's nothing to say. A cell that
- * does not match the active mode (`kind: 'blank'`) — and, in ให้คะแนน
- * mode, a cell with no score yet — renders a truly EMPTY cell (`null`),
- * never a "—" placeholder: a "—" reads as its own third visual state,
- * which is exactly the confusion this avoids. This is the visual half
- * of the bug fix (computeModeCellDisplay is the logic half) — a red
- * "ขาดส่ง" tag can never appear while viewing "ส่งแล้ว" mode, and a green
- * ✓ can never appear while viewing "ขาดส่ง" mode. The 3 modes stay
- * visually independent: "ส่งแล้ว" mode shows ONLY ✓ or empty, "ขาดส่ง"
- * mode shows ONLY ขาดส่ง or empty, "ให้คะแนน" mode shows ONLY a numeric
- * score (e.g. "8/10", "0/10") or empty.
+ * ONE cell rendering, used by every mode — the ONE master matrix's own
+ * visual half (computeCellDisplay is the logic half). A missing cell
+ * (explicit 'missing', explicit 'not_submitted', or no submission row at
+ * all) always shows red "ขาดส่ง" and nothing else — no score field
+ * exists to show. A submitted cell always shows the green ✓ PLUS its
+ * score: `null` (no score entered yet) renders as the placeholder "—",
+ * and an explicit `0` renders as the literal "0/{maxScore}" — the two
+ * are never conflated into the same visual.
  */
-function ModeCellVisual({ display, maxScore }: { display: ModeCellDisplay; maxScore: number }) {
-  if (display.kind === 'submitted') {
-    return <CheckCircle2 className="size-4 text-success" />
-  }
+function CellVisual({ display, maxScore }: { display: CellDisplay; maxScore: number }) {
   if (display.kind === 'missing') {
     return <span className="text-xs font-medium text-destructive">ขาดส่ง</span>
   }
-  if (display.kind === 'score') {
-    if (display.score === null) return null
-    return (
-      <span className="inline-flex items-center gap-1 font-semibold text-success">
-        <Check className="size-3.5" />
-        {display.score}/{maxScore}
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <CheckCircle2 className="size-4 shrink-0 text-success" />
+      <span className={cn('text-xs font-medium', display.score === null ? 'text-muted-foreground' : 'text-success')}>
+        {display.score === null ? '—' : `${display.score}/${maxScore}`}
       </span>
-    )
-  }
-  return null
+    </span>
+  )
 }

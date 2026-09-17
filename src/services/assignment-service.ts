@@ -1002,44 +1002,40 @@ export function isSubmissionCellGradable(state: SubmissionCellState): boolean {
   return state === 'submitted' || state === 'graded'
 }
 
-export type SubmissionCheckMode = 'all' | 'submitted' | 'missing' | 'score'
+export type SubmissionCheckMode = 'all' | 'submitted' | 'missing'
 
 /**
- * The 4 modes the ตรวจงานและคะแนน matrix supports. ทั้งหมด (the
- * default) is the full classroom overview — every student, every
- * assignment, each cell classified as exactly ✓ (submitted) or ขาดส่ง
- * (not submitted — see isMissingStatus's own doc comment for exactly
- * what counts), never blank: this mode never hides a no-record cell,
- * it reinterprets it. ส่งแล้ว/ขาดส่ง narrow the table to one concept
- * each (a non-matching cell renders blank in these two, never the other
- * mode's status — that mismatch, row-level filtering combined with
- * full-state cell rendering, was an earlier bug this design already
- * fixed and continues to guard against), and ให้คะแนน narrows it to
- * score-only.
+ * The 3 modes the ตรวจงานและคะแนน matrix supports — ONE master matrix,
+ * where EVERY mode renders the exact same cell content (submission
+ * status AND score together, via computeCellDisplay); modes differ
+ * ONLY in which student ROWS are visible, never in what a visible cell
+ * shows. ทั้งหมด (the default) is the full classroom overview — every
+ * student, every assignment. ส่งแล้ว/ขาดส่ง narrow the ROWS to students
+ * with at least one matching assignment in scope — they are filters on
+ * the SAME matrix, never a separate status-only or score-only view.
+ * There is no fourth "ให้คะแนน"/score-only mode: grading always happens
+ * in place, on whichever rows are currently visible, via the per-cell
+ * dialog or the bulk grading bar — never by navigating to a page that
+ * hides submission status.
  */
 export const SUBMISSION_CHECK_MODES: { key: SubmissionCheckMode; label: string }[] = [
   { key: 'all', label: 'ทั้งหมด' },
   { key: 'submitted', label: 'ส่งแล้ว' },
   { key: 'missing', label: 'ขาดส่ง' },
-  { key: 'score', label: 'ให้คะแนน' },
 ]
 
-/** Counter copy reads slightly differently from the mode's own toggle
- * label ("ให้คะแนน" the mode vs. "ให้คะแนนแล้ว" the count of
- * already-scored items) — kept as its own map so the two names never
- * drift out of sync with each other. ทั้งหมด mode has no entry here: it
- * shows its own combined ส่งแล้ว/ขาดส่ง/expected-total summary instead
- * of a single count — see SubmissionCheckTab's own rendering. */
+/** Counter copy for the 2 row-narrowing modes — ทั้งหมด has no entry
+ * here: it shows its own combined ส่งแล้ว/ขาดส่ง/expected-total summary
+ * instead of a single count — see SubmissionCheckTab's own rendering. */
 export const SUBMISSION_CHECK_MODE_COUNT_LABEL: Record<Exclude<SubmissionCheckMode, 'all'>, string> = {
   submitted: 'ส่งแล้ว',
   missing: 'ขาดส่ง',
-  score: 'ให้คะแนนแล้ว',
 }
 
-/** A submitted OR late status counts as "ส่งแล้ว" for mode purposes,
- * independent of whether it has been scored yet — the exact same
- * grouping computeSubmissionCellState already uses for its own
- * 'submitted' cell state. */
+/** A submitted OR late status counts as "ส่งแล้ว", independent of
+ * whether it has been scored yet — the exact same grouping
+ * computeSubmissionCellState already uses for its own 'submitted' cell
+ * state. */
 export function isSubmittedStatus(status: SubmissionStatus): boolean {
   return status === 'submitted' || status === 'late'
 }
@@ -1063,39 +1059,34 @@ export function isMissingStatus(status: SubmissionStatus): boolean {
   return !isSubmittedStatus(status)
 }
 
-export type ModeCellDisplay = { kind: 'submitted' } | { kind: 'missing' } | { kind: 'score'; score: number | null } | { kind: 'blank' }
+export type CellDisplay = { kind: 'submitted'; score: number | null } | { kind: 'missing' }
 
 /**
- * The single source of truth for what one (assignment, student) cell
- * shows under the current mode. ทั้งหมด mode is exhaustive: every cell
- * is classified as exactly 'submitted' or 'missing', NEVER 'blank' — a
- * no-record cell renders as ขาดส่ง here, not hidden and not "—".
- * ส่งแล้ว/ขาดส่ง mode render 'blank' for a non-matching cell, never a
- * status borrowed from a different mode. Submission and score stay
- * fully independent: 'score' mode never looks at `status` at all, and
- * the other 3 modes never look at `score` — a submitted-but-ungraded
- * cell is 'submitted' under 'ส่งแล้ว'/'ทั้งหมด' mode and
- * `{ kind: 'score', score: null }` (rendered empty, never 0) under
- * 'ให้คะแนน' mode, never conflated.
+ * The single source of truth for what ONE (assignment, student) cell
+ * shows — the same for every mode (ทั้งหมด/ส่งแล้ว/ขาดส่ง only ever
+ * change which rows are visible, never what a visible cell shows, so
+ * there is exactly one rendering to reason about, not one per mode). A
+ * submitted/late cell always carries its score alongside the ✓ — `null`
+ * (no score entered yet) and `0` (an explicit zero) are two distinct
+ * values, never conflated: the caller renders `null` as an empty
+ * placeholder ("—") and `0` as the literal score "0". A missing cell
+ * (explicit 'missing', explicit 'not_submitted', or no submission row
+ * at all) always shows ขาดส่ง and carries NO score field — there is no
+ * score to show or enter for work that was never submitted.
  */
-export function computeModeCellDisplay(mode: SubmissionCheckMode, status: SubmissionStatus, score: number | null): ModeCellDisplay {
-  if (mode === 'score') return { kind: 'score', score }
-  if (mode === 'all') return isSubmittedStatus(status) ? { kind: 'submitted' } : { kind: 'missing' }
-  if (mode === 'submitted') return isSubmittedStatus(status) ? { kind: 'submitted' } : { kind: 'blank' }
-  return isMissingStatus(status) ? { kind: 'missing' } : { kind: 'blank' }
+export function computeCellDisplay(status: SubmissionStatus, score: number | null): CellDisplay {
+  return isSubmittedStatus(status) ? { kind: 'submitted', score } : { kind: 'missing' }
 }
 
 /**
- * Which students appear as rows under the current mode. 'score' and
- * 'all' mode never filter — ทั้งหมด is the full classroom overview by
- * definition, and grading needs the full roster in front of the
- * teacher, not just already-scored/already-submitted students.
- * 'submitted'/'missing' mode keeps only students with AT LEAST ONE
- * matching cell among `assignmentIds` (the assignments currently
- * shown/searched) — a student with zero submitted work in scope never
- * appears under "ส่งแล้ว" mode, and (since isMissingStatus now covers
- * the "no row" case too) a student with 100% submitted work is the ONLY
- * kind of student who never appears under "ขาดส่ง" mode.
+ * Which students appear as rows under the current mode. 'all' never
+ * filters — it's the full classroom overview by definition.
+ * 'submitted'/'missing' keep only students with AT LEAST ONE matching
+ * cell among `assignmentIds` (the assignments currently shown/searched)
+ * — a student with zero submitted work in scope never appears under
+ * "ส่งแล้ว" mode, and (since isMissingStatus covers the "no row" case
+ * too) a student with 100% submitted work is the ONLY kind of student
+ * who never appears under "ขาดส่ง" mode.
  */
 export function filterStudentsByCheckMode<T extends { id: string }>(
   students: T[],
@@ -1103,7 +1094,7 @@ export function filterStudentsByCheckMode<T extends { id: string }>(
   submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
   mode: SubmissionCheckMode,
 ): T[] {
-  if (mode === 'score' || mode === 'all') return [...students]
+  if (mode === 'all') return [...students]
 
   return students.filter((student) =>
     assignmentIds.some((assignmentId) => {
@@ -1114,18 +1105,17 @@ export function filterStudentsByCheckMode<T extends { id: string }>(
 }
 
 /**
- * The top counter's number for the 3 non-overview modes — an ITEM count
- * (one (student, assignment) cell = one item: one assignment
- * submission, or one scored item), never a student headcount. Always
- * computed over the FULL `studentIds` × `assignmentIds` (the
- * shown/searched columns), regardless of the current row filter above,
- * so the number stays mathematically honest even though
- * 'submitted'/'missing' mode hides some rows — e.g. "ส่งแล้ว 198
- * รายการ" counts every submitted CELL, not every student who has
- * submitted at least one thing. ทั้งหมด mode uses this same function
- * (called once with 'submitted' and once with 'missing') plus
- * computeExpectedItemCount for its own combined summary, rather than a
- * single number — see SubmissionCheckTab's own rendering.
+ * The top counter's number for the 2 row-narrowing modes — an ITEM
+ * count (one (student, assignment) cell = one item), never a student
+ * headcount. Always computed over the FULL `studentIds` ×
+ * `assignmentIds` (the shown/searched columns), regardless of the
+ * current row filter above, so the number stays mathematically honest
+ * even though the mode hides some rows — e.g. "ส่งแล้ว 198 รายการ"
+ * counts every submitted CELL, not every student who has submitted at
+ * least one thing. ทั้งหมด mode uses this same function (called once
+ * with 'submitted' and once with 'missing') plus computeExpectedItemCount
+ * for its own combined summary, rather than a single number — see
+ * SubmissionCheckTab's own rendering.
  */
 export function computeModeItemCount(
   studentIds: string[],
@@ -1138,10 +1128,8 @@ export function computeModeItemCount(
     for (const studentId of studentIds) {
       const submission = submissionsByAssignment[assignmentId]?.[studentId]
       const status = submission?.status ?? 'not_submitted'
-      const score = submission?.score ?? null
       if (mode === 'submitted' && isSubmittedStatus(status)) count += 1
       else if (mode === 'missing' && isMissingStatus(status)) count += 1
-      else if (mode === 'score' && score !== null) count += 1
     }
   }
   return count
@@ -1159,6 +1147,51 @@ export function computeModeItemCount(
  */
 export function computeExpectedItemCount(studentIds: string[], assignmentIds: string[]): number {
   return studentIds.length * assignmentIds.length
+}
+
+/**
+ * Splits a selection of `studentIds` into how many have actually
+ * submitted THIS ONE assignment vs. how many haven't — the "27 ส่งแล้ว /
+ * 5 ขาดส่ง" readout the bulk grading bar shows once a teacher selects an
+ * assignment column plus some students (or the whole classroom). Same
+ * isSubmittedStatus/isMissingStatus semantics as everywhere else in this
+ * file — a student with no submission row for this assignment counts
+ * toward missingCount, never silently dropped from the split.
+ */
+export function computeSubmittedMissingSplit(
+  studentIds: string[],
+  assignmentId: string,
+  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
+): { submittedCount: number; missingCount: number } {
+  let submittedCount = 0
+  let missingCount = 0
+  for (const studentId of studentIds) {
+    const status = submissionsByAssignment[assignmentId]?.[studentId]?.status ?? 'not_submitted'
+    if (isSubmittedStatus(status)) submittedCount += 1
+    else missingCount += 1
+  }
+  return { submittedCount, missingCount }
+}
+
+/**
+ * Narrows a selection of `studentIds` down to only those who have
+ * actually submitted THIS ONE assignment. This is the ONE gate every
+ * bulk grading write (both "ให้คะแนนคนที่ส่งแล้ว" and
+ * "เต็มคะแนนคนที่ส่งแล้ว") goes through before building its update list —
+ * so a missing student is never silently scored (0, full marks, or
+ * otherwise) just because they were part of a wider selection like
+ * "select ทั้งห้อง." There is no bulk grading code path that skips this
+ * filter; skipping missing students is the default and only behavior.
+ */
+export function filterSubmittedStudentIds(
+  studentIds: string[],
+  assignmentId: string,
+  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
+): string[] {
+  return studentIds.filter((studentId) => {
+    const status = submissionsByAssignment[assignmentId]?.[studentId]?.status ?? 'not_submitted'
+    return isSubmittedStatus(status)
+  })
 }
 
 /** Narrows the assignment COLUMNS shown — the tab's optional "search
