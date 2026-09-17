@@ -261,10 +261,21 @@ describe('SubmissionCheckTab — bulk actions never send one request per student
     expect(fn).toContain('runBulkStatusUpdate(Array.from(selectedStudentIds), Array.from(selectedAssignmentIds), status)')
   })
 
-  it('partial failures update local state for only the NON-failed items — a failed pair is never optimistically shown as changed', () => {
+  it('REGRESSION — revalidates the matrix from the real source of truth (await refresh()) after every bulk status save — never just an optimistic local patch, matching the same pattern runBulkScoreUpdate already uses', () => {
     const fn = source.slice(source.indexOf('async function runBulkStatusUpdate'), source.indexOf('function handleColumnQuickAction'))
-    expect(fn).toContain('const failedKeys = new Set(result.failures.map(')
-    expect(fn).toContain('if (failedKeys.has(')
+    const resultIndex = fn.indexOf('const result = await bulkMarkSubmissionStatus(updates)')
+    const refreshIndex = fn.indexOf('await refresh()')
+    expect(resultIndex).toBeGreaterThan(-1)
+    expect(refreshIndex).toBeGreaterThan(resultIndex)
+  })
+
+  it('REGRESSION — reports a concise, honest result after every bulk status save: changed/unchanged/failed counts, with every failure named — set into bulkStatusResult, a persistent panel, not just a toast', () => {
+    const fn = source.slice(source.indexOf('async function runBulkStatusUpdate'), source.indexOf('function handleColumnQuickAction'))
+    expect(fn).toContain('setBulkStatusResult({')
+    expect(fn).toContain('changedCount: result.changedCount')
+    expect(fn).toContain('unchangedCount: result.unchangedCount')
+    expect(fn).toContain('failedCount: result.failedCount')
+    expect(fn).toContain('failures: result.failures.map((f) =>')
   })
 
   it('reports partial failures to the teacher via toast, distinct from the all-success message', () => {
@@ -425,14 +436,10 @@ describe('SubmissionCheckTab — green ✓ IS "ส่งแล้ว": no separa
     expect(source).not.toContain('runBulkReviewUpdate')
   })
 
-  it('bulk STATUS actions only ever write `status` — the optimistic update spreads `existing` and overrides only `status`; the sole `score:` reference left is the untouched `null` default on a brand-new local record, and setSubmissionScore is never called from that path', () => {
+  it('REGRESSION — bulk STATUS actions only ever write `status`: buildBulkSubmissionStatusUpdates\'s own update shape carries no score field (see submission-bulk-service.test.ts), and runBulkStatusUpdate itself never calls setSubmissionScore or references a `score:` field at all — a bulk "ส่งแล้ว" can never create a score and a bulk "ขาดส่ง" can never force a score of 0', () => {
     const fn = source.slice(source.indexOf('async function runBulkStatusUpdate'), source.indexOf('function handleColumnQuickAction'))
-    const scoreMatches = fn.match(/score:/g) ?? []
-    const scoreNullMatches = fn.match(/score: null/g) ?? []
-    expect(scoreMatches.length).toBeGreaterThan(0)
-    expect(scoreMatches.length).toBe(scoreNullMatches.length)
-    expect(fn).toContain('{ ...existing, status: update.status }')
     expect(fn).not.toContain('setSubmissionScore')
+    expect(fn).not.toMatch(/score:/)
   })
 })
 
@@ -642,7 +649,7 @@ describe('SubmissionCheckTab — assignment header menu: ให้คะแน�
   })
 })
 
-describe('SubmissionCheckTab — the ONE bulk-status action button matches the active mode exactly', () => {
+describe('SubmissionCheckTab — the ONE bulk-status action button matches ส่งแล้ว/ขาดส่ง mode exactly; ทั้งหมด mode gets its OWN 2-button "สถานะงาน" group', () => {
   const source = readSource()
 
   it('MODE_BULK_STATUS_ACTION maps ส่งแล้ว mode to a "submitted" write and ขาดส่ง mode to a "missing" write — no multi-button status picker in the bulk bar', () => {
@@ -650,7 +657,7 @@ describe('SubmissionCheckTab — the ONE bulk-status action button matches the a
     expect(source).toContain("missing: { status: 'missing', label: 'ทำเครื่องหมายว่าขาดส่ง' }")
   })
 
-  it('the bulk-status button renders only in ส่งแล้ว/ขาดส่ง mode — never in ให้คะแนน mode', () => {
+  it('the single MODE_BULK_STATUS_ACTION button renders only in ส่งแล้ว/ขาดส่ง mode', () => {
     expect(source).toContain("(mode === 'submitted' || mode === 'missing') &&")
     expect(source).toContain('onClick={() => handleSelectionBulkAction(MODE_BULK_STATUS_ACTION[mode].status)}')
   })
@@ -661,5 +668,75 @@ describe('SubmissionCheckTab — the ONE bulk-status action button matches the a
       source.indexOf('{bulkGradeFailures.length > 0 &&'),
     )
     expect(selectionBarBlock).not.toContain('STATUS_ACTIONS.map((action) =>')
+  })
+})
+
+describe('SubmissionCheckTab — REGRESSION FIX: ทั้งหมด mode\'s bulk bar shows BOTH a "สถานะงาน" group AND the existing "คะแนน" group, clearly separated', () => {
+  const source = readSource()
+  const selectionBarBlock = source.slice(
+    source.indexOf('{(selectedStudentIds.size > 0 || selectedAssignmentIds.size > 0) && ('),
+    source.indexOf('{/* The concise, honest result of the LAST bulk status save'),
+  )
+
+  it('the bug: previously ทั้งหมด mode\'s bulk bar exposed the คะแนน (grading) group only — the fix adds a "สถานะงาน:" group with ส่งแล้ว/ขาดส่ง buttons, gated the same way (mode === \'all\')', () => {
+    expect(selectionBarBlock).toContain("{mode === 'all' && selectionCellCount > 0 && (")
+    expect(selectionBarBlock).toContain('สถานะงาน:')
+    expect(selectionBarBlock).toContain('คะแนน:')
+  })
+
+  it('REGRESSION — the "สถานะงาน" group\'s 2 buttons call the SAME handleSelectionBulkAction the ส่งแล้ว/ขาดส่ง mode\'s own single button uses — no separate/duplicated write path — one for \'submitted\', one for \'missing\'', () => {
+    const statusGroup = selectionBarBlock.slice(
+      selectionBarBlock.indexOf("{mode === 'all' && selectionCellCount > 0 && ("),
+      selectionBarBlock.indexOf("{/* The bulk GRADING bar"),
+    )
+    expect(statusGroup).toContain("onClick={() => handleSelectionBulkAction('submitted')}")
+    expect(statusGroup).toContain("onClick={() => handleSelectionBulkAction('missing')}")
+    expect(statusGroup).toContain('ส่งแล้ว')
+    expect(statusGroup).toContain('ขาดส่ง')
+  })
+
+  it('REGRESSION — the "สถานะงาน" group works for MULTIPLE selected assignments at once — it is gated on selectionCellCount (studentCount × assignmentCount) alone, never on singleSelectedAssignment the way the คะแนน group is', () => {
+    const statusGroup = selectionBarBlock.slice(
+      selectionBarBlock.indexOf("{mode === 'all' && selectionCellCount > 0 && ("),
+      selectionBarBlock.indexOf("{/* The bulk GRADING bar"),
+    )
+    expect(statusGroup).not.toContain('singleSelectedAssignment')
+  })
+
+  it('REGRESSION — existing grading bulk actions still work: the "คะแนน" group (score input, เต็มคะแนน, ให้คะแนนคนที่ส่งแล้ว) is untouched, still gated behind mode === \'all\' && singleSelectedAssignment, coexisting with the new สถานะงาน group above it', () => {
+    expect(selectionBarBlock).toContain("{mode === 'all' && singleSelectedAssignment && selectedStudentIds.size > 0 && (")
+    expect(selectionBarBlock).toContain('onClick={handleBulkScoreFullMark}')
+    expect(selectionBarBlock).toContain('onClick={handleOpenBulkGradeConfirm}')
+    expect(selectionBarBlock).toContain('onClick={handleBulkGradeSubmittedFullMarks}')
+  })
+
+  it('REGRESSION — the สถานะงาน group never appears in ส่งแล้ว/ขาดส่ง mode (those keep their own single-button behavior, unchanged) — it is exclusively gated behind mode === \'all\'', () => {
+    const statusGroupGate = selectionBarBlock.match(/mode === 'all' && selectionCellCount > 0/g) ?? []
+    expect(statusGroupGate.length).toBeGreaterThan(0)
+  })
+})
+
+describe('SubmissionCheckTab — REGRESSION: the concise, persistent bulk-status result panel (not just a toast)', () => {
+  const source = readSource()
+
+  it('renders exactly the 3-line result format the task requires: "บันทึกสถานะสำเร็จ N รายการ" / "ไม่เปลี่ยนแปลง N" / "ไม่สำเร็จ N"', () => {
+    expect(source).toContain('บันทึกสถานะสำเร็จ {bulkStatusResult.changedCount} รายการ')
+    expect(source).toContain('ไม่เปลี่ยนแปลง {bulkStatusResult.unchangedCount}')
+    expect(source).toContain('ไม่สำเร็จ {bulkStatusResult.failedCount}')
+  })
+
+  it('is rendered only when bulkStatusResult is set, and is dismissible — never a transient toast the teacher could miss', () => {
+    expect(source).toContain('{bulkStatusResult && (')
+    expect(source).toContain('onClick={() => setBulkStatusResult(null)}')
+  })
+
+  it('REGRESSION — partial failures are shown honestly, named per student AND per assignment (never silently dropped), only when the failures list is non-empty', () => {
+    expect(source).toContain('{bulkStatusResult.failures.length > 0 && (')
+    expect(source).toContain('{f.studentName} · {f.assignmentTitle}: {f.message}')
+  })
+
+  it('is reset to null at the start of every runBulkStatusUpdate call — a stale result from a previous bulk action never lingers on screen for a new one', () => {
+    const fn = source.slice(source.indexOf('async function runBulkStatusUpdate'), source.indexOf('function handleColumnQuickAction'))
+    expect(fn).toContain('setBulkStatusResult(null)')
   })
 })

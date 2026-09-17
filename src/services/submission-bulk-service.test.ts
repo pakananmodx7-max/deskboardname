@@ -37,6 +37,14 @@ describe('buildBulkSubmissionStatusUpdates — the "N นักเรียน �
     expect(buildBulkSubmissionStatusUpdates([], ['a1'], 'submitted')).toEqual([])
     expect(buildBulkSubmissionStatusUpdates(['s1'], [], 'submitted')).toEqual([])
   })
+
+  it('REGRESSION — the exact ทั้งหมด-mode bulk bar examples from the task spec: 8 students × 1 assignment = 8, 8 students × 3 assignments = 24, 32 students × 3 assignments = 96', () => {
+    const students8 = Array.from({ length: 8 }, (_, i) => `s${i}`)
+    const students32 = Array.from({ length: 32 }, (_, i) => `s${i}`)
+    expect(buildBulkSubmissionStatusUpdates(students8, ['a0'], 'submitted')).toHaveLength(8)
+    expect(buildBulkSubmissionStatusUpdates(students8, ['a0', 'a1', 'a2'], 'submitted')).toHaveLength(24)
+    expect(buildBulkSubmissionStatusUpdates(students32, ['a0', 'a1', 'a2'], 'submitted')).toHaveLength(96)
+  })
 })
 
 describe('chunkBulkSubmissionStatusUpdates — >50 updates are chunked safely', () => {
@@ -67,6 +75,15 @@ describe('chunkBulkSubmissionStatusUpdates — >50 updates are chunked safely', 
 
   it('an empty list chunks to zero chunks', () => {
     expect(chunkBulkSubmissionStatusUpdates([])).toEqual([])
+  })
+
+  it('REGRESSION — the exact task-spec example end-to-end: 32 students × 3 assignments = 96 updates chunks as [50, 46], built via buildBulkSubmissionStatusUpdates then chunked — the teacher still only triggers ONE bulk action', () => {
+    const students32 = Array.from({ length: 32 }, (_, i) => `s${i}`)
+    const updates = buildBulkSubmissionStatusUpdates(students32, ['a0', 'a1', 'a2'], 'submitted')
+    expect(updates).toHaveLength(96)
+    const chunks = chunkBulkSubmissionStatusUpdates(updates)
+    expect(chunks.map((c) => c.length)).toEqual([50, 46])
+    expect(chunks.flat()).toEqual(updates)
   })
 
   it('respects a custom chunkSize when given', () => {

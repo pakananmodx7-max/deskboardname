@@ -157,6 +157,12 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
     null,
   )
   const [bulkGradeFailures, setBulkGradeFailures] = useState<{ studentName: string; message: string }[]>([])
+  const [bulkStatusResult, setBulkStatusResult] = useState<{
+    changedCount: number
+    unchangedCount: number
+    failedCount: number
+    failures: { studentName: string; assignmentTitle: string; message: string }[]
+  } | null>(null)
 
   const [createOpen, setCreateOpen] = useState(false)
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null)
@@ -301,42 +307,49 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   /**
    * The one place any bulk status change actually runs — column quick
    * actions ("ส่งแล้วทั้งห้อง"/"ขาดส่งทั้งห้อง") and the multi-select bulk
-   * bar both call this with their own (studentIds, assignmentIds) pair.
-   * Applies the SAME optimistic local update to every update that did
-   * NOT come back as a failure, so the matrix reflects the real result
-   * (partial failures included) without a full refetch.
+   * bar's own "สถานะงาน" group (available in EVERY mode, not just
+   * ส่งแล้ว/ขาดส่ง) both call this with their own (studentIds,
+   * assignmentIds) pair. Builds the FULL (student × assignment) cross
+   * product regardless of how many assignments are selected — "8
+   * นักเรียน × 3 งาน" becomes 24 updates in one call, chunked internally
+   * by bulkMarkSubmissionStatus at its own max batch size, never one
+   * request per student. Only ever writes `status` — never touches
+   * `score`, so a bulk "ส่งแล้ว" can never create a score and a bulk
+   * "ขาดส่ง" can never create/force a score of 0. RE-FETCHES the matrix
+   * from the real source of truth after the write (the same pattern
+   * runBulkScoreUpdate already uses) so the teacher always sees the
+   * actual server state, then reports a concise, honest result —
+   * changed/unchanged/failed counts, with every failure named — via
+   * bulkStatusResult, a persistent dismissible panel, not just a toast.
    */
   async function runBulkStatusUpdate(studentIds: string[], assignmentIds: string[], status: SubmissionStatus) {
     if (studentIds.length === 0 || assignmentIds.length === 0) return
     const updates = buildBulkSubmissionStatusUpdates(studentIds, assignmentIds, status)
     setBulkBusy(true)
+    setBulkStatusResult(null)
     try {
       const result = await bulkMarkSubmissionStatus(updates)
-      const failedKeys = new Set(result.failures.map((f) => `${f.assignmentId}:${f.studentId}`))
-      setSubmissionsByAssignment((prev) => {
-        const next = { ...prev }
-        for (const update of updates) {
-          if (failedKeys.has(`${update.assignmentId}:${update.studentId}`)) continue
-          const existing = next[update.assignmentId]?.[update.studentId] ?? {
-            studentId: update.studentId,
-            status: 'not_submitted' as const,
-            score: null,
-            note: null,
+      await refresh()
+
+      setBulkStatusResult({
+        changedCount: result.changedCount,
+        unchangedCount: result.unchangedCount,
+        failedCount: result.failedCount,
+        failures: result.failures.map((f) => {
+          const student = roster.find((s) => s.id === f.studentId)
+          const assignment = assignments.find((a) => a.id === f.assignmentId)
+          return {
+            studentName: student ? studentDisplayName(student) : f.studentId,
+            assignmentTitle: assignment ? assignment.title : f.assignmentId,
+            message: f.message,
           }
-          next[update.assignmentId] = {
-            ...next[update.assignmentId],
-            [update.studentId]: { ...existing, status: update.status },
-          }
-        }
-        return next
+        }),
       })
 
       if (result.failedCount === 0) {
-        toast(`อัปเดตสถานะ ${result.requestedCount} รายการแล้ว`)
+        toast(`บันทึกสถานะสำเร็จ ${result.changedCount} รายการ`)
       } else {
-        toast(
-          `อัปเดตสำเร็จ ${result.requestedCount - result.failedCount}/${result.requestedCount} รายการ — ไม่สำเร็จ ${result.failedCount} รายการ`,
-        )
+        toast(`บันทึกสถานะสำเร็จ ${result.changedCount} รายการ — ไม่สำเร็จ ${result.failedCount} รายการ`)
       }
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถอัปเดตสถานะได้'))
@@ -707,14 +720,49 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                 </div>
               </div>
 
+              {/* ทั้งหมด mode's "สถานะงาน" group — the fix for this bug:
+                  ทั้งหมด previously exposed the คะแนน (grading) group only,
+                  with no way to bulk-mark submission status without first
+                  switching to ส่งแล้ว/ขาดส่ง mode. Works across MULTIPLE
+                  selected assignments at once (the SAME cross product
+                  handleSelectionBulkAction already builds for ส่งแล้ว/
+                  ขาดส่ง mode's own single button) — "8 นักเรียน × 3 งาน"
+                  becomes one 24-item bulk write, never one request per
+                  assignment. Marking "✓ ส่งแล้ว" only ever writes
+                  `status`, never a score; marking "ขาดส่ง" never creates
+                  or forces a score of 0 — see runBulkStatusUpdate. */}
+              {mode === 'all' && selectionCellCount > 0 && (
+                <div className="flex flex-wrap items-center gap-2 border-t border-primary/20 pt-2">
+                  <span className="shrink-0 text-xs font-semibold text-muted-foreground">สถานะงาน:</span>
+                  <Button type="button" size="sm" disabled={bulkBusy} onClick={() => handleSelectionBulkAction('submitted')}>
+                    <CheckCircle2 className="size-3.5" />
+                    ส่งแล้ว
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={bulkBusy}
+                    onClick={() => handleSelectionBulkAction('missing')}
+                  >
+                    ขาดส่ง
+                  </Button>
+                </div>
+              )}
+
               {/* The bulk GRADING bar: ทั้งหมด ONLY — ส่งแล้ว/ขาดส่ง are
                   pure, score-free views and must never surface a score
                   input. Shows the submitted/ขาดส่ง split for EXACTLY this
                   selection × this one assignment column, so the teacher
                   sees up front how many of the selected students will
-                  actually be graded. */}
+                  actually be graded. Requires exactly ONE selected
+                  assignment (a score is meaningless without knowing which
+                  assignment's max score it's bounded by) — with multiple
+                  assignments selected, only the "สถานะงาน" group above
+                  applies. */}
               {mode === 'all' && singleSelectedAssignment && selectedStudentIds.size > 0 && (
                 <div className="flex flex-wrap items-center gap-2 border-t border-primary/20 pt-2">
+                  <span className="shrink-0 text-xs font-semibold text-muted-foreground">คะแนน:</span>
                   <span>
                     เลือกแล้ว {selectedStudentIds.size} คน · งาน: {singleSelectedAssignment.title} /{singleSelectedAssignment.maxScore} ·
                     ส่งแล้ว {selectionSubmittedMissingSplit.submittedCount} · ขาดส่ง {selectionSubmittedMissingSplit.missingCount}
@@ -722,7 +770,6 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                   <Label htmlFor="bulk-grade-score" className="sr-only">
                     คะแนน
                   </Label>
-                  <span className="text-muted-foreground">คะแนน:</span>
                   <Input
                     id="bulk-grade-score"
                     type="number"
@@ -762,6 +809,45 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                   </Button>
                   {bulkScoreError && <span className="text-destructive">{bulkScoreError}</span>}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* The concise, honest result of the LAST bulk status save
+              (column quick action or the "สถานะงาน" bulk-bar group) —
+              persistent and dismissible, never just a transient toast,
+              exactly mirroring what the server actually did: how many
+              changed, how many were already that status (unchanged), and
+              how many failed, each failure named. Set fresh (to null)
+              at the start of every runBulkStatusUpdate call, so a stale
+              result from a previous action never lingers on screen. */}
+          {bulkStatusResult && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-0.5">
+                  <p className="font-medium text-success">บันทึกสถานะสำเร็จ {bulkStatusResult.changedCount} รายการ</p>
+                  <p className="text-muted-foreground">ไม่เปลี่ยนแปลง {bulkStatusResult.unchangedCount}</p>
+                  <p className={bulkStatusResult.failedCount > 0 ? 'font-medium text-destructive' : 'text-muted-foreground'}>
+                    ไม่สำเร็จ {bulkStatusResult.failedCount}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBulkStatusResult(null)}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="ปิด"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+              {bulkStatusResult.failures.length > 0 && (
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                  {bulkStatusResult.failures.map((f, i) => (
+                    <li key={i}>
+                      {f.studentName} · {f.assignmentTitle}: {f.message}
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           )}
