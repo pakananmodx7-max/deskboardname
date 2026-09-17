@@ -374,14 +374,22 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
   })
 })
 
-describe('SubmissionCheckTab — exactly 3 modes (ส่งแล้ว/ขาดส่ง/ให้คะแนน), ONE mathematically-honest item counter per mode, no "รอตรวจ"/"ตรวจแล้ว"/awaiting-review bucket anywhere', () => {
+describe('SubmissionCheckTab — exactly 4 modes (ทั้งหมด/ส่งแล้ว/ขาดส่ง/ให้คะแนน), ONE mathematically-honest item counter per mode, no "รอตรวจ"/"ตรวจแล้ว"/awaiting-review bucket anywhere', () => {
   const source = readSource()
 
-  it('renders exactly ONE counter, matching the active mode, built from SUBMISSION_CHECK_MODE_COUNT_LABEL + an ITEM count — never a 3-way split into unrelated buckets', () => {
+  it('renders ONE counter matching the active mode, built from SUBMISSION_CHECK_MODE_COUNT_LABEL + an ITEM count for the 3 narrow modes — never a 3-way split into unrelated buckets', () => {
     expect(source).toContain('label={`${SUBMISSION_CHECK_MODE_COUNT_LABEL[mode]} ${modeItemCount} รายการ`}')
     expect(source).not.toContain('รอตรวจ')
     expect(source).not.toContain('ตรวจแล้ว')
     expect(source).not.toMatch(/tally\.awaitingReview|tally\.checked\b|modeItemCount\.checked/)
+  })
+
+  it('REGRESSION — ทั้งหมด mode renders its OWN combined ส่งแล้ว/ขาดส่ง-vs-expected-total summary, computed from computeModeItemCount(...,\'submitted\')/(...,\'missing\') + computeExpectedItemCount, never the single-mode counter', () => {
+    expect(source).toContain("mode === 'all' ?")
+    expect(source).toContain("computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'submitted')")
+    expect(source).toContain("computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'missing')")
+    expect(source).toContain('computeExpectedItemCount(rosterIds, visibleAssignmentIds)')
+    expect(source).toContain('ส่งแล้ว ${modeSubmittedCount} · ขาดส่ง ${modeMissingCount} จาก ${modeExpectedCount} รายการ')
   })
 
   it('the counter and the row filter both come from the shared pure mode functions, computed over the CURRENTLY VISIBLE (searched) assignment columns', () => {
@@ -394,8 +402,8 @@ describe('SubmissionCheckTab — exactly 3 modes (ส่งแล้ว/ขา�
     expect(source).toContain('onClick={() => setMode(m.key)}')
   })
 
-  it('defaults to ส่งแล้ว mode on first load — the most common "who has turned in work" check', () => {
-    expect(source).toContain("useState<SubmissionCheckMode>('submitted')")
+  it('REGRESSION — defaults to ทั้งหมด mode on first load — the full classroom overview, not a narrowed filter', () => {
+    expect(source).toContain("useState<SubmissionCheckMode>('all')")
   })
 
   it('has an optional assignment search box that only appears once there are enough assignments to make the matrix wide', () => {

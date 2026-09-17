@@ -20,6 +20,7 @@ import {
   SUBMISSION_CHECK_MODE_COUNT_LABEL,
   SUBMISSION_CHECK_MODES,
   archiveAssignment,
+  computeExpectedItemCount,
   computeModeCellDisplay,
   computeModeItemCount,
   computeSubmissionCellState,
@@ -93,24 +94,29 @@ function studentDisplayName(student: ClassroomStudent): string {
  * data as งาน/คะแนน (via getAssignments/getSubmissions) — no new table,
  * no mock data, no invented database status.
  *
- * Exactly 3 MODES (SUBMISSION_CHECK_MODES) — ส่งแล้ว / ขาดส่ง / ให้คะแนน
- * — govern the whole workspace at once: which cells render as matching
- * (computeModeCellDisplay), which students appear as rows
- * (filterStudentsByCheckMode), the top counter (computeModeItemCount),
- * and which bulk action is available. A cell that does not match the
- * active mode's own concept ALWAYS renders a truly EMPTY cell (never a
- * "—" placeholder — that reads as its own third visual state, which is
- * exactly the confusion this avoids), never a status borrowed from a
- * different mode — this is what replaced the old bug where a row kept
- * because ONE assignment matched a filter would still render a
- * DIFFERENT assignment's real (mismatched) state, e.g. a red "ขาดส่ง"
- * cell showing up while looking at "ส่งแล้ว." Submission and score stay
- * fully independent concepts throughout: "ให้คะแนน" mode never shows
- * ✓/ขาดส่ง, only a numeric score or an empty cell, and a submitted-but-
- * ungraded cell is a green ✓ under "ส่งแล้ว" mode and EMPTY (never 0)
- * under "ให้คะแนน" mode. There is no reviewed/checked/awaiting-review mode or
- * state anywhere — never an intermediate holding status between
- * submitted and scored.
+ * Exactly 4 MODES (SUBMISSION_CHECK_MODES) — ทั้งหมด / ส่งแล้ว / ขาดส่ง /
+ * ให้คะแนน, defaulting to ทั้งหมด — govern the whole workspace at once:
+ * which cells render as matching (computeModeCellDisplay), which
+ * students appear as rows (filterStudentsByCheckMode), the top counter
+ * (computeModeItemCount), and which bulk action is available. ทั้งหมด is
+ * the full classroom overview: every student, every assignment, and
+ * every cell resolved to EXACTLY ✓ or ขาดส่ง — a cell with no submission
+ * record at all is not a third "no data" state, it IS ขาดส่ง (the
+ * student has not submitted), so ทั้งหมด mode never renders a blank or
+ * "—" cell. In the two narrower modes (ส่งแล้ว/ขาดส่ง), a cell that does
+ * not match the active mode's own concept ALWAYS renders a truly EMPTY
+ * cell (never a "—" placeholder — that reads as its own third visual
+ * state, which is exactly the confusion this avoids), never a status
+ * borrowed from a different mode — this is what replaced the old bug
+ * where a row kept because ONE assignment matched a filter would still
+ * render a DIFFERENT assignment's real (mismatched) state, e.g. a red
+ * "ขาดส่ง" cell showing up while looking at "ส่งแล้ว." Submission and
+ * score stay fully independent concepts throughout: "ให้คะแนน" mode
+ * never shows ✓/ขาดส่ง, only a numeric score or an empty cell, and a
+ * submitted-but-ungraded cell is a green ✓ under "ส่งแล้ว"/"ทั้งหมด" mode
+ * and EMPTY (never 0) under "ให้คะแนน" mode. There is no
+ * reviewed/checked/awaiting-review mode or state anywhere — never an
+ * intermediate holding status between submitted and scored.
  *
  * "+ สร้างงาน" creates an assignment through the EXACT SAME
  * createAssignment (via AssignmentDialog) the งาน tab uses, then
@@ -140,7 +146,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [mode, setMode] = useState<SubmissionCheckMode>('submitted')
+  const [mode, setMode] = useState<SubmissionCheckMode>('all')
   const [assignmentQuery, setAssignmentQuery] = useState('')
 
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set())
@@ -203,12 +209,19 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   // = one item), computed over the FULL roster regardless of the row
   // filter below, so it stays mathematically honest even once
   // 'submitted'/'missing' mode hides some rows.
-  const modeItemCount = computeModeItemCount(
-    roster.map((s) => s.id),
-    visibleAssignmentIds,
-    submissionsByAssignment,
-    mode,
-  )
+  //
+  // ทั้งหมด has no single count of its own — it's the whole expected
+  // matrix (students × assignments) split into submitted vs. ขาดส่ง, so
+  // its summary combines two computeModeItemCount calls with
+  // computeExpectedItemCount rather than taking one mode-specific count.
+  const rosterIds = roster.map((s) => s.id)
+  const modeItemCount =
+    mode === 'all' ? 0 : computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, mode)
+  const modeSubmittedCount =
+    mode === 'all' ? computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'submitted') : 0
+  const modeMissingCount =
+    mode === 'all' ? computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'missing') : 0
+  const modeExpectedCount = mode === 'all' ? computeExpectedItemCount(rosterIds, visibleAssignmentIds) : 0
   const filteredRoster = filterStudentsByCheckMode(roster, visibleAssignmentIds, submissionsByAssignment, mode)
 
   const rosterKey = roster.map((s) => s.id).join(',')
@@ -564,8 +577,21 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
           {/* ONE counter, matching the active mode exactly — an ITEM count
               (assignment submissions, or scored items), never a student
               headcount, so the number is always mathematically honest
-              regardless of how many rows the mode below is hiding. */}
-          <SummaryStat label={`${SUBMISSION_CHECK_MODE_COUNT_LABEL[mode]} ${modeItemCount} รายการ`} tone={mode === 'missing' ? 'warning' : 'success'} />
+              regardless of how many rows the mode below is hiding.
+              ทั้งหมด is the one exception: it has no single mode-specific
+              count, so it shows the submitted/ขาดส่ง split against the
+              full expected (students × assignments) total instead. */}
+          {mode === 'all' ? (
+            <SummaryStat
+              label={`ส่งแล้ว ${modeSubmittedCount} · ขาดส่ง ${modeMissingCount} จาก ${modeExpectedCount} รายการ`}
+              tone={modeMissingCount > 0 ? 'warning' : 'success'}
+            />
+          ) : (
+            <SummaryStat
+              label={`${SUBMISSION_CHECK_MODE_COUNT_LABEL[mode]} ${modeItemCount} รายการ`}
+              tone={mode === 'missing' ? 'warning' : 'success'}
+            />
+          )}
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex flex-wrap gap-1 overflow-x-auto">
@@ -980,9 +1006,10 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
 }
 
 /**
- * The ONE counter for the currently active mode — always a single,
- * mathematically honest ITEM count ("ส่งแล้ว 198 รายการ"), never a
- * 3-way split across modes that don't apply to what's currently shown.
+ * A single counter card for the currently active mode. Most modes pass a
+ * single mathematically honest ITEM count ("ส่งแล้ว 198 รายการ"); ทั้งหมด
+ * mode is the one exception and passes a combined submitted/ขาดส่ง-vs-
+ * expected-total label instead, since it has no single count of its own.
  */
 function SummaryStat({ label, tone }: { label: string; tone: 'warning' | 'success' }) {
   const toneClass = { warning: 'text-destructive', success: 'text-success' }[tone]
