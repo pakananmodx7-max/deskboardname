@@ -87,71 +87,127 @@ see "Phase 2" below for how it's resolved to a REAL column on the page.
 
 ## Phase 2: real SGS table wiring
 
+### The bug the first version of this had
+
+The first cut of Phase 2 tried to find the student grid by matching
+TABLE HEADER TEXT against a few Thai keywords (เลขที่/รหัส/ชื่อ), and read
+the two known filters with `getElementById('...Filter_Input')`. Against
+the real SGS page — an old ASP.NET page with ~200 nested layout tables —
+neither worked:
+
+- The header-keyword search never matched anything real, because the
+  grid's headers don't line up with those exact keywords the way the
+  heuristic assumed, and it never looked at the ROWS at all.
+- `ctl00_PageContent_ClassSubjectIDFilter.Filter_Input` is a CSS
+  SELECTOR (`select#ctl00_PageContent_ClassSubjectIDFilter.Filter_Input`
+  — an id plus a class), not a literal element id. Appending
+  `.Filter_Input` onto the string passed to `getElementById` could never
+  match anything, so `knownFilters.subject.present` (and classroom's)
+  was always `false`.
+
+Both are fixed now — see `KNOWN_SGS_FILTER_IDS` in
+`src/content-diagnostic.js` (bare ids: `ctl00_PageContent_ClassSubjectIDFilter`
+/ `ctl00_PageContent_ClassSectionNoFilter`) and the row-structure
+detection below.
+
+### How the real student grid is located now
+
 Once the teacher has loaded a bridge payload, clicking **"ตรวจสอบตารางคะแนน
 SGS จริง"** (section 4 of the popup) runs the following, entirely derived
 from the live page's own structure — nothing here hardcodes a score-input
-selector:
+selector, and no single top-level `<table>` is ever assumed to be the
+grid:
 
-1. **Detect the score table** — `inspectSgsScoreTable` (injected into the
-   page) scores every `<table>` on structural signals (a recognizable
-   เลขที่/รหัส/ชื่อ header, at least one input in its body rows) and picks
-   the best match.
-2. **Extract each student row** — for the chosen table, reads only the
-   เลขที่/รหัสนักเรียน/ชื่อ-นามสกุล columns (identified by header keyword,
-   never a fixed index).
-3. **Detect score columns** — every OTHER column that actually contains
-   an input is a score-column candidate;
-   `identifyScoreColumnCandidates` (`src/lib/sgs-table-extraction.js`)
-   derives a `{key, label, maxScore}` for each, parsing a max score out
-   of the header text when present (e.g. "กลางภาค (10)" → `10`) and
-   never guessing one when it isn't.
-4. **Resolve the teacher's chosen column** —
-   `matchTargetColumnToRealColumns` compares the payload's
-   `targetColumn.label` against the real candidates' labels. Exactly one
-   match auto-selects it; zero or more than one shows a warning and
-   requires the teacher to pick the correct radio button by hand — the
-   same "never silently guess" rule this bridge already applies to
-   student matching.
-5. **Read the target column's existing values** — a second
-   `inspectSgsScoreTable` call, now with the confirmed column's index,
-   reads only THAT column's current cell values (never any other
-   column).
-6. **Map students** — the extracted rows become `sgsCandidates` for the
-   existing `matchStudentsToSgs` (`src/lib/mapping.js`, unchanged),
-   producing `MATCHED`/`AMBIGUOUS`/`NOT_FOUND` per student.
-7. **Preview** — เลขที่ | นักเรียน | คะแนน KrunameClass | คะแนนเดิม SGS |
+1. **Read raw structure only** — `collectAllTableRowFacts` (injected)
+   walks every `<table>` on the page and records, for every row, only
+   its cell COUNT and which cells contain an input, plus the TEXT of
+   non-input cells (capped in count/length for safety). It never reads
+   an input's value here. Because `table.rows` only ever contains a
+   table's OWN rows (a nested `<table>` inside one of its cells is a
+   separate entry in the results, with its own `.rows`), the deepest
+   grid nested inside layout tables shows up as its own clean, short
+   list of rows — no special nesting logic is needed.
+2. **Find the real grid by SHAPE, not content** — `findRepeatingRowRun`
+   (`src/lib/sgs-table-extraction.js`) looks for the longest run of
+   CONSECUTIVE rows that all have the identical shape (same cell count,
+   inputs in the same positions) and actually contain at least one
+   input — this is what "a real student row resembles the row before
+   and after it" becomes in code, and why a long run of matching but
+   input-less spacer rows never wins.
+3. **Classify เลขที่/รหัสนักเรียน/ชื่อ-นามสกุล by CONTENT** —
+   `classifyIdentifierColumns` looks at the actual text in that run's
+   non-input columns: an all-numeric column is เลขที่ (the shorter one)
+   or รหัสนักเรียน (the longer/zero-padded one); a column containing Thai
+   characters is ชื่อ-นามสกุล. Header text is never consulted for this —
+   only content, and only columns appearing BEFORE the first score
+   input.
+4. **Detect score columns + trace their headers** — every OTHER input
+   column in the run is a score-column candidate. Its header text comes
+   from the row immediately ABOVE the run (`deriveScoreColumns`), and a
+   max score is only accepted if it's a plausible 1-100 value AND the
+   header doesn't match `REJECT_HEADER_KEYWORDS` (ปีการศึกษา, ชั้น, menu/
+   language/login/logout labels) — an academic year like 2568 is never
+   mistaken for a max score.
+5. **Rank every table's candidate** — `pickBestStudentGridCandidate`
+   scores each table that has a qualifying run (row count, whether all
+   three identifier columns were found, how many score columns) and
+   picks the single best one, so ~200 candidate/layout tables around the
+   real grid are never confused with it.
+6. **Resolve the teacher's chosen column** — `matchTargetColumnToRealColumns`
+   compares the payload's `targetColumn.label` against the winning
+   table's real score columns. Exactly one label match auto-selects it;
+   zero or more than one shows a warning and requires the teacher to
+   pick the correct radio button by hand — the same "never silently
+   guess" rule this bridge already applies to student matching.
+7. **Read the target column's existing values** — `readColumnValues`
+   (injected), given the CONFIRMED table index and row range from step
+   5, reads only that one column's current cell values — never any
+   other column's, and never before confirmation.
+8. **Map students** — the run's identifier-column text (already read in
+   step 1, no extra DOM call) becomes `sgsCandidates` for the existing
+   `matchStudentsToSgs` (`src/lib/mapping.js`, unchanged), producing
+   `MATCHED`/`AMBIGUOUS`/`NOT_FOUND` per student.
+9. **Preview** — เลขที่ | นักเรียน | คะแนน KrunameClass | คะแนนเดิม SGS |
    คะแนนใหม่ (plus a mapping-status column), computed by
-   `computeSgsRealFillPlan`.
-8. **Fill ONLY the confirmed column** — clicking **"ทดลองกรอกเฉพาะช่องนี้"**
-   builds write instructions scoped to that one column
-   (`buildSgsRealWriteInstructions`) and calls `fillSgsColumnValues`
-   (injected), which sets `input.value` and dispatches `input`/`change`
-   events for exactly those cells — never a different column's, and
-   never a Save/Submit click.
-9. **Result** — the five required buckets (matched / written / skipped
-   no score / skipped existing / ambiguous-or-not-found), from
-   `summarizeSgsRealFillPlan`, plus the DOM function's own reported
-   count as a cross-check.
+   `computeSgsRealFillPlan`. Item 7 of the spec: the fill button
+   (`gridMeetsFillRequirements` in popup.js) stays disabled until the
+   grid was found, เลขที่/รหัส/ชื่อ are ALL identified, and at least one
+   score column exists.
+10. **Fill ONLY the confirmed column** — clicking **"ทดลองกรอกเฉพาะช่องนี้"**
+    builds write instructions scoped to that one column
+    (`buildSgsRealWriteInstructions`) and calls `fillSgsColumnValues`
+    (injected, given the SAME confirmed table index/row range/column
+    index), which sets `input.value` and dispatches `input`/`change`
+    events for exactly those cells — never a different column's, and
+    never a Save/Submit click.
+11. **Result** — the five required buckets (matched / written / skipped
+    no score / skipped existing / ambiguous-or-not-found), from
+    `summarizeSgsRealFillPlan`, plus the DOM function's own reported
+    count as a cross-check.
 
-Every step here that runs INSIDE the SGS page (`inspectSgsScoreTable`,
-`fillSgsColumnValues`) is a plain, closure-free function passed to
+Every step here that runs INSIDE the SGS page
+(`collectAllTableRowFacts`, `readColumnValues`, `fillSgsColumnValues`)
+is a plain, closure-free function passed to
 `chrome.scripting.executeScript({ func })` — Chrome serializes and
 re-runs it standalone in the page with no access to this extension's
-other files, which is why each one independently re-derives the same
-table via the same small structural heuristic rather than sharing a
-cached DOM reference across calls (see the file header comment in
-`src/content-diagnostic.js`).
+other files or each other. That's why the actual GRID-FINDING logic
+(steps 2-6, and the anonymized debug/compact report builders) lives in
+`src/lib/sgs-table-extraction.js` and `src/lib/diagnostic-report.js`
+instead — imported normally by popup.js, which fully supports ES
+modules — rather than being duplicated across multiple injected
+functions the way the (much smaller) known-filter read is.
 
 ### The two known selectors
 
 Two elements were confirmed against the real SGS page and are used
-directly (never guessed): the subject and classroom filter inputs,
-`ctl00_PageContent_ClassSubjectIDFilter.Filter_Input` and
-`ctl00_PageContent_ClassSectionNoFilter.Filter_Input` — read via
-`getElementById` (which takes the id string literally, dot included, so
-no CSS-selector escaping is needed). They're used only to label a
-diagnostic capture with which subject/classroom it came from; nothing
-about the score table itself depends on them.
+directly (never guessed): the subject and classroom filter `<select>`s,
+with ids `ctl00_PageContent_ClassSubjectIDFilter` and
+`ctl00_PageContent_ClassSectionNoFilter` (read via `getElementById` — a
+literal id lookup, no CSS-selector escaping needed). They're used only
+to label a diagnostic capture with which subject/classroom it came
+from, reading both `.value` and the selected `<option>`'s visible text,
+and never changing the selection; nothing about the score table itself
+depends on them.
 
 ## Current functions
 
@@ -171,16 +227,25 @@ about the score table itself depends on them.
    the real inspection in step 4.
 4. **"ตรวจสอบตารางคะแนน SGS จริง" / "ทดลองกรอกเฉพาะช่องนี้"** — the real
    Phase 2 workflow described above.
-5. **"ตรวจสอบโครงสร้างหน้า SGS" (generic diagnostic)** — injects
-   `collectRawSgsFacts` into the active tab (only on click) to collect
-   page URL, form/table counts, row counts, input element *types* and
-   *presence-per-column* (never values), safe CSS selector candidates,
-   visible column header text, an identifier/score-column guess per
-   table, and the two known filters' current selection. Never reads
-   cookies, `localStorage`, or a data table's body-row text. The result
-   is shown in a copyable text box — meant to be run once per distinct
-   SGS page/subject/classroom (~18 expected) so every capture is
-   directly comparable.
+5. **"ตรวจสอบโครงสร้างหน้า SGS" — three diagnostic modes, one output box**:
+   - **แบบย่อ (compact, the primary one)** — `collectAllTableRowFacts` +
+     `buildCompactStudentGridReport`: the exact shape item 6 of the spec
+     asks for (`pageTitle`, `pageUrl`, `subjectFilter`, `classroomFilter`,
+     `studentGrid` with its found/columns/scoreColumns, `confidence`,
+     `warnings`) — no per-table dump, and never a student's actual
+     name/code.
+   - **แบบละเอียด (debug, anonymized)** — the compact report plus
+     `debugRows`: per-row `{rowIndex, cellCount, textCellIndexes,
+     inputCellIndexes, inputCount, probableNumberCell,
+     probableStudentCodeCell, probableNameCell}` for the winning table's
+     rows only, still with no actual student text.
+   - **โหมดข้อมูลดิบ (verbose)** — the OLD raw dump
+     (`collectRawSgsFacts`/`buildDiagnosticReport`): every table's row
+     count/header text/input-type counts, kept only as a debugging
+     fallback.
+
+   Meant to be run once per distinct SGS page/subject/classroom (~18
+   expected) so every capture is directly comparable.
 
 ## Loading the extension locally
 
@@ -227,10 +292,11 @@ runtime dependencies and is a fully separate Node package.
 ## Future phases (not built yet)
 
 - Phase 3+: once this has been run against real SGS pages, adjust
-  `identifyIdentifierColumns`/`identifyScoreColumnCandidates`'s keyword
-  patterns for anything the real pages' headers use that this prototype
-  didn't anticipate, using the diagnostic captures collected via
-  "ตรวจสอบโครงสร้างหน้า SGS".
+  `classifyIdentifierColumns`/`REJECT_HEADER_KEYWORDS`/the
+  `looksLikeStudentRowFingerprint`/`minRunLength` thresholds in
+  `src/lib/sgs-table-extraction.js` for anything the real pages' rows use
+  that this prototype didn't anticipate, using the diagnostic captures
+  collected via "ตรวจสอบโครงสร้างหน้า SGS".
 - Phase 7: DRY RUN → Preview → teacher confirmation → fill the SGS form
   → teacher reviews SGS → final SGS Save. This extension now reaches
   "fill the SGS form"; the final "click Save" step remains explicitly

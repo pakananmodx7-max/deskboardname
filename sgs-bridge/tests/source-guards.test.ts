@@ -8,7 +8,19 @@ function read(relativePath: string): string {
 
 function sliceFunction(source: string, name: string, nextNames: string[]): string {
   const start = source.indexOf(`export function ${name}`)
-  const ends = nextNames.map((n) => source.indexOf(`export function ${n}`, start + 1)).filter((i) => i !== -1)
+  const ends = nextNames
+    .map((n) => source.indexOf(`export function ${n}`, start + 1))
+    .filter((i) => i !== -1)
+    .map((exportIndex) => {
+      // Back up to the start of that function's own leading /** doc
+      // comment (if any) so it's excluded from THIS slice — otherwise
+      // prose in that comment (which may itself mention things like
+      // "cookie"/"localStorage" as things the code must never do) would
+      // be wrongly attributed to the function ending right before it.
+      const commentStart = source.lastIndexOf('/**', exportIndex)
+      const precedingBlankLine = source.lastIndexOf('\n\n', exportIndex)
+      return commentStart !== -1 && commentStart > precedingBlankLine ? commentStart : exportIndex
+    })
   const end = ends.length > 0 ? Math.min(...ends) : source.length
   return source.slice(start, end)
 }
@@ -27,7 +39,33 @@ describe('manifest.json — minimal permissions, no host_permissions, no remote 
 })
 
 const contentDiagnosticSource = read('../src/content-diagnostic.js')
-const CONTENT_DIAGNOSTIC_FUNCTIONS = ['collectRawSgsFacts', 'inspectSgsScoreTable', 'fillSgsColumnValues']
+const CONTENT_DIAGNOSTIC_FUNCTIONS = ['collectRawSgsFacts', 'collectAllTableRowFacts', 'readColumnValues', 'fillSgsColumnValues']
+
+describe('BUG FIX — known filter ids, never a CSS selector string passed to getElementById', () => {
+  it('KNOWN_SGS_FILTER_IDS holds bare element ids, never a CSS selector fragment', () => {
+    expect(contentDiagnosticSource).toContain("subject: 'ctl00_PageContent_ClassSubjectIDFilter'")
+    expect(contentDiagnosticSource).toContain("classroom: 'ctl00_PageContent_ClassSectionNoFilter'")
+    // The original bug appended ".Filter_Input" (a CSS class, not part
+    // of the id) onto the id string passed to getElementById. The file
+    // header documents that history in prose (so it legitimately
+    // contains that exact substring once) — this check only looks
+    // inside the actual functions, past that documentation.
+    const afterHeader = contentDiagnosticSource.slice(contentDiagnosticSource.indexOf('export const KNOWN_SGS_FILTER_IDS'))
+    expect(afterHeader).not.toMatch(/getElementById\([^)]*\.Filter_Input/)
+    expect(afterHeader).not.toContain('ClassSubjectIDFilter.Filter_Input')
+    expect(afterHeader).not.toContain('ClassSectionNoFilter.Filter_Input')
+  })
+
+  it('every known-filter lookup reads the selected option\'s visible text, never just raising/changing the selection', () => {
+    const matches = [...contentDiagnosticSource.matchAll(/selectedOption \? selectedOption\.text\.trim\(\)/g)]
+    expect(matches.length).toBeGreaterThan(0)
+  })
+
+  it('never assigns to a known filter\'s value/selectedIndex — read-only', () => {
+    expect(contentDiagnosticSource).not.toMatch(/ClassSubjectIDFilter[^;]*\.value\s*=/)
+    expect(contentDiagnosticSource).not.toMatch(/selectedIndex\s*=\s*\d/)
+  })
+})
 
 describe('content-diagnostic.js: collectRawSgsFacts — never reads cookies, storage, or arbitrary input values', () => {
   const source = sliceFunction(contentDiagnosticSource, 'collectRawSgsFacts', CONTENT_DIAGNOSTIC_FUNCTIONS)
@@ -40,56 +78,81 @@ describe('content-diagnostic.js: collectRawSgsFacts — never reads cookies, sto
     expect(source).not.toMatch(/localStorage|sessionStorage/)
   })
 
-  it('never reads an arbitrary input/select/textarea\'s .value — only the two known filter inputs\' .value', () => {
-    const withoutKnownFilterRead = source.replace(/el\s*\?\s*el\.value.*?:\s*null/g, '')
+  it('never reads an arbitrary input/select/textarea\'s .value — only the two known filters\' selection', () => {
+    const withoutKnownFilterRead = source.replace(/const selectedOption[\s\S]*?knownFilters\[name\] = \{[\s\S]*?\}\n/g, '')
     expect(withoutKnownFilterRead).not.toMatch(/\.value\b/)
   })
 
-  it('reads the known filter inputs only via getElementById with the literal confirmed ids — never a guessed selector', () => {
-    expect(source).toContain("document.getElementById(id)")
-    expect(source).toContain('ctl00_PageContent_ClassSubjectIDFilter.Filter_Input')
-    expect(source).toContain('ctl00_PageContent_ClassSectionNoFilter.Filter_Input')
+  it('reads the known filters only via getElementById with the literal confirmed (bug-fixed) ids', () => {
+    expect(source).toContain('ctl00_PageContent_ClassSubjectIDFilter')
+    expect(source).toContain('ctl00_PageContent_ClassSectionNoFilter')
+    expect(source).not.toContain('.Filter_Input')
   })
 
   it('never reads a data table BODY row\'s text — only header cells\' text and column input PRESENCE (never a value)', () => {
     expect(source).toContain('headerCells')
     expect(source).not.toMatch(/rows\[.*\]\.textContent|Array\.from\(rows\)\.map/)
     expect(source).toContain('columnsHaveInput')
-    // The body-row scan (sampleRow) only ever checks for an input's
-    // PRESENCE via querySelector, and must never also read that same
-    // cell's .textContent — header cells are the only ones read as text.
     const start = source.indexOf('const columnsHaveInput =')
     const columnsHaveInputBlock = source.slice(start, source.indexOf('return {', start))
     expect(columnsHaveInputBlock).not.toMatch(/\.textContent/)
   })
 })
 
-describe('content-diagnostic.js: inspectSgsScoreTable — reads only what item 1-5 of the spec allows', () => {
-  const source = sliceFunction(contentDiagnosticSource, 'inspectSgsScoreTable', CONTENT_DIAGNOSTIC_FUNCTIONS)
+describe('content-diagnostic.js: collectAllTableRowFacts — the ONLY function that walks every table/row for the real grid search', () => {
+  const source = sliceFunction(contentDiagnosticSource, 'collectAllTableRowFacts', CONTENT_DIAGNOSTIC_FUNCTIONS)
 
   it('never touches document.cookie, localStorage, or sessionStorage', () => {
     expect(source).not.toMatch(/document\.cookie/)
     expect(source).not.toMatch(/localStorage|sessionStorage/)
   })
 
-  it('only reads a cell\'s .value inside the targetColumnIndex-guarded columnValues block — identifier columns use textOf, never .value', () => {
-    const rowsBlock = source.slice(source.indexOf('const rows = best.bodyRows.map'), source.indexOf('let columnValues'))
-    expect(rowsBlock).not.toMatch(/\.value\b/)
-    expect(rowsBlock).toContain('textOf(cells[')
-    const columnValuesBlock = source.slice(source.indexOf('let columnValues'))
-    expect(columnValuesBlock).toContain('input.value')
+  it('never reads an input cell\'s .value — only whether it HAS an input, and non-input cells\' text', () => {
+    // The known-filter reads (subjectFilter/classroomFilter) are a
+    // deliberate, separate, documented exception — excluded here.
+    const withoutKnownFilterRead = source.replace(/function readKnownFilterInline[\s\S]*$/, '')
+    expect(withoutKnownFilterRead).not.toMatch(/\.value\b/)
   })
 
-  it('reading a column\'s values happens only when targetColumnIndex is explicitly given — never unconditionally', () => {
-    expect(source).toContain('if (targetColumnIndex !== null && targetColumnIndex !== undefined)')
+  it('never assigns a text value for a cell that hasInput — text is always empty for those cells', () => {
+    expect(source).toContain('text: hasInput ? \'\' : textOf(cell)')
   })
 
-  it('never invents a score-input selector — the table is found by structural heuristic, not a hardcoded id/class', () => {
-    expect(source).not.toMatch(/getElementById\(['"](?!)/)
-    expect(source).not.toMatch(/querySelector\(['"]#/)
+  it('never invents a score-input selector — walks every real table via querySelectorAll, uses each table\'s own .rows', () => {
+    expect(source).not.toMatch(/querySelector\(['"]#(?!ctl00)/)
+    expect(source).toContain("document.querySelectorAll('table')")
+    expect(source).toContain('table.rows')
   })
 
-  it('never clicks anything — this function only inspects, never mutates', () => {
+  it('caps how many tables/rows/cells it reads, so a huge ASP.NET page stays a reasonable size', () => {
+    expect(source).toMatch(/MAX_TABLES/)
+    expect(source).toMatch(/MAX_ROWS_PER_TABLE/)
+    expect(source).toMatch(/MAX_CELLS_PER_ROW/)
+  })
+
+  it('never clicks anything — this function only reads structure', () => {
+    expect(source).not.toMatch(/\.click\(\)/)
+  })
+})
+
+describe('content-diagnostic.js: readColumnValues — reads only the ONE requested column, for the ONE confirmed table/run', () => {
+  const source = sliceFunction(contentDiagnosticSource, 'readColumnValues', CONTENT_DIAGNOSTIC_FUNCTIONS)
+
+  it('only ever indexes into columnIndex — never a different/derived column', () => {
+    const cellLookups = [...source.matchAll(/\.cells\[([^\]]+)\]/g)].map((m) => m[1])
+    expect(cellLookups.length).toBeGreaterThan(0)
+    expect(cellLookups.every((expr) => expr === 'columnIndex')).toBe(true)
+  })
+
+  it('locates the table by the CONFIRMED tableIndex argument, never a re-run heuristic guess', () => {
+    expect(source).toContain("document.querySelectorAll('table')[tableIndex]")
+  })
+
+  it('never writes to .value — read-only', () => {
+    expect(source).not.toMatch(/\.value\s*=/)
+  })
+
+  it('never clicks anything', () => {
     expect(source).not.toMatch(/\.click\(\)/)
   })
 })
@@ -101,11 +164,14 @@ describe('content-diagnostic.js: fillSgsColumnValues — writes ONLY the request
     expect(source).not.toMatch(/\.click\(\)/)
   })
 
-  it('only ever indexes into targetColumnIndex — never loops over or reads a different column index', () => {
-    expect(source).toContain('row.children[targetColumnIndex]')
-    // No OTHER numeric or variable column index is ever used to locate a cell in this function.
-    const cellLookups = [...source.matchAll(/\.children\[([^\]]+)\]/g)].map((m) => m[1])
-    expect(cellLookups.every((expr) => expr === 'targetColumnIndex')).toBe(true)
+  it('locates the table by the CONFIRMED tableIndex argument, never a re-run heuristic guess', () => {
+    expect(source).toContain("document.querySelectorAll('table')[tableIndex]")
+  })
+
+  it('only ever indexes into columnIndex — never loops over or reads a different column index', () => {
+    const cellLookups = [...source.matchAll(/\.cells\[([^\]]+)\]/g)].map((m) => m[1])
+    expect(cellLookups.length).toBeGreaterThan(0)
+    expect(cellLookups.every((expr) => expr === 'columnIndex')).toBe(true)
   })
 
   it('dispatches both input and change events after setting the value — never neither, never only one', () => {
@@ -120,13 +186,8 @@ describe('content-diagnostic.js: fillSgsColumnValues — writes ONLY the request
     expect(changeIndex).toBeGreaterThan(inputIndex)
   })
 
-  it('reports rows it could not find a writable input for, rather than silently skipping them', () => {
-    expect(source).toContain('missingRowIndexes')
-  })
-
-  it('re-derives the table via the same structural heuristic — never a cached/passed-in DOM handle', () => {
-    expect(source).toContain('findBestScoreTable()')
-    expect(source).not.toMatch(/function fillSgsColumnValues\([^)]*table/i)
+  it('reports offsets it could not find a writable input for, rather than silently skipping them', () => {
+    expect(source).toContain('missingOffsets')
   })
 })
 
@@ -142,8 +203,10 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(source).not.toMatch(/chrome\.storage\.sync/)
   })
 
-  it('never auto-runs the diagnostic or mapping check without a button click', () => {
+  it('never auto-runs a diagnostic or mapping check without a button click', () => {
     expect(source).toContain("diagnosticBtn.addEventListener('click'")
+    expect(source).toContain("diagnosticDebugBtn.addEventListener('click'")
+    expect(source).toContain("diagnosticVerboseBtn.addEventListener('click'")
     expect(source).toContain("mappingBtn.addEventListener('click'")
   })
 
@@ -176,16 +239,42 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(allCalls[0][1]).toMatch(/confirmedRealColumn\.key/)
   })
 
-  it('fillSgsColumnValues (the real DOM write) is only ever invoked with the confirmed real column\'s own columnIndex — never a hardcoded index', () => {
+  it('fillSgsColumnValues (the real DOM write) is only ever invoked with the CONFIRMED table/run/column — never a hardcoded index', () => {
     const allCalls = [...source.matchAll(/func:\s*fillSgsColumnValues,\s*args:\s*\[([^\]]*)\]/g)]
     expect(allCalls.length).toBe(1)
-    expect(allCalls[0][1]).toMatch(/confirmedRealColumn\.columnIndex/)
+    expect(allCalls[0][1]).toMatch(/tableIndex, run\.startIndex, confirmedRealColumn\.columnIndex/)
   })
 
-  it('the real-page mapping (matchStudentsToSgs against the ACTUAL extracted rows) only runs after inspectSgsScoreTable has returned real rows — never against an invented list', () => {
-    const fn = source.slice(source.indexOf('async function runRealColumnInspection'), source.indexOf('fillBtn.addEventListener'))
+  it('readColumnValues is only ever invoked with the CONFIRMED table/run/column', () => {
+    const allCalls = [...source.matchAll(/func:\s*readColumnValues,\s*args:\s*\[([^\]]*)\]/g)]
+    expect(allCalls.length).toBe(1)
+    expect(allCalls[0][1]).toMatch(/tableIndex, run\.startIndex, run\.length, confirmedRealColumn\.columnIndex/)
+  })
+
+  it('the real-page mapping (matchStudentsToSgs against the ACTUAL extracted rows) only runs from within runColumnPreview, using row text already read by collectAllTableRowFacts', () => {
+    const fn = source.slice(source.indexOf('async function runColumnPreview'), source.indexOf('function renderRealFillPreview'))
     expect(fn).toContain('matchStudentsToSgs(krunameStudents, sgsCandidates)')
-    expect(fn).toContain('inspectSgsScoreTable')
+    expect(fn).toContain('currentGridFacts')
+  })
+
+  it('item 7: the fill button is only ever enabled when gridMeetsFillRequirements passes', () => {
+    const gateChecks = [...source.matchAll(/gridMeetsFillRequirements\(/g)]
+    expect(gateChecks.length).toBeGreaterThanOrEqual(2)
+    expect(source).toContain('fillBtn.disabled = !gridMeetsFillRequirements(currentGridCandidate)')
+  })
+
+  it('gridMeetsFillRequirements requires number/code/name AND at least one score column', () => {
+    const fn = source.slice(source.indexOf('function gridMeetsFillRequirements'), source.indexOf('async function runRealColumnInspection'))
+    expect(fn).toContain('numberColumnIndex !== null')
+    expect(fn).toContain('codeColumnIndex !== null')
+    expect(fn).toContain('nameColumnIndex !== null')
+    expect(fn).toContain('candidate.scoreColumns.length > 0')
+  })
+
+  it('never invents a student grid — always derives it via pickBestStudentGridCandidate over collectAllTableRowFacts\'s real output', () => {
+    const fn = source.slice(source.indexOf('async function runRealColumnInspection'), source.indexOf('function renderRealColumnPicker'))
+    expect(fn).toContain('collectAllTableRowFacts')
+    expect(fn).toContain('pickBestStudentGridCandidate(facts.tables)')
   })
 })
 

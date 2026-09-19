@@ -4,8 +4,13 @@ import {
   formatSgsExistingScoreDisplay,
   formatSgsNewValueDisplay,
 } from './lib/column-fill.js'
-import { collectRawSgsFacts, fillSgsColumnValues, inspectSgsScoreTable } from './content-diagnostic.js'
-import { buildDiagnosticReport, formatDiagnosticReportForCopy } from './lib/diagnostic-report.js'
+import { collectAllTableRowFacts, collectRawSgsFacts, fillSgsColumnValues, readColumnValues } from './content-diagnostic.js'
+import {
+  buildCompactStudentGridReport,
+  buildDiagnosticReport,
+  buildStudentGridDebugReport,
+  formatDiagnosticReportForCopy,
+} from './lib/diagnostic-report.js'
 import { matchStudentsToSgs } from './lib/mapping.js'
 import { validateSgsBridgePayload } from './lib/payload-validation.js'
 import {
@@ -16,9 +21,11 @@ import {
   summarizeSgsRealFillPlan,
 } from './lib/sgs-real-fill.js'
 import {
+  buildGridWarnings,
   buildSgsRowKey,
-  identifyScoreColumnCandidates,
+  computeGridConfidence,
   matchTargetColumnToRealColumns,
+  pickBestStudentGridCandidate,
   sgsRowIndexFromKey,
 } from './lib/sgs-table-extraction.js'
 
@@ -54,6 +61,8 @@ const mappingBtn = document.getElementById('mapping-dry-run')
 const mappingResultTable = document.getElementById('mapping-result')
 const mappingResultBody = document.getElementById('mapping-result-body')
 const diagnosticBtn = document.getElementById('diagnostic-run')
+const diagnosticDebugBtn = document.getElementById('diagnostic-debug-run')
+const diagnosticVerboseBtn = document.getElementById('diagnostic-verbose-run')
 const diagnosticOutput = document.getElementById('diagnostic-output')
 const copyDiagnosticBtn = document.getElementById('copy-diagnostic')
 
@@ -68,6 +77,15 @@ const realFillPreviewBody = document.getElementById('real-fill-preview-body')
 const fillBtn = document.getElementById('fill-selected-column')
 const fillResultEl = document.getElementById('fill-result')
 
+/** The raw facts collectAllTableRowFacts returned for the CURRENT
+ * inspection — kept only so runColumnPreview() can read row text
+ * (เลขที่/รหัสนักเรียน/ชื่อ-นามสกุล) without a second DOM round-trip. */
+let currentGridFacts = null
+/** The winning table+run+columns pickBestStudentGridCandidate chose —
+ * {tableIndex, run: {startIndex, length}, identifierColumns,
+ * scoreColumns, ...}. Every real DOM read/write this popup can ever
+ * trigger is scoped to THIS table and row range. */
+let currentGridCandidate = null
 /** The ONE real SGS column the teacher has confirmed — {columnIndex,
  * key, label, maxScore}. Every real write this popup can ever trigger
  * is scoped to this single value. */
@@ -182,6 +200,8 @@ function renderPreview(payload) {
 }
 
 function resetRealInspectionState() {
+  currentGridFacts = null
+  currentGridCandidate = null
   confirmedRealColumn = null
   realPlan = null
   realColumnPickerWrap.hidden = true
@@ -257,14 +277,28 @@ function renderMappingResult(payload) {
 }
 
 /**
- * Item 1-4 of the spec: finds the real score table, extracts every
- * row's เลขที่/รหัสนักเรียน/ชื่อ-นามสกุล, and lists every real score
- * column candidate with its derived columnKey/max score — never
- * inventing a selector, only reporting what identifyScoreColumnCandidates
- * derives from the page's own structure. Tries to auto-match the
- * teacher's KrunameClass column choice by label, but NEVER silently
- * proceeds on an AMBIGUOUS or NOT_FOUND match — the teacher must
- * explicitly pick a radio either way before a preview is shown.
+ * Item 7 of the spec: the fill button must stay disabled/hidden until
+ * studentGrid.found === true AND number/code/name are all confidently
+ * identified AND at least one score column exists. Checked again right
+ * before rendering the picker/preview, not just once at the top.
+ */
+function gridMeetsFillRequirements(candidate) {
+  if (!candidate) return false
+  const { numberColumnIndex, codeColumnIndex, nameColumnIndex } = candidate.identifierColumns
+  return numberColumnIndex !== null && codeColumnIndex !== null && nameColumnIndex !== null && candidate.scoreColumns.length > 0
+}
+
+/**
+ * Items 1-4 of the spec: finds the real score table by STRUCTURE (a
+ * repeating run of identically-shaped rows containing inputs — never a
+ * single top-level table taken on faith), classifies เลขที่/รหัส
+ * นักเรียน/ชื่อ-นามสกุล by the CONTENT of that run's cells (never header
+ * text alone — see sgs-table-extraction.js's own doc comment on the bug
+ * this replaced), and lists every real score column candidate with its
+ * derived columnKey/max score. Tries to auto-match the teacher's
+ * KrunameClass column choice by label, but NEVER silently proceeds on
+ * an AMBIGUOUS or NOT_FOUND match, and NEVER enables the fill button
+ * unless gridMeetsFillRequirements passes.
  */
 async function runRealColumnInspection() {
   if (!loadedPayload) {
@@ -279,33 +313,47 @@ async function runRealColumnInspection() {
   const tab = await getActiveTab()
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: inspectSgsScoreTable,
-    args: [null],
+    func: collectAllTableRowFacts,
   })
-  const result = injection.result
+  const facts = injection.result
+  currentGridFacts = facts
 
-  if (!result.found) {
-    realInspectErrorEl.textContent = 'ไม่พบตารางคะแนนในหน้านี้ — ตรวจสอบว่าเปิดหน้ากรอกคะแนนของ SGS อยู่หรือไม่'
+  const candidate = pickBestStudentGridCandidate(facts.tables)
+  currentGridCandidate = candidate
+
+  if (!candidate) {
+    realInspectErrorEl.textContent = 'ไม่พบตารางคะแนนนักเรียนในหน้านี้ — ตรวจสอบว่าเปิดหน้ากรอกคะแนนของ SGS อยู่หรือไม่'
+    realInspectErrorEl.hidden = false
+    return
+  }
+  if (candidate.scoreColumns.length === 0) {
+    realInspectErrorEl.textContent = 'พบตารางนักเรียนแต่ไม่พบคอลัมน์คะแนนที่มีช่องกรอกข้อมูล'
     realInspectErrorEl.hidden = false
     return
   }
 
-  const candidates = identifyScoreColumnCandidates(result.headerTexts, result.columnsHaveInput, result.identifierColumns)
-  if (candidates.length === 0) {
-    realInspectErrorEl.textContent = 'พบตารางแต่ไม่พบคอลัมน์คะแนนที่มีช่องกรอกข้อมูล'
-    realInspectErrorEl.hidden = false
-    return
+  const warnings = buildGridWarnings(candidate)
+  if (warnings.length > 0) {
+    realColumnMatchWarningEl.textContent = `พบตารางแต่ยังไม่มั่นใจทั้งหมด (ความเชื่อมั่น: ${computeGridConfidence(candidate)}): ${warnings.join(', ')}`
+    realColumnMatchWarningEl.hidden = false
   }
 
-  const matchResult = matchTargetColumnToRealColumns(loadedPayload.targetColumn.label, candidates)
-  renderRealColumnPicker(candidates, matchResult)
+  const matchResult = matchTargetColumnToRealColumns(loadedPayload.targetColumn.label, candidate.scoreColumns)
+  renderRealColumnPicker(candidate.scoreColumns, matchResult)
+
+  if (!gridMeetsFillRequirements(candidate)) {
+    // Column may still be picked for review, but runColumnPreview()
+    // itself will refuse to enable the fill button — see its own guard.
+    return
+  }
 
   if (matchResult.status === 'MATCHED') {
     confirmedRealColumn = matchResult.column
     void runColumnPreview()
   } else {
     const reason = matchResult.status === 'AMBIGUOUS' ? 'พบมากกว่า 1 คอลัมน์ที่ชื่อตรงกัน' : 'ไม่พบคอลัมน์ที่ชื่อตรงกันโดยอัตโนมัติ'
-    realColumnMatchWarningEl.textContent = `${reason} — กรุณาเลือกคอลัมน์ที่ถูกต้องด้วยตนเองด้านล่าง`
+    const existing = realColumnMatchWarningEl.hidden ? '' : `${realColumnMatchWarningEl.textContent} · `
+    realColumnMatchWarningEl.textContent = `${existing}${reason} — กรุณาเลือกคอลัมน์ที่ถูกต้องด้วยตนเองด้านล่าง`
     realColumnMatchWarningEl.hidden = false
   }
 }
@@ -335,29 +383,39 @@ function renderRealColumnPicker(candidates, matchResult) {
 }
 
 /**
- * Re-reads the SAME confirmed table (inspectSgsScoreTable's own
- * heuristic is deterministic given the same page state), this time
- * asking for `confirmedRealColumn.columnIndex`'s current values too —
- * never any other column's. Builds the REAL preview (item 7 of the
- * spec) from actually-matched SGS rows.
+ * Reads `confirmedRealColumn.columnIndex`'s CURRENT values for the SAME
+ * confirmed table/row-range currentGridInspection already found — never
+ * any other column's, and never a fresh re-guess of which table is the
+ * grid (that was already confirmed in runRealColumnInspection). Builds
+ * the REAL preview (item 7 of the spec) from actually-matched SGS rows,
+ * and only enables the fill button when gridMeetsFillRequirements
+ * passed (item 7's gate).
  */
 async function runColumnPreview() {
-  if (!confirmedRealColumn || !loadedPayload) return
+  if (!confirmedRealColumn || !loadedPayload || !currentGridCandidate || !currentGridFacts) return
+  if (!gridMeetsFillRequirements(currentGridCandidate)) return
+
+  const { tableIndex, run, identifierColumns } = currentGridCandidate
 
   const tab = await getActiveTab()
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: inspectSgsScoreTable,
-    args: [confirmedRealColumn.columnIndex],
+    func: readColumnValues,
+    args: [tableIndex, run.startIndex, run.length, confirmedRealColumn.columnIndex],
   })
   const result = injection.result
-  if (!result.found || !result.columnValues) return
+  if (!result.found) return
 
-  const sgsCandidates = result.rows.map((row, rowIndex) => ({
-    sgsRowKey: buildSgsRowKey(rowIndex),
-    sgsStudentNumber: parseIntOrNull(row.number),
-    sgsStudentId: row.code || null,
-    sgsFullNameRaw: row.name || '',
+  // Row text (เลขที่/รหัสนักเรียน/ชื่อ-นามสกุล) was already extracted by
+  // collectAllTableRowFacts during runRealColumnInspection() — no
+  // second DOM round-trip needed just to read it again.
+  const winningTable = currentGridFacts.tables.find((t) => t.tableIndex === tableIndex)
+  const rowsInRun = winningTable.rows.slice(run.startIndex, run.startIndex + run.length)
+  const sgsCandidates = rowsInRun.map((cells, offset) => ({
+    sgsRowKey: buildSgsRowKey(offset),
+    sgsStudentNumber: parseIntOrNull(cells[identifierColumns.numberColumnIndex]?.text),
+    sgsStudentId: cells[identifierColumns.codeColumnIndex]?.text || null,
+    sgsFullNameRaw: cells[identifierColumns.nameColumnIndex]?.text || '',
   }))
 
   const roster = buildFullRosterFromPayload(loadedPayload)
@@ -370,8 +428,8 @@ async function runColumnPreview() {
   const mappingResults = matchStudentsToSgs(krunameStudents, sgsCandidates)
 
   const existingScoresBySgsRowKey = {}
-  for (const [rowIndexText, value] of Object.entries(result.columnValues)) {
-    existingScoresBySgsRowKey[buildSgsRowKey(Number(rowIndexText))] = value
+  for (const [offsetText, value] of Object.entries(result.values)) {
+    existingScoresBySgsRowKey[buildSgsRowKey(Number(offsetText))] = value
   }
 
   realPlan = computeSgsRealFillPlan(krunameStudents, mappingResults, existingScoresBySgsRowKey, loadedPayload.overwriteMode)
@@ -399,7 +457,10 @@ function renderRealFillPreview(plan) {
     }),
   )
   realFillPreviewWrap.hidden = false
-  fillBtn.disabled = false
+  // Item 7 of the spec: never enabled unless studentGrid.found AND
+  // number/code/name are all confidently identified AND at least one
+  // score column exists — checked again here, not just once upstream.
+  fillBtn.disabled = !gridMeetsFillRequirements(currentGridCandidate)
   fillResultEl.hidden = true
 }
 
@@ -411,20 +472,22 @@ function renderRealFillPreview(plan) {
  * fillSgsColumnValues's own doc comment in content-diagnostic.js.
  */
 async function runFillSelectedColumn() {
-  if (!confirmedRealColumn || !realPlan) return
+  if (!confirmedRealColumn || !realPlan || !currentGridCandidate) return
+  if (!gridMeetsFillRequirements(currentGridCandidate)) return
 
   const instructions = buildSgsRealWriteInstructions(realPlan, confirmedRealColumn.key)
-  const writesByRowIndex = {}
+  const writesByOffset = {}
   for (const instruction of instructions) {
-    const rowIndex = sgsRowIndexFromKey(instruction.sgsRowKey)
-    if (rowIndex !== null) writesByRowIndex[rowIndex] = instruction.value
+    const offset = sgsRowIndexFromKey(instruction.sgsRowKey)
+    if (offset !== null) writesByOffset[offset] = instruction.value
   }
 
+  const { tableIndex, run } = currentGridCandidate
   const tab = await getActiveTab()
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: fillSgsColumnValues,
-    args: [confirmedRealColumn.columnIndex, writesByRowIndex],
+    args: [tableIndex, run.startIndex, confirmedRealColumn.columnIndex, writesByOffset],
   })
   const domResult = injection.result
   const summary = summarizeSgsRealFillPlan(realPlan)
@@ -439,8 +502,8 @@ async function runFillSelectedColumn() {
   if (domResult.writtenCount !== summary.written) {
     lines.push(`คำเตือน: หน้า SGS รายงานว่ากรอกได้จริง ${domResult.writtenCount} ช่อง (ต่างจากแผนที่คำนวณไว้)`)
   }
-  if (domResult.missingRowIndexes.length > 0) {
-    lines.push(`ไม่พบช่องกรอกคะแนนสำหรับแถวลำดับ: ${domResult.missingRowIndexes.join(', ')}`)
+  if (domResult.missingOffsets.length > 0) {
+    lines.push(`ไม่พบช่องกรอกคะแนนสำหรับแถวลำดับ: ${domResult.missingOffsets.join(', ')}`)
   }
   lines.push('โปรดตรวจสอบผลลัพธ์ในหน้า SGS แล้วกดบันทึกด้วยตนเอง — ระบบไม่กดบันทึกให้อัตโนมัติ')
 
@@ -457,7 +520,56 @@ mappingBtn.addEventListener('click', () => {
   if (loadedPayload) renderMappingResult(loadedPayload)
 })
 
+/**
+ * Item 6 of the spec — the PRIMARY diagnostic: a focused report of
+ * whether a student grid was found, its confidence, and any warnings,
+ * with no per-table dump of ~200 tables. Never requires a loaded
+ * payload (useful for surveying any of the ~18 expected SGS pages on
+ * its own).
+ */
 diagnosticBtn.addEventListener('click', async () => {
+  diagnosticOutput.value = 'กำลังตรวจสอบ...'
+  try {
+    const tab = await getActiveTab()
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: collectAllTableRowFacts,
+    })
+    const report = buildCompactStudentGridReport(injection.result)
+    diagnosticOutput.value = formatDiagnosticReportForCopy(report)
+  } catch (err) {
+    diagnosticOutput.value = `เกิดข้อผิดพลาด: ${err instanceof Error ? err.message : String(err)}`
+  }
+})
+
+/**
+ * Anonymized per-row debug companion to the compact report above —
+ * never a student's actual name/code, only structural metadata (see
+ * buildAnonymizedRowDiagnostics's own doc comment).
+ */
+diagnosticDebugBtn.addEventListener('click', async () => {
+  diagnosticOutput.value = 'กำลังตรวจสอบ...'
+  try {
+    const tab = await getActiveTab()
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: collectAllTableRowFacts,
+    })
+    const compact = buildCompactStudentGridReport(injection.result)
+    const debug = buildStudentGridDebugReport(injection.result)
+    diagnosticOutput.value = formatDiagnosticReportForCopy({ ...compact, debugRows: debug.rows })
+  } catch (err) {
+    diagnosticOutput.value = `เกิดข้อผิดพลาด: ${err instanceof Error ? err.message : String(err)}`
+  }
+})
+
+/**
+ * The OLD, verbose raw dump — every table's row count/header text/input
+ * counts, no student-grid interpretation. Kept only as the "optional
+ * verbose/debug mode" the spec asks for; the compact report above is
+ * the one meant for everyday use.
+ */
+diagnosticVerboseBtn.addEventListener('click', async () => {
   diagnosticOutput.value = 'กำลังตรวจสอบ...'
   try {
     const tab = await getActiveTab()
