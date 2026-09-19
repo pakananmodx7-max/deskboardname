@@ -86,6 +86,46 @@
       <textarea id="diagnostic-output" readonly rows="12" placeholder="ผลลัพธ์จะแสดงที่นี่หลังกดตรวจสอบ"></textarea>
     </section>
 
+    <section>
+      <h2>4. จับคู่กับตารางคะแนนจริงใน SGS</h2>
+      <p class="hint">
+        ต้องโหลด Bridge Payload ในขั้นตอนที่ 1 ก่อน — ตรวจสอบตารางคะแนนจริงบนหน้า SGS ที่เปิดอยู่ ค้นหาคอลัมน์ที่ตรงกับ
+        "<span id="real-target-label"></span>" และแสดงตัวอย่างค่าที่จะกรอกจริง ยังไม่มีการเขียนหรือกดบันทึกใด ๆ จนกว่าจะกดปุ่ม
+        "ทดลองกรอกเฉพาะช่องนี้" ด้านล่าง และแม้กดแล้วก็จะไม่มีการกดบันทึกใน SGS ให้อัตโนมัติ
+      </p>
+      <button type="button" id="inspect-run">ตรวจสอบตารางคะแนน SGS จริง</button>
+      <p id="real-inspect-error" class="error" hidden></p>
+
+      <div id="real-column-picker-wrap" hidden>
+        <fieldset>
+          <legend>คอลัมน์คะแนนที่พบในหน้า SGS</legend>
+          <div id="real-column-picker"></div>
+        </fieldset>
+        <p id="real-column-match-warning" class="error" hidden></p>
+      </div>
+
+      <div id="real-fill-preview-wrap" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th>เลขที่</th>
+              <th>นักเรียน</th>
+              <th>คะแนน KrunameClass</th>
+              <th>คะแนนเดิม SGS</th>
+              <th>คะแนนใหม่</th>
+              <th>สถานะการจับคู่</th>
+            </tr>
+          </thead>
+          <tbody id="real-fill-preview-body"></tbody>
+        </table>
+        <button type="button" id="fill-selected-column" disabled>ทดลองกรอกเฉพาะช่องนี้</button>
+        <p class="hint">
+          ครูต้องตรวจสอบผลลัพธ์และกดบันทึก ("Save") ในหน้า SGS ด้วยตนเองเสมอ — ปุ่มนี้ไม่กดบันทึกให้อัตโนมัติ
+        </p>
+        <div id="fill-result" hidden></div>
+      </div>
+    </section>
+
     <script type="module" src="popup.js"></script>
   </body>
 </html>
