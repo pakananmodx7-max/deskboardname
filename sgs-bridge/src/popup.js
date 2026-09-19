@@ -4,7 +4,7 @@ import {
   formatSgsExistingScoreDisplay,
   formatSgsNewValueDisplay,
 } from './lib/column-fill.js'
-import { collectAllTableRowFacts, collectRawSgsFacts, fillSgsColumnValues, readColumnValues } from './content-diagnostic.js'
+import { collectAllTableRowFacts, collectRawSgsFacts, readColumnValues } from './content-diagnostic.js'
 import {
   buildCompactStudentGridReport,
   buildDiagnosticReport,
@@ -14,12 +14,14 @@ import {
 import { matchStudentsToSgs } from './lib/mapping.js'
 import { validateSgsBridgePayload } from './lib/payload-validation.js'
 import {
-  buildSgsRealWriteInstructions,
   computeSgsRealFillPlan,
   formatSgsExistingScoreDisplay as formatRealExistingScoreDisplay,
   formatSgsNewValueDisplay as formatRealNewValueDisplay,
-  summarizeSgsRealFillPlan,
 } from './lib/sgs-real-fill.js'
+// Item 5's "ทดสอบ 1 คน" (test one student) plan builder — see its own
+// doc comment for why the write button it feeds stays permanently
+// unwired in this phase (never a click listener, never enabled).
+import { buildSingleCellTestPlan, formatSingleCellTestSummary } from './lib/single-cell-test.js'
 import {
   buildGridWarnings,
   buildSgsRowKey,
@@ -72,12 +74,25 @@ const realTargetLabelEl = document.getElementById('real-target-label')
 const realColumnPickerWrap = document.getElementById('real-column-picker-wrap')
 const realColumnPickerEl = document.getElementById('real-column-picker')
 const realColumnMatchWarningEl = document.getElementById('real-column-match-warning')
+const realActivatableColumnsWrap = document.getElementById('real-activatable-columns-wrap')
+const realActivatableColumnsEl = document.getElementById('real-activatable-columns')
+const realRescanBtn = document.getElementById('real-rescan-btn')
 const realDerivedColumnsWrap = document.getElementById('real-derived-columns-wrap')
 const realDerivedColumnsEl = document.getElementById('real-derived-columns')
 const realFillPreviewWrap = document.getElementById('real-fill-preview-wrap')
 const realFillPreviewBody = document.getElementById('real-fill-preview-body')
-const fillBtn = document.getElementById('fill-selected-column')
-const fillResultEl = document.getElementById('fill-result')
+
+// Item 5's single-cell test scaffolding — see the module doc comment on
+// single-cell-test.js for why sctWriteBtn/sctConfirm never get a click
+// handler or their `disabled` attribute removed in this phase.
+const singleCellTestWrap = document.getElementById('single-cell-test-wrap')
+const sctStudentSelect = document.getElementById('sct-student')
+const sctColumnSelect = document.getElementById('sct-column')
+const sctPreviewBtn = document.getElementById('sct-preview-btn')
+const sctPreviewEl = document.getElementById('sct-preview')
+const sctColumnLabelEl = document.getElementById('sct-column-label')
+const sctCurrentValueEl = document.getElementById('sct-current-value')
+const sctNewValueEl = document.getElementById('sct-new-value')
 
 /** The raw facts collectAllTableRowFacts returned for the CURRENT
  * inspection — kept only so runColumnPreview() can read row text
@@ -93,7 +108,8 @@ let currentGridCandidate = null
  * is scoped to this single value. */
 let confirmedRealColumn = null
 /** The plan computeSgsRealFillPlan produced for confirmedRealColumn —
- * consumed by runFillSelectedColumn(). */
+ * consumed by renderRealFillPreview() and to populate the single-cell
+ * test student picker. Never fed to a bulk DOM write (see item 4/5). */
 let realPlan = null
 
 async function getActiveTab() {
@@ -209,12 +225,26 @@ function resetRealInspectionState() {
   realColumnPickerWrap.hidden = true
   realColumnPickerEl.replaceChildren()
   realColumnMatchWarningEl.hidden = true
+  realActivatableColumnsWrap.hidden = true
+  realActivatableColumnsEl.replaceChildren()
   realDerivedColumnsWrap.hidden = true
   realDerivedColumnsEl.replaceChildren()
   realFillPreviewWrap.hidden = true
   realFillPreviewBody.replaceChildren()
-  fillBtn.disabled = true
-  fillResultEl.hidden = true
+  resetSingleCellTestState()
+}
+
+/**
+ * Item 5's scaffolding, kept hidden until a writable-column preview
+ * exists to populate it from. sctWriteBtn/sctConfirm are never touched
+ * here (or anywhere else) — they stay exactly as HTML declared them
+ * (disabled, no listener) for the whole lifetime of this phase.
+ */
+function resetSingleCellTestState() {
+  singleCellTestWrap.hidden = true
+  sctStudentSelect.replaceChildren()
+  sctColumnSelect.replaceChildren()
+  sctPreviewEl.hidden = true
 }
 
 async function loadPayloadFromFile(file) {
@@ -281,12 +311,12 @@ function renderMappingResult(payload) {
 }
 
 /**
- * Item 5 of the spec: the fill button must stay disabled/hidden until
- * studentGrid.found === true AND number/code/name are all confidently
- * identified AND at least one WRITABLE score column exists (never just
- * "a score column" — a calculated total or a % column never counts).
- * Checked again right before rendering the picker/preview, not just
- * once at the top.
+ * The original spec's item 5: a column is only ever eligible to be
+ * confirmed/previewed once studentGrid.found === true AND number/code/
+ * name are all confidently identified AND at least one WRITABLE score
+ * column exists (never just "a score column" — a calculated total or a
+ * % column never counts). Checked again right before rendering the
+ * picker/preview, not just once at the top.
  */
 function gridMeetsFillRequirements(candidate) {
   if (!candidate) return false
@@ -319,7 +349,7 @@ function isConfirmedColumnWritable(candidate, column) {
  * this replaced), and lists every real score column candidate with its
  * derived columnKey/max score. Tries to auto-match the teacher's
  * KrunameClass column choice by label, but NEVER silently proceeds on
- * an AMBIGUOUS or NOT_FOUND match, and NEVER enables the fill button
+ * an AMBIGUOUS or NOT_FOUND match, and NEVER previews/confirms a column
  * unless gridMeetsFillRequirements passes.
  */
 async function runRealColumnInspection() {
@@ -349,11 +379,19 @@ async function runRealColumnInspection() {
     return
   }
   if (candidate.writableScoreColumns.length === 0) {
-    realInspectErrorEl.textContent =
-      candidate.derivedColumns.length > 0
-        ? 'พบตารางนักเรียนแต่คอลัมน์คะแนนที่พบทั้งหมดเป็นคอลัมน์คำนวณ/อ่านอย่างเดียว (เช่น รวมตลอดภาค, %, ปกติ) — ไม่มีช่องให้กรอกจริง'
-        : 'พบตารางนักเรียนแต่ไม่พบคอลัมน์คะแนนที่กรอกได้จริง'
+    // LIVE DISCOVERY (item 2): a column merely gated by an unchecked SGS
+    // header checkbox is REAL and activatable — never described the same
+    // way as a genuinely calculated/read-only column.
+    if (candidate.activatableScoreColumns.length > 0) {
+      realInspectErrorEl.textContent = `พบคอลัมน์คะแนนจริงแต่ยังไม่ได้เปิดใช้งานใน SGS — กรุณาติ๊กเปิดช่องคะแนนใน SGS ก่อน: ${candidate.activatableScoreColumns.map((c) => c.label).join(', ')}`
+    } else {
+      realInspectErrorEl.textContent =
+        candidate.derivedColumns.length > 0
+          ? 'พบตารางนักเรียนแต่คอลัมน์คะแนนที่พบทั้งหมดเป็นคอลัมน์คำนวณ/อ่านอย่างเดียว (เช่น รวมตลอดภาค, %, ปกติ) — ไม่มีช่องให้กรอกจริง'
+          : 'พบตารางนักเรียนแต่ไม่พบคอลัมน์คะแนนที่กรอกได้จริง'
+    }
     realInspectErrorEl.hidden = false
+    renderRealColumnPicker(candidate, { status: 'NOT_FOUND', column: null })
     return
   }
 
@@ -385,20 +423,30 @@ async function runRealColumnInspection() {
 
 const DERIVED_COLUMN_REASON_LABEL = {
   label_indicates_calculated_or_status: 'ชื่อคอลัมน์บ่งชี้ว่าเป็นค่าที่คำนวณ/สถานะ (เช่น รวมตลอดภาค, %, ปกติ)',
-  disabled_input: 'ช่องกรอกถูกปิดใช้งาน (disabled)',
   readonly_input: 'ช่องกรอกเป็นแบบอ่านอย่างเดียว (readonly)',
   no_input: 'ไม่มีช่องกรอกข้อมูลจริง',
   not_uniformly_editable: 'ไม่ใช่ทุกแถวมีช่องกรอกแบบเดียวกัน',
 }
 
 /**
+ * Item 3 of the live-discovery spec — the exact required workflow
+ * message: a real score column that's simply not been switched on in
+ * SGS yet is NEVER described as broken/derived, only as "ยังไม่ได้เปิด."
+ */
+const ACTIVATABLE_COLUMN_REASON_LABEL = {
+  header_checkbox_unchecked: (label) => `ช่อง ${label} ยังไม่ได้เปิดใน SGS กรุณาติ๊ก checkbox ช่อง ${label} ก่อน`,
+  disabled_input: (label) => `ช่อง ${label} ถูกปิดใช้งานอยู่ในขณะนี้ (ไม่ใช่คอลัมน์คำนวณ) — ตรวจสอบใน SGS`,
+}
+
+/**
  * Only ever offers candidate.writableScoreColumns as fill-target radio
  * options — item 5's "never allow fill into a calculated total/
  * percentage/grade-status/non-selected column" starts here: a derived
- * column can never even be SELECTED, let alone filled. The excluded
- * columns are still listed (read-only, with their reason) purely for
- * the teacher's own transparency about what this scan found and why it
- * was skipped.
+ * column can never even be SELECTED, let alone filled. `activatableScoreColumns`
+ * (item 2/3) are shown separately with the exact "กรุณาติ๊กเปิดช่องคะแนนนี้
+ * ใน SGS ก่อน" workflow message and a re-scan button — never merged into
+ * the derived list, and never auto-checked (item 3: this extension never
+ * clicks/toggles the SGS header checkbox itself).
  */
 function renderRealColumnPicker(gridCandidate, matchResult) {
   realColumnPickerEl.replaceChildren(
@@ -423,6 +471,16 @@ function renderRealColumnPicker(gridCandidate, matchResult) {
   )
   realColumnPickerWrap.hidden = false
 
+  realActivatableColumnsEl.replaceChildren(
+    ...gridCandidate.activatableScoreColumns.map((activatable) => {
+      const li = document.createElement('li')
+      const describe = ACTIVATABLE_COLUMN_REASON_LABEL[activatable.reason]
+      li.textContent = describe ? describe(activatable.label) : `${activatable.label} — ${activatable.reason}`
+      return li
+    }),
+  )
+  realActivatableColumnsWrap.hidden = gridCandidate.activatableScoreColumns.length === 0
+
   realDerivedColumnsEl.replaceChildren(
     ...gridCandidate.derivedColumns.map((derived) => {
       const li = document.createElement('li')
@@ -438,9 +496,9 @@ function renderRealColumnPicker(gridCandidate, matchResult) {
  * confirmed table/row-range currentGridInspection already found — never
  * any other column's, and never a fresh re-guess of which table is the
  * grid (that was already confirmed in runRealColumnInspection). Builds
- * the REAL preview (item 7 of the spec) from actually-matched SGS rows,
- * and only enables the fill button when gridMeetsFillRequirements
- * passed (item 7's gate).
+ * the REAL preview (item 7 of the original spec) from actually-matched
+ * SGS rows — read-only; see renderRealFillPreview's own doc comment for
+ * why no write ever follows from this in the current phase.
  */
 async function runColumnPreview() {
   if (!confirmedRealColumn || !loadedPayload || !currentGridCandidate || !currentGridFacts) return
@@ -486,8 +544,18 @@ async function runColumnPreview() {
 
   realPlan = computeSgsRealFillPlan(krunameStudents, mappingResults, existingScoresBySgsRowKey, loadedPayload.overwriteMode)
   renderRealFillPreview(realPlan)
+  populateSingleCellTestPickers(realPlan, currentGridCandidate)
 }
 
+/**
+ * Item 4 of the live-discovery spec: a READ-ONLY preview table only —
+ * existing SGS value vs. the proposed KrunameClass value. This never
+ * writes anything; the bulk "กรอกจริงแบบกลุ่ม" action has been removed
+ * entirely (see the module header and popup.html's own explanatory
+ * text) because the real SGS page auto-saves with no Save button, so a
+ * bulk write is unsafe until the much narrower single-cell test mode
+ * (item 5, below) has been validated live.
+ */
 function renderRealFillPreview(plan) {
   realFillPreviewBody.replaceChildren(
     ...plan.map((row) => {
@@ -509,59 +577,88 @@ function renderRealFillPreview(plan) {
     }),
   )
   realFillPreviewWrap.hidden = false
-  // Item 7 of the spec: never enabled unless studentGrid.found AND
-  // number/code/name are all confidently identified AND at least one
-  // score column exists — checked again here, not just once upstream.
-  fillBtn.disabled = !gridMeetsFillRequirements(currentGridCandidate)
-  fillResultEl.hidden = true
 }
 
 /**
- * Item 8-11 of the spec: builds the write list for ONLY
- * confirmedRealColumn (never a different column), calls
- * fillSgsColumnValues with that one columnIndex, and reports the five
- * required result buckets. Never clicks Save — see
- * fillSgsColumnValues's own doc comment in content-diagnostic.js.
+ * Item 5 scaffolding: populates the "ทดสอบ 1 คน" student/column pickers
+ * once a real column preview exists. Only MATCHED students with a real
+ * KrunameClass score are offered (nothing else could ever produce a
+ * valid single-cell plan — see buildSingleCellTestPlan), and only
+ * writableNow columns are offered (never a derived/activatable one —
+ * the same rule isConfirmedColumnWritable enforces for the main flow).
+ * This only shows the section; it never enables or wires up the actual
+ * write button (see the module doc comment on single-cell-test.js).
  */
-async function runFillSelectedColumn() {
-  if (!confirmedRealColumn || !realPlan || !currentGridCandidate) return
-  if (!gridMeetsFillRequirements(currentGridCandidate)) return
-  if (!isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn)) return
+function populateSingleCellTestPickers(plan, candidate) {
+  const testableRows = plan
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.mappingStatus === 'MATCHED' && row.krunameScore !== null && row.krunameScore !== undefined)
 
-  const instructions = buildSgsRealWriteInstructions(realPlan, confirmedRealColumn.key)
-  const writesByOffset = {}
-  for (const instruction of instructions) {
-    const offset = sgsRowIndexFromKey(instruction.sgsRowKey)
-    if (offset !== null) writesByOffset[offset] = instruction.value
+  if (testableRows.length === 0 || candidate.writableScoreColumns.length === 0) {
+    resetSingleCellTestState()
+    return
   }
+
+  sctStudentSelect.replaceChildren(
+    ...testableRows.map(({ row, index }) => {
+      const option = document.createElement('option')
+      option.value = String(index)
+      option.textContent = `${row.studentNumber ?? '-'} ${row.fullName}`
+      return option
+    }),
+  )
+  sctColumnSelect.replaceChildren(
+    ...candidate.writableScoreColumns.map((column) => {
+      const option = document.createElement('option')
+      option.value = String(column.columnIndex)
+      option.textContent = `${column.label}${column.maxScore !== null ? ` (เต็ม ${column.maxScore})` : ''}`
+      return option
+    }),
+  )
+  sctPreviewEl.hidden = true
+  singleCellTestWrap.hidden = false
+}
+
+/**
+ * Item 5: reads the CURRENT value for exactly one student's one column
+ * (never a range) and builds the single-cell plan for display only —
+ * see single-cell-test.js's module doc comment for why nothing here
+ * ever performs the actual write.
+ */
+async function runSingleCellTestPreview() {
+  if (!realPlan || !currentGridCandidate) return
+  const rowIndex = Number(sctStudentSelect.value)
+  const columnIndex = Number(sctColumnSelect.value)
+  const planRow = realPlan[rowIndex]
+  const column = currentGridCandidate.writableScoreColumns.find((c) => c.columnIndex === columnIndex)
+  if (!planRow || !column) return
+
+  const sgsRowOffset = sgsRowIndexFromKey(planRow.matchedSgsRowKey)
+  if (sgsRowOffset === null) return
 
   const { tableIndex, run } = currentGridCandidate
   const tab = await getActiveTab()
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: fillSgsColumnValues,
-    args: [tableIndex, run.startIndex, confirmedRealColumn.columnIndex, writesByOffset],
+    func: readColumnValues,
+    // Exactly ONE row (runLength: 1), exactly ONE column — never a range.
+    args: [tableIndex, run.startIndex + sgsRowOffset, 1, columnIndex],
   })
-  const domResult = injection.result
-  const summary = summarizeSgsRealFillPlan(realPlan)
+  const result = injection.result
+  const currentValue = result.found ? (result.values[0] ?? null) : null
 
-  const lines = [
-    `จับคู่ได้ (matched): ${summary.matched}`,
-    `กรอกแล้ว (written): ${summary.written}`,
-    `ข้าม — ไม่มีคะแนน (skipped no score): ${summary.skippedNoScore}`,
-    `ข้าม — มีคะแนนเดิมอยู่แล้ว (skipped existing): ${summary.skippedExisting}`,
-    `จับคู่ไม่ได้/ไม่แน่ใจ (ambiguous/not found): ${summary.ambiguousOrNotFound}`,
-  ]
-  if (domResult.writtenCount !== summary.written) {
-    lines.push(`คำเตือน: หน้า SGS รายงานว่ากรอกได้จริง ${domResult.writtenCount} ช่อง (ต่างจากแผนที่คำนวณไว้)`)
-  }
-  if (domResult.missingOffsets.length > 0) {
-    lines.push(`ไม่พบช่องกรอกคะแนนสำหรับแถวลำดับ: ${domResult.missingOffsets.join(', ')}`)
-  }
-  lines.push('โปรดตรวจสอบผลลัพธ์ในหน้า SGS แล้วกดบันทึกด้วยตนเอง — ระบบไม่กดบันทึกให้อัตโนมัติ')
+  const plan = buildSingleCellTestPlan({
+    sgsRowOffset,
+    columnIndex,
+    columnKey: column.key,
+    currentValue,
+    newValue: planRow.krunameScore,
+  })
 
-  fillResultEl.replaceChildren(...lines.map((line) => Object.assign(document.createElement('p'), { textContent: line })))
-  fillResultEl.hidden = false
+  sctColumnLabelEl.textContent = column.label
+  sctCurrentValueEl.textContent = plan.valid ? (plan.currentValue === null ? 'ว่าง' : String(plan.currentValue)) : '—'
+  sctNewValueEl.textContent = plan.valid ? String(plan.newValue) : formatSingleCellTestSummary(plan)
+  sctPreviewEl.hidden = false
 }
 
 fileInput.addEventListener('change', () => {
@@ -646,9 +743,21 @@ inspectBtn.addEventListener('click', () => {
   void runRealColumnInspection()
 })
 
-fillBtn.addEventListener('click', () => {
-  void runFillSelectedColumn()
+// Item 3's example workflow: teacher manually checks the SGS header
+// checkbox, then the Bridge re-scans — this button just re-runs the
+// exact same inspection, never toggles anything in the SGS page itself.
+realRescanBtn.addEventListener('click', () => {
+  void runRealColumnInspection()
 })
+
+sctPreviewBtn.addEventListener('click', () => {
+  void runSingleCellTestPreview()
+})
+
+// Item 5: sct-write-btn and sct-confirm are DELIBERATELY never wired up
+// here — no click listener, no `.disabled = false` anywhere in this
+// file. They stay exactly as popup.html declared them (disabled) until
+// detection has been revalidated against the live SGS page.
 
 async function restoreSessionPayload() {
   const stored = await chrome.storage.session.get(SESSION_PAYLOAD_KEY)

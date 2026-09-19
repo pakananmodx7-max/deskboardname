@@ -52,6 +52,15 @@ section:last-child {
   font-size: 12px;
 }
 
+.warning {
+  color: #7a4b00;
+  background: #fff4e5;
+  border: 1px solid #f0c674;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

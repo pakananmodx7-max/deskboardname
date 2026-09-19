@@ -209,8 +209,16 @@ export function buildColumnKey(headerText, columnIndex) {
  * run, with its max score shown in a separate row further up) — see
  * deriveScoreColumnHeader below for how that's combined. Traces up to
  * `maxRowsUp` rows immediately above the run for ONE column, collecting
- * every non-empty (non-input) cell's text found, ordered
- * furthest-from-data first, closest-to-data last.
+ * every non-empty header cell's text found, ordered furthest-from-data
+ * first, closest-to-data last.
+ *
+ * LIVE DISCOVERY: a real SGS header cell can ALSO contain the column's
+ * gating checkbox (see findHeaderCheckboxState) — content-diagnostic.js
+ * now always captures a cell's text regardless of whether it also has
+ * an input (see its own doc comment), so this no longer skips a header
+ * cell just because `hasInput` is true; skipping it would silently
+ * discard that checkbox cell's own visible label (e.g. "10" next to its
+ * checkbox).
  */
 export function traceColumnHeaderTexts(tableFacts, columnIndex, runStartIndex, maxRowsUp = 6) {
   const texts = []
@@ -218,7 +226,7 @@ export function traceColumnHeaderTexts(tableFacts, columnIndex, runStartIndex, m
     const rowIndex = runStartIndex - distance
     if (rowIndex < 0) continue
     const cell = tableFacts.rows[rowIndex]?.[columnIndex]
-    const text = cell && !cell.hasInput ? (cell.text ?? '').trim() : ''
+    const text = cell ? (cell.text ?? '').trim() : ''
     if (text) texts.push(text)
   }
   return texts
@@ -256,10 +264,21 @@ export function deriveScoreColumnHeader(headerTexts) {
  * column," never a place a teacher directly types a score into — a
  * running total, a percentage, an attendance/behavior status, a grade
  * letter, a GPA. Checked in ADDITION to actual input-editability
- * (analyzeColumnEditability below); a column is only ever offered as a
+ * (analyzeColumnRowInputState below); a column is only ever offered as a
  * fill target when BOTH agree it's safe.
+ *
+ * LIVE DISCOVERY additions: แก้ตัว/เรียนซ้ำ ("retake"/"repeat") are
+ * grading-status flags, not numeric score entry; Remark is a free-text
+ * note column. (หลังกลางภาค — "after midterm" — is left OUT of this
+ * list deliberately: on the real page it may be a genuine teacher-facing
+ * running subtotal rather than a status flag, and nothing in the live
+ * discovery confirmed it's calculated, so it's still classified the same
+ * way as any other numbered/named score column.) None of these matched
+ * labels are ever a real score-entry column, regardless of what their
+ * inputs' current disabled/checkbox state looks like.
  */
-const DERIVED_COLUMN_LABEL_KEYWORDS = /รวม|ตลอดภาค|เฉลี่ย|เกรด|ผลการเรียน|สถานะ|ปกติ|^%$|เปอร์เซ็นต์|ร้อยละ|GPA/i
+const DERIVED_COLUMN_LABEL_KEYWORDS =
+  /รวม|ตลอดภาค|เฉลี่ย|เกรด|ผลการเรียน|สถานะ|ปกติ|แก้ตัว|เรียนซ้ำ|remark|^%$|เปอร์เซ็นต์|ร้อยละ|GPA/i
 
 export function isDerivedColumnLabel(label) {
   return typeof label === 'string' && DERIVED_COLUMN_LABEL_KEYWORDS.test(label)
@@ -268,12 +287,14 @@ export function isDerivedColumnLabel(label) {
 /**
  * Determines whether EVERY row in the run has exactly one genuinely
  * editable input in this column — the ONLY thing that makes a column a
- * safe fill target (item 5 of the spec: "each row has exactly one
- * writable input for that target column"). A column where some rows
- * have no input at all, or more than one, or the input is
- * disabled/readonly, or isn't a text/number field (e.g. a hidden field,
- * a checkbox, a calculated field rendered as a locked control), is
- * never writable — whatever its header says.
+ * safe fill target (item 5 of the original spec: "each row has exactly
+ * one writable input for that target column"). Kept for backward
+ * compatibility with anything that only needs a single disabled/readonly
+ * signal; classifyScoreColumns below now uses the richer
+ * analyzeColumnRowInputState instead, which is aware of per-input
+ * VISIBILITY (see the LIVE DISCOVERY note there) and never confuses a
+ * hidden sibling control's state with the one the teacher can actually
+ * see and type into.
  */
 export function analyzeColumnEditability(columnIndex, rowsInRun) {
   const cells = rowsInRun.map((row) => row[columnIndex]).filter(Boolean)
@@ -298,14 +319,148 @@ export function analyzeColumnEditability(columnIndex, rowsInRun) {
 }
 
 /**
+ * LIVE DISCOVERY (item 6 of the follow-up spec): finds a checkbox in one
+ * of the header rows traced above the student run, for ONE column —
+ * a real SGS score column's header holds a checkbox that gates whether
+ * that column's row inputs are editable at all. Scans from the row
+ * closest to the data upward (a checkbox row is expected to sit
+ * immediately above the student rows, not several group-header rows
+ * further up), and reports `present: false` — never a guess — when no
+ * such checkbox is found in any traced row.
+ */
+export function findHeaderCheckboxState(tableFacts, columnIndex, runStartIndex, maxRowsUp = 6) {
+  for (let distance = 1; distance <= maxRowsUp; distance++) {
+    const rowIndex = runStartIndex - distance
+    if (rowIndex < 0) continue
+    const cell = tableFacts.rows[rowIndex]?.[columnIndex]
+    if (cell?.hasInput && cell.inputMeta?.type === 'checkbox') {
+      return { present: true, checked: cell.inputMeta.checked === true }
+    }
+  }
+  return { present: false, checked: false }
+}
+
+/**
+ * LIVE DISCOVERY (item 6): per-row input state for ONE column, built
+ * ONLY from the ACTUAL VISIBLE control content-diagnostic.js's
+ * inspectCellFormControl already chose for each cell — never inferred
+ * from the outer table, a cloned/hidden control, a header element, or an
+ * unrelated input. `visibleCount`/`visible` come straight from that
+ * choice, so a cell with a hidden helper input alongside the real,
+ * visible, enabled one is correctly counted as "one visible input,
+ * enabled" rather than "two inputs, ambiguous."
+ *
+ * Falls back to treating a cell's control as visible/enabled when an
+ * older-shaped inputMeta (without `visible`/`visibleCount`, e.g. a test
+ * fixture written before this fix) is passed in, preserving prior
+ * behavior for callers that never had a visibility concept at all.
+ */
+export function analyzeColumnRowInputState(columnIndex, rowsInRun) {
+  const cells = rowsInRun.map((row) => row[columnIndex]).filter(Boolean)
+  const inputCells = cells.filter((c) => c.hasInput && c.inputMeta)
+
+  let visibleInputCount = 0
+  let enabledInputCount = 0
+  let disabledInputCount = 0
+  let readonlyInputCount = 0
+
+  for (const cell of inputCells) {
+    const meta = cell.inputMeta
+    const isVisible = meta.visible !== undefined ? meta.visible : true
+    if (isVisible) visibleInputCount += 1
+    if (!isVisible || meta.disabled) disabledInputCount += 1
+    else if (meta.readonly) readonlyInputCount += 1
+    else enabledInputCount += 1
+  }
+
+  const allRowsHaveInput = cells.length > 0 && inputCells.length === cells.length
+  const allSingleInput =
+    inputCells.length > 0 &&
+    inputCells.every((c) => {
+      const visibleCount = c.inputMeta.visibleCount ?? c.inputMeta.count
+      return visibleCount <= 1
+    })
+  const allEditableType =
+    inputCells.length > 0 && inputCells.every((c) => c.inputMeta.type === 'text' || c.inputMeta.type === 'number')
+
+  return {
+    rowCount: cells.length,
+    visibleInputCount,
+    enabledInputCount,
+    disabledInputCount,
+    readonlyInputCount,
+    allRowsHaveInput,
+    allSingleInput,
+    allEditableType,
+    anyDisabled: disabledInputCount > 0,
+    anyReadonly: readonlyInputCount > 0,
+  }
+}
+
+/**
+ * Section 1 of the live-discovery spec: the raw per-column CURRENT
+ * state — header label/max score, header checkbox presence/checked
+ * state, and the row-level visible/enabled/disabled/readonly counts —
+ * with NO classification decision made yet (that's classifyScoreColumns
+ * below). `writableNow` here means exactly what item 1's example shows:
+ * a structurally sound column (one visible text/number input per row)
+ * whose header checkbox (if it has one) is checked and whose inputs are
+ * not currently disabled/readonly — never inferred from the header
+ * label alone.
+ */
+export function scanScoreColumnState(tableFacts, columnIndex, run) {
+  const rowsInRun = tableFacts.rows.slice(run.startIndex, run.startIndex + run.length)
+  const headerTexts = traceColumnHeaderTexts(tableFacts, columnIndex, run.startIndex)
+  const { label, maxScore } = deriveScoreColumnHeader(headerTexts)
+  const checkboxState = findHeaderCheckboxState(tableFacts, columnIndex, run.startIndex)
+  const rowState = analyzeColumnRowInputState(columnIndex, rowsInRun)
+
+  const structurallySound =
+    rowState.allRowsHaveInput && rowState.rowCount > 0 && rowState.allSingleInput && rowState.allEditableType
+  const checkboxGatesOff = checkboxState.present && !checkboxState.checked
+
+  return {
+    columnIndex,
+    label,
+    maxScore,
+    rowCount: rowState.rowCount,
+    headerCheckboxPresent: checkboxState.present,
+    headerCheckboxChecked: checkboxState.checked,
+    visibleInputCount: rowState.visibleInputCount,
+    enabledInputCount: rowState.enabledInputCount,
+    disabledInputCount: rowState.disabledInputCount,
+    readonlyInputCount: rowState.readonlyInputCount,
+    allRowsHaveInput: rowState.allRowsHaveInput,
+    allSingleInput: rowState.allSingleInput,
+    allEditableType: rowState.allEditableType,
+    anyReadonly: rowState.anyReadonly,
+    anyDisabled: rowState.anyDisabled,
+    writableNow: structurallySound && !rowState.anyReadonly && !rowState.anyDisabled && !checkboxGatesOff,
+  }
+}
+
+/**
  * Splits every input column from the accepted run (excluding identifier
- * columns) into `writableScoreColumns` (a real, editable, per-row-
- * unique text/number input, with a header that doesn't look like a
- * calculated/status field) and `derivedColumns` (everything else —
- * รวมตลอดภาค, %, ปกติ, a disabled/readonly box, or any column this
- * can't confidently call safe), each tagged with WHY it was excluded.
- * `derivedColumns` is reporting only — see popup.js's
- * gridMeetsFillRequirements for the actual write-time gate.
+ * columns) into THREE buckets (LIVE DISCOVERY, item 2):
+ *
+ *  - `writableScoreColumns` ("writableNow"): a real, structurally sound
+ *    score column whose header checkbox (if any) is checked and whose
+ *    row inputs are actually enabled right now.
+ *  - `activatableScoreColumns`: a real, structurally sound score column
+ *    that is CURRENTLY disabled only because its header checkbox is
+ *    unchecked (or its inputs are otherwise disabled) — NEVER classified
+ *    as derived just because it's disabled right now (item 2's explicit
+ *    requirement).
+ *  - `derivedColumns`: genuinely calculated/status columns (by label —
+ *    รวมตลอดภาค, %, ปกติ, ...), columns with no input at all, columns
+ *    that aren't uniformly one-visible-input-per-row, or a column whose
+ *    input is READONLY (a computed value rendered read-only is never
+ *    "just needs its checkbox checked" — unchecking/checking a header
+ *    checkbox toggles `disabled`, not `readonly`, on the live page).
+ *
+ * `derivedColumns`/`activatableScoreColumns` are reporting only — see
+ * popup.js's gridMeetsFillRequirements for the actual write-time gate,
+ * which only ever allows a `writableScoreColumns` entry.
  */
 export function classifyScoreColumns(tableFacts, run, identifierColumns) {
   const rowsInRun = tableFacts.rows.slice(run.startIndex, run.startIndex + run.length)
@@ -318,41 +473,61 @@ export function classifyScoreColumns(tableFacts, run, identifierColumns) {
   const candidateIndexes = fingerprint.inputCellIndexes.filter((index) => !identifierSet.has(index))
 
   const writableScoreColumns = []
+  const activatableScoreColumns = []
   const derivedColumns = []
 
   for (const columnIndex of candidateIndexes) {
-    const headerTexts = traceColumnHeaderTexts(tableFacts, columnIndex, run.startIndex)
-    const { label, maxScore } = deriveScoreColumnHeader(headerTexts)
-    if (isRejectedHeaderText(label ?? '')) continue // an academic year/menu/login label — not a real column at all
+    const state = scanScoreColumnState(tableFacts, columnIndex, run)
+    if (isRejectedHeaderText(state.label ?? '')) continue // an academic year/menu/login label — not a real column at all
 
-    const resolvedLabel = label ?? `คอลัมน์ ${columnIndex + 1}`
-    const editability = analyzeColumnEditability(columnIndex, rowsInRun)
-    const derivedByLabel = isDerivedColumnLabel(label)
+    const resolvedLabel = state.label ?? `คอลัมน์ ${columnIndex + 1}`
 
-    if (editability.hasEditableInput && !derivedByLabel) {
-      writableScoreColumns.push({
-        columnIndex,
-        key: buildColumnKey(resolvedLabel, columnIndex),
-        label: resolvedLabel,
-        maxScore,
-        inputPattern: editability.inputType ?? 'text',
-        inputCount: editability.inputCount,
-      })
-    } else {
-      const reason = derivedByLabel
-        ? 'label_indicates_calculated_or_status'
-        : editability.disabled
-          ? 'disabled_input'
-          : editability.readonly
-            ? 'readonly_input'
-            : editability.inputCount === 0
-              ? 'no_input'
-              : 'not_uniformly_editable'
-      derivedColumns.push({ columnIndex, label: resolvedLabel, reason })
+    if (isDerivedColumnLabel(state.label)) {
+      derivedColumns.push({ columnIndex, label: resolvedLabel, reason: 'label_indicates_calculated_or_status' })
+      continue
     }
+    if (!state.allRowsHaveInput) {
+      derivedColumns.push({ columnIndex, label: resolvedLabel, reason: 'no_input' })
+      continue
+    }
+    if (!state.allSingleInput || !state.allEditableType) {
+      derivedColumns.push({ columnIndex, label: resolvedLabel, reason: 'not_uniformly_editable' })
+      continue
+    }
+    if (state.anyReadonly) {
+      derivedColumns.push({ columnIndex, label: resolvedLabel, reason: 'readonly_input' })
+      continue
+    }
+
+    const shared = {
+      columnIndex,
+      key: buildColumnKey(resolvedLabel, columnIndex),
+      label: resolvedLabel,
+      maxScore: state.maxScore,
+      headerCheckboxPresent: state.headerCheckboxPresent,
+      headerCheckboxChecked: state.headerCheckboxChecked,
+      visibleInputCount: state.visibleInputCount,
+      enabledInputCount: state.enabledInputCount,
+      disabledInputCount: state.disabledInputCount,
+      readonlyInputCount: state.readonlyInputCount,
+    }
+
+    if (!state.writableNow) {
+      // A real, structurally sound score column that is merely disabled
+      // right now (header checkbox unchecked, or otherwise disabled) —
+      // NEVER derived (item 2's explicit requirement).
+      const checkboxGatesOff = state.headerCheckboxPresent && !state.headerCheckboxChecked
+      activatableScoreColumns.push({
+        ...shared,
+        reason: checkboxGatesOff ? 'header_checkbox_unchecked' : 'disabled_input',
+      })
+      continue
+    }
+
+    writableScoreColumns.push({ ...shared, inputPattern: 'text', inputCount: state.rowCount })
   }
 
-  return { writableScoreColumns, derivedColumns }
+  return { writableScoreColumns, activatableScoreColumns, derivedColumns }
 }
 
 // ==================================================
@@ -424,14 +599,19 @@ export function evaluateStudentGridCandidate(tableFacts, options = {}) {
 
   const rowsInRun = tableFacts.rows.slice(run.startIndex, run.startIndex + run.length)
   const identifierColumns = classifyIdentifierColumns(rowsInRun)
-  const { writableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+  const { writableScoreColumns, activatableScoreColumns, derivedColumns } = classifyScoreColumns(
+    tableFacts,
+    run,
+    identifierColumns,
+  )
 
   const score =
     run.length * 10 +
     (identifierColumns.nameColumnIndex !== null ? 20 : 0) +
     (identifierColumns.numberColumnIndex !== null ? 10 : 0) +
     (identifierColumns.codeColumnIndex !== null ? 5 : 0) +
-    writableScoreColumns.length * 3
+    writableScoreColumns.length * 3 +
+    activatableScoreColumns.length * 1
 
   return {
     tableIndex: tableFacts.tableIndex,
@@ -439,6 +619,7 @@ export function evaluateStudentGridCandidate(tableFacts, options = {}) {
     run,
     identifierColumns,
     writableScoreColumns,
+    activatableScoreColumns,
     derivedColumns,
     studentRowCount: run.length,
     score,
@@ -471,11 +652,17 @@ export function buildGridWarnings(candidate) {
   if (candidate.identifierColumns.numberColumnIndex === null) warnings.push('ไม่พบคอลัมน์เลขที่')
   if (candidate.identifierColumns.codeColumnIndex === null) warnings.push('ไม่พบคอลัมน์รหัสนักเรียน')
   if (candidate.identifierColumns.nameColumnIndex === null) warnings.push('ไม่พบคอลัมน์ชื่อ-นามสกุล')
+  const activatableScoreColumns = candidate.activatableScoreColumns ?? []
   if (candidate.writableScoreColumns.length === 0) {
     warnings.push(
-      candidate.derivedColumns.length > 0
-        ? 'พบคอลัมน์คะแนนแต่ทั้งหมดเป็นคอลัมน์คำนวณ/อ่านอย่างเดียว (เช่น รวมตลอดภาค, %, ปกติ) ไม่มีช่องที่กรอกได้จริง'
-        : 'ไม่พบคอลัมน์คะแนนที่กรอกได้จริง',
+      activatableScoreColumns.length > 0
+        ? // LIVE DISCOVERY: a real score column merely gated by an
+          // unchecked SGS header checkbox — never reported the same way
+          // as a genuinely calculated/read-only column (item 3).
+          `พบคอลัมน์คะแนนที่ยังไม่เปิดใช้งานใน SGS กรุณาติ๊กเปิดช่องคะแนนใน SGS ก่อน: ${activatableScoreColumns.map((c) => c.label).join(', ')}`
+        : candidate.derivedColumns.length > 0
+          ? 'พบคอลัมน์คะแนนแต่ทั้งหมดเป็นคอลัมน์คำนวณ/อ่านอย่างเดียว (เช่น รวมตลอดภาค, %, ปกติ) ไม่มีช่องที่กรอกได้จริง'
+          : 'ไม่พบคอลัมน์คะแนนที่กรอกได้จริง',
     )
   }
   const missingMax = candidate.writableScoreColumns.filter((c) => c.maxScore === null)

@@ -133,14 +133,28 @@ export function collectRawSgsFacts() {
  * sgs-table-extraction.js's job, run afterward in the extension/popup
  * context on the plain data this returns.
  *
- * For a cell WITHOUT an input: only its trimmed, length-capped text.
- * For a cell WITH an input: never its text, but structural metadata
- * about the input(s) inside it — count, the first one's type, and
- * whether any of them is disabled/readonly — which is exactly what's
- * needed to tell a real editable score box apart from a calculated
- * total rendered as a locked input. Also records whether a cell
- * contains a link (`<a>`), used only for pagination-row detection
- * (see detectPagination) — never for score-column classification.
+ * LIVE DISCOVERY (see the header-checkbox comment on inspectCellFormControl
+ * below): a real SGS score column's header holds a checkbox that gates
+ * whether that column's row inputs are editable — checking it is what
+ * turns a "disabled" column into an editable one, and the header cell
+ * containing that checkbox usually ALSO carries the column's visible
+ * label text (e.g. a checkbox next to "10"). Every cell's `text` is
+ * therefore now captured regardless of whether it also has an input —
+ * previously an input-bearing cell always reported `text: ''`, which
+ * silently discarded a header checkbox cell's own label.
+ *
+ * For every cell, this always records its trimmed, length-capped text.
+ * For a cell WITH an input, it additionally records structural metadata
+ * about the ACTUAL VISIBLE control inside it (never a hidden/cloned
+ * sibling control, and never the outer table or a header row's own
+ * unrelated input) — its count of candidate controls, the visible one's
+ * type, disabled/readonly/checked state, and whether a visible control
+ * was found at all — which is exactly what's needed to tell a real
+ * editable score box apart from a calculated total rendered as a locked
+ * input, or a score column whose header checkbox simply hasn't been
+ * checked yet. Also records whether a cell contains a link (`<a>`), used
+ * only for pagination-row detection (see detectPagination) — never for
+ * score-column classification.
  *
  * Deliberately never reads an input's `.value` (a score's current
  * value is only ever read later, for the ONE column/table/row-range the
@@ -158,6 +172,48 @@ export function collectAllTableRowFacts() {
     const id = el.id ? `#${el.id}` : ''
     const firstClass = el.classList && el.classList.length > 0 ? `.${el.classList[0]}` : ''
     return id || firstClass ? `${tag}${id}${firstClass}` : `${tag}[${index}]`
+  }
+
+  /**
+   * SECTION 6 fix: inspects the ACTUAL VISIBLE form control inside a
+   * cell — never the outer table, never a cloned/hidden control, never a
+   * header row's own unrelated input, and never merely the FIRST control
+   * `querySelector` happens to find in DOM order. An ASP.NET page can
+   * render more than one input/select inside a single cell (a hidden
+   * ViewState-style helper alongside the real one); if the FIRST one in
+   * DOM order were always trusted, a genuinely enabled, visible,
+   * keyboard-editable score box could be misreported as disabled just
+   * because a hidden sibling control happens to be disabled. Visibility
+   * is checked via `offsetParent !== null`, which is `null` for any
+   * element that is `display:none` or not in the rendered layout (it is
+   * NOT null for `visibility:hidden`, which the SGS page has not been
+   * observed to use for these controls — offsetParent is the cheapest,
+   * most standard visibility check available without a full computed-
+   * style read).
+   */
+  function inspectCellFormControl(cell) {
+    const candidates = Array.from(cell.querySelectorAll('input,select,textarea'))
+    if (candidates.length === 0) return null
+    const visibleCandidates = candidates.filter((el) => el.offsetParent !== null)
+    // If NO candidate is visible, fall back to the first one so a type/
+    // disabled reading is still reported — but `visible: false` on the
+    // result means "never treat this as something a teacher could type
+    // into," which is exactly how analyzeColumnRowInputState in
+    // sgs-table-extraction.js is required to read it (item 6).
+    const chosen = visibleCandidates[0] || candidates[0]
+    const tag = chosen.tagName.toLowerCase()
+    const type = tag === 'input' ? (chosen.getAttribute('type') || 'text').toLowerCase() : tag
+    return {
+      count: candidates.length,
+      visibleCount: visibleCandidates.length,
+      type,
+      disabled: chosen.disabled === true,
+      readonly: chosen.readOnly === true,
+      // Only meaningful for a checkbox (a score column's header-gate
+      // control per item 1) — null for every other control type.
+      checked: type === 'checkbox' ? chosen.checked === true : null,
+      visible: visibleCandidates.length > 0,
+    }
   }
 
   const MAX_TABLES = 300
@@ -183,26 +239,16 @@ export function collectAllTableRowFacts() {
           Array.from(row.cells)
             .slice(0, MAX_CELLS_PER_ROW)
             .map((cell) => {
-              const inputEl = cell.querySelector('input,select,textarea')
-              const hasInput = inputEl !== null
+              const hasInput = cell.querySelector('input,select,textarea') !== null
               const hasLink = cell.querySelector('a') !== null
-              if (!hasInput) {
-                return { hasInput: false, hasLink, text: textOf(cell), inputMeta: null }
-              }
-              const allInputs = cell.querySelectorAll('input,select,textarea')
-              const tag = inputEl.tagName.toLowerCase()
-              const type = tag === 'input' ? inputEl.getAttribute('type') || 'text' : tag
-              return {
-                hasInput: true,
-                hasLink,
-                text: '',
-                inputMeta: {
-                  count: allInputs.length,
-                  type,
-                  disabled: inputEl.disabled === true,
-                  readonly: inputEl.readOnly === true,
-                },
-              }
+              // Always captured, even when hasInput is true — a real SGS
+              // header checkbox cell carries its column's visible label
+              // text ALONGSIDE the checkbox (see inspectCellFormControl's
+              // doc comment above); discarding text for input-bearing
+              // cells would silently lose that label.
+              const text = textOf(cell)
+              const inputMeta = hasInput ? inspectCellFormControl(cell) : null
+              return { hasInput, hasLink, text, inputMeta }
             }),
         ),
     }))
@@ -243,13 +289,25 @@ export function readColumnValues(tableIndex, runStartIndex, runLength, columnInd
   const table = document.querySelectorAll('table')[tableIndex]
   if (!table) return { found: false, values: {} }
 
+  // Duplicates inspectCellFormControl's visible-preference logic (see
+  // its doc comment in collectAllTableRowFacts above) — never trusts the
+  // FIRST input `querySelector` finds when a hidden sibling control
+  // exists; this function is itself injected via executeScript's `func`
+  // and can't share code with a sibling function once serialized (see
+  // the file header).
+  function pickVisibleControlInline(cell) {
+    const candidates = Array.from(cell.querySelectorAll('input,select'))
+    if (candidates.length === 0) return null
+    return candidates.find((el) => el.offsetParent !== null) || candidates[0]
+  }
+
   const rows = Array.from(table.rows)
   const values = {}
   for (let offset = 0; offset < runLength; offset++) {
     const row = rows[runStartIndex + offset]
     // Only ever indexes into `columnIndex` — the one column requested.
     const cell = row ? row.cells[columnIndex] : null
-    const input = cell ? cell.querySelector('input,select') : null
+    const input = cell ? pickVisibleControlInline(cell) : null
     const raw = input ? input.value : cell ? cell.textContent.trim() : ''
     const parsed = raw === '' ? null : Number(raw)
     values[offset] = Number.isFinite(parsed) ? parsed : null
@@ -275,6 +333,18 @@ export function fillSgsColumnValues(tableIndex, runStartIndex, columnIndex, writ
     return { found: false, writtenCount: 0, missingOffsets: Object.keys(writesByOffset).map(Number) }
   }
 
+  // Duplicates inspectCellFormControl's visible-preference logic (see
+  // its doc comment in collectAllTableRowFacts above) — never writes
+  // into a hidden sibling control when a visible one exists in the same
+  // cell; this function is itself injected via executeScript's `func`
+  // and can't share code with a sibling function once serialized (see
+  // the file header).
+  function pickVisibleControlInline(cell) {
+    const candidates = Array.from(cell.querySelectorAll('input,select'))
+    if (candidates.length === 0) return null
+    return candidates.find((el) => el.offsetParent !== null) || candidates[0]
+  }
+
   const rows = Array.from(table.rows)
   let writtenCount = 0
   const missingOffsets = []
@@ -284,7 +354,7 @@ export function fillSgsColumnValues(tableIndex, runStartIndex, columnIndex, writ
     // Only ever indexes into `columnIndex` — the one column requested —
     // never anything derived from another column.
     const cell = row ? row.cells[columnIndex] : null
-    const input = cell ? cell.querySelector('input,select') : null
+    const input = cell ? pickVisibleControlInline(cell) : null
     if (!input) {
       missingOffsets.push(offset)
       continue

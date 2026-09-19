@@ -58,6 +58,10 @@ export function buildCompactStudentGridReport(facts) {
       codeColumnIndex: candidate?.identifierColumns.codeColumnIndex ?? null,
       nameColumnIndex: candidate?.identifierColumns.nameColumnIndex ?? null,
       writableScoreColumns: candidate?.writableScoreColumns ?? [],
+      // LIVE DISCOVERY: a real score column merely gated by an unchecked
+      // SGS header checkbox — never merged into derivedColumns (see
+      // classifyScoreColumns's own doc comment in sgs-table-extraction.js).
+      activatableScoreColumns: candidate?.activatableScoreColumns ?? [],
       derivedColumns: candidate?.derivedColumns ?? [],
     },
     pagination: detectPagination(facts.tables, candidate),

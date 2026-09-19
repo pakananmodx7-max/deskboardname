@@ -97,6 +97,9 @@ describe('buildCompactStudentGridReport — the exact shape the spec requires', 
     expect(report.studentGrid.derivedColumns).toEqual([
       { columnIndex: 4, label: 'รวมตลอดภาค', reason: 'label_indicates_calculated_or_status' },
     ])
+    // LIVE DISCOVERY: the field exists even when empty — never omitted —
+    // so a consumer can always rely on studentGrid.activatableScoreColumns.
+    expect(report.studentGrid.activatableScoreColumns).toEqual([])
     expect(report.pagination).toEqual({ detected: false, currentPage: null, totalPages: null, visibleStudentRows: 3 })
     // Only 3 sample rows here — computeGridConfidence requires >=5 rows
     // for "high," so this small fixture is honestly "medium."
@@ -148,6 +151,43 @@ describe('buildCompactStudentGridReport — the exact shape the spec requires', 
   it('never contains a password/cookie/token-shaped field', () => {
     const report = buildCompactStudentGridReport(gridFacts)
     expect(JSON.stringify(report)).not.toMatch(/password|cookie|token|secret/i)
+  })
+
+  it('LIVE DISCOVERY: a real score column gated by an unchecked SGS header checkbox is reported as activatableScoreColumns — never writableScoreColumns, never derivedColumns', () => {
+    function checkboxCell(label: string, checked: boolean) {
+      return {
+        hasInput: true,
+        hasLink: false,
+        text: label,
+        inputMeta: { count: 1, visibleCount: 1, type: 'checkbox', disabled: false, readonly: false, visible: true, checked },
+      }
+    }
+    const activatableFacts = {
+      ...gridFacts,
+      tables: [
+        gridFacts.tables[0],
+        {
+          tableIndex: 1,
+          selectorFingerprint: 'table[1]',
+          rows: [
+            [text(''), text(''), text(''), checkboxCell('11', false), text('รวมตลอดภาค')],
+            studentRow('1', '00001', 'สมชาย ใจดี'),
+            studentRow('2', '00002', 'สมหญิง ใจดี'),
+            studentRow('3', '00003', 'วิชัย เก่งกล้า'),
+          ],
+        },
+      ],
+    }
+    const report = buildCompactStudentGridReport(activatableFacts)
+    expect(report.studentGrid.writableScoreColumns).toEqual([])
+    expect(report.studentGrid.activatableScoreColumns).toEqual([
+      expect.objectContaining({ columnIndex: 3, label: '11', reason: 'header_checkbox_unchecked' }),
+    ])
+    expect(report.studentGrid.derivedColumns).toEqual([
+      { columnIndex: 4, label: 'รวมตลอดภาค', reason: 'label_indicates_calculated_or_status' },
+    ])
+    // Never described the same way as a genuinely calculated column.
+    expect(report.warnings.some((w: string) => w.includes('ยังไม่เปิดใช้งาน'))).toBe(true)
   })
 })
 

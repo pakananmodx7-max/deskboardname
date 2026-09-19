@@ -114,16 +114,32 @@ describe('content-diagnostic.js: collectAllTableRowFacts — the ONLY function t
     expect(withoutKnownFilterRead).not.toMatch(/\.value\b/)
   })
 
-  it('never assigns a text value for a cell that hasInput — text is always empty for those cells', () => {
-    expect(source).toContain("text: ''")
-    expect(source).toContain('text: textOf(cell)')
+  it('LIVE DISCOVERY: always captures a cell\'s text, even when it also hasInput — a header checkbox cell carries its column label alongside the checkbox', () => {
+    // Previously an input-bearing cell always reported `text: ''`,
+    // silently discarding a header checkbox cell's own visible label
+    // (e.g. "10" next to its checkbox). Both branches must now use the
+    // SAME textOf(cell) call.
+    expect(source).not.toContain("text: ''")
+    const textAssignments = [...source.matchAll(/const text = ([^\n]+)/g)]
+    expect(textAssignments.length).toBeGreaterThan(0)
+    expect(textAssignments.every((m) => m[1].trim() === 'textOf(cell)')).toBe(true)
   })
 
-  it('reports input structure (count/type/disabled/readonly) instead of a value, for a cell that has an input', () => {
-    expect(source).toContain('inputMeta:')
-    expect(source).toContain('disabled: inputEl.disabled === true')
-    expect(source).toContain('readonly: inputEl.readOnly === true')
-    expect(source).not.toMatch(/inputEl\.value/)
+  it('reports input structure (count/type/disabled/readonly/checked/visible) instead of a value, for a cell that has an input', () => {
+    expect(source).toContain('inputMeta')
+    expect(source).toContain('disabled: chosen.disabled === true')
+    expect(source).toContain('readonly: chosen.readOnly === true')
+    expect(source).not.toMatch(/chosen\.value/)
+    expect(source).not.toMatch(/inputEl/)
+  })
+
+  it('SECTION 6 fix: chooses the VISIBLE control (offsetParent !== null), never blindly the first match in DOM order', () => {
+    expect(source).toContain('offsetParent !== null')
+    expect(source).toContain('visibleCandidates')
+  })
+
+  it('only a checkbox control ever reports a `checked` state — every other type reports null, never a guessed boolean', () => {
+    expect(source).toMatch(/checked:\s*type === 'checkbox' \? chosen\.checked === true : null/)
   })
 
   it('never invents a score-input selector — walks every real table via querySelectorAll, uses each table\'s own .rows', () => {
@@ -218,9 +234,28 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(source).toContain("mappingBtn.addEventListener('click'")
   })
 
-  it('never auto-runs the real-table inspection or the fill action without a button click', () => {
+  it('never auto-runs the real-table inspection or the re-scan/single-cell-preview actions without a button click', () => {
     expect(source).toContain("inspectBtn.addEventListener('click'")
-    expect(source).toContain("fillBtn.addEventListener('click'")
+    expect(source).toContain("realRescanBtn.addEventListener('click'")
+    expect(source).toContain("sctPreviewBtn.addEventListener('click'")
+  })
+
+  it('LIVE DISCOVERY item 4/5: the single-cell test write button and its confirmation checkbox NEVER get a click listener or a `.disabled = false` — they stay permanently unwired in this phase', () => {
+    expect(source).not.toMatch(/sctWriteBtn\.addEventListener/)
+    expect(source).not.toMatch(/sctConfirm\.addEventListener/)
+    expect(source).not.toMatch(/sctWriteBtn\.disabled\s*=\s*false/)
+    expect(source).not.toMatch(/sctConfirm\.disabled\s*=\s*false/)
+    // Never even referenced by id — nothing to accidentally wire up.
+    expect(source).not.toContain("getElementById('sct-write-btn')")
+    expect(source).not.toContain("getElementById('sct-confirm')")
+  })
+
+  it('LIVE DISCOVERY item 4: no bulk real-write path exists at all — fillSgsColumnValues is never imported or called from popup.js', () => {
+    expect(source).not.toMatch(/fillSgsColumnValues/)
+    expect(source).not.toMatch(/buildSgsRealWriteInstructions/)
+    expect(source).not.toMatch(/summarizeSgsRealFillPlan/)
+    expect(source).not.toContain('runFillSelectedColumn')
+    expect(source).not.toContain("getElementById('fill-selected-column')")
   })
 
   it('the SGS-candidate list passed into the placeholder mapping-dry-run is empty — no invented selector-based extraction there', () => {
@@ -241,22 +276,13 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(source).not.toMatch(/computeSgsColumnFillPlan\([^)]*'overwrite_selected_column'/)
   })
 
-  it('the real-page write is scoped to the ONE confirmed real column — buildSgsRealWriteInstructions is only ever called with the confirmed real column\'s own key', () => {
-    const allCalls = [...source.matchAll(/buildSgsRealWriteInstructions\(([^)]*)\)/g)]
-    expect(allCalls.length).toBe(1)
-    expect(allCalls[0][1]).toMatch(/confirmedRealColumn\.key/)
-  })
-
-  it('fillSgsColumnValues (the real DOM write) is only ever invoked with the CONFIRMED table/run/column — never a hardcoded index', () => {
-    const allCalls = [...source.matchAll(/func:\s*fillSgsColumnValues,\s*args:\s*\[([^\]]*)\]/g)]
-    expect(allCalls.length).toBe(1)
-    expect(allCalls[0][1]).toMatch(/tableIndex, run\.startIndex, confirmedRealColumn\.columnIndex/)
-  })
-
-  it('readColumnValues is only ever invoked with the CONFIRMED table/run/column', () => {
-    const allCalls = [...source.matchAll(/func:\s*readColumnValues,\s*args:\s*\[([^\]]*)\]/g)]
-    expect(allCalls.length).toBe(1)
+  it('readColumnValues is invoked twice: once for the confirmed column\'s whole run (preview), once for a single-cell test\'s exactly ONE row/column', () => {
+    const allCalls = [...source.matchAll(/func:\s*readColumnValues,[\s\S]*?args:\s*\[([^\]]*)\]/g)]
+    expect(allCalls.length).toBe(2)
     expect(allCalls[0][1]).toMatch(/tableIndex, run\.startIndex, run\.length, confirmedRealColumn\.columnIndex/)
+    // The single-cell call reads exactly one row (runLength 1) at an
+    // OFFSET row, never the confirmed column and never a range.
+    expect(allCalls[1][1]).toMatch(/tableIndex, run\.startIndex \+ sgsRowOffset, 1, columnIndex/)
   })
 
   it('the real-page mapping (matchStudentsToSgs against the ACTUAL extracted rows) only runs from within runColumnPreview, using row text already read by collectAllTableRowFacts', () => {
@@ -265,10 +291,9 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toContain('currentGridFacts')
   })
 
-  it('item 7: the fill button is only ever enabled when gridMeetsFillRequirements passes', () => {
+  it('gridMeetsFillRequirements is checked before EVER previewing or populating the single-cell test pickers', () => {
     const gateChecks = [...source.matchAll(/gridMeetsFillRequirements\(/g)]
     expect(gateChecks.length).toBeGreaterThanOrEqual(2)
-    expect(source).toContain('fillBtn.disabled = !gridMeetsFillRequirements(currentGridCandidate)')
   })
 
   it('gridMeetsFillRequirements requires number/code/name AND at least one WRITABLE score column — never just "a score column"', () => {
@@ -285,21 +310,38 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toContain('candidate.writableScoreColumns.some((c) => c.key === column.key)')
   })
 
-  it('item 5: both runColumnPreview and runFillSelectedColumn re-check isConfirmedColumnWritable before doing anything real', () => {
+  it('item 5: runColumnPreview re-checks isConfirmedColumnWritable before doing anything real', () => {
     const previewFn = source.slice(source.indexOf('async function runColumnPreview'), source.indexOf('function renderRealFillPreview'))
-    const fillFn = source.slice(source.indexOf('async function runFillSelectedColumn'), source.indexOf('fileInput.addEventListener'))
     expect(previewFn).toContain('isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn)')
-    expect(fillFn).toContain('isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn)')
   })
 
-  it('renderRealColumnPicker only ever offers writableScoreColumns as radio options — derivedColumns are listed read-only, never selectable', () => {
+  it('renderRealColumnPicker only ever offers writableScoreColumns as radio options — activatable/derived columns are listed read-only, never selectable, never auto-checked', () => {
     const fn = source.slice(source.indexOf('function renderRealColumnPicker'), source.indexOf('async function runColumnPreview'))
     expect(fn).toContain('gridCandidate.writableScoreColumns.map(')
+    expect(fn).toContain('gridCandidate.activatableScoreColumns.map(')
     expect(fn).toContain('gridCandidate.derivedColumns.map(')
-    // The derived-columns list must never attach a radio input or a change handler.
+    // Neither the activatable nor the derived list may attach a radio
+    // input, a change handler, or ever set confirmedRealColumn — and
+    // item 3: this file never checks/toggles an SGS checkbox itself.
+    const activatableBlock = fn.slice(fn.indexOf('realActivatableColumnsEl.replaceChildren'), fn.indexOf('realDerivedColumnsEl.replaceChildren'))
     const derivedBlock = fn.slice(fn.indexOf('realDerivedColumnsEl.replaceChildren'))
-    expect(derivedBlock).not.toContain("input.type = 'radio'")
-    expect(derivedBlock).not.toContain('confirmedRealColumn = ')
+    for (const block of [activatableBlock, derivedBlock]) {
+      expect(block).not.toContain("input.type = 'radio'")
+      expect(block).not.toContain('confirmedRealColumn = ')
+    }
+  })
+
+  it('item 3: this file never clicks or toggles an SGS header checkbox — its only `.checked =` assignment is the (unrelated) radio-picker selection state', () => {
+    const checkedAssignments = [...source.matchAll(/\.checked\s*=\s*([^\n]+)/g)]
+    expect(checkedAssignments.length).toBe(1)
+    expect(checkedAssignments[0][1]).toMatch(/^matchResult\.column/)
+    expect(source).not.toMatch(/headerCheckbox.*\.click\(\)/)
+  })
+
+  it('LIVE DISCOVERY: a persistent auto-save warning banner is present in the HTML — the extension never claims a Save button exists', () => {
+    const html = read('../src/popup.html')
+    expect(html).toMatch(/auto-save-warning/)
+    expect(html).toMatch(/Auto-Save/)
   })
 
   it('never invents a student grid — always derives it via pickBestStudentGridCandidate over collectAllTableRowFacts\'s real output', () => {

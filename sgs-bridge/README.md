@@ -5,17 +5,63 @@ a KrunameClass assignment's scores toward the Thai SGS grading system
 using the teacher's own already-open, already-logged-in SGS browser tab.
 
 **This is Phase 1+2 of the SGS integration — real score-table wiring, but
-still a safe, dry-run prototype: it never clicks Save/Submit in SGS.**
+still a safe, dry-run prototype: it currently performs NO automatic
+writes to the live SGS page at all (see "LIVE DISCOVERY" below).**
+
+## LIVE DISCOVERY: SGS auto-saves — no Save button, no bulk fill (yet)
+
+A hands-on check of the real SGS score page overturned a load-bearing
+assumption this prototype had been built on:
+
+- Every score column's header has a **checkbox**. Checking it is what
+  makes that column's row inputs editable; unchecked columns' inputs are
+  rendered `disabled`.
+- The page itself says: *"Page นี้ใช้ระบบบันทึกอัตโนมัติ ไม่ต้องคลิกปุ่ม
+  Save"* — **there is no Save button, and a write may persist to SGS the
+  instant it happens.**
+
+That second fact broke the original "fill a column → teacher reviews →
+teacher clicks Save" safety model: on a page with no undo step, filling
+many cells at once is not something this prototype should ever do
+without much narrower, explicitly-confirmed control. Two changes follow:
+
+1. **Three-way column classification, not two.** A score column can now
+   be `writableScoreColumns` (checkbox checked, inputs actually enabled
+   right now), `activatableScoreColumns` (a REAL score column, currently
+   disabled ONLY because its header checkbox is unchecked — never
+   reported as if it were a calculated field), or `derivedColumns`
+   (genuinely calculated/status — รวมตลอดภาค, %, ปกติ, แก้ตัว, เรียนซ้ำ,
+   Remark, ...). See `classifyScoreColumns` / `scanScoreColumnState` in
+   `src/lib/sgs-table-extraction.js`. This extension never checks/toggles
+   an SGS header checkbox itself — for an activatable column it only ever
+   shows "กรุณาติ๊กเปิดช่องคะแนนนี้ใน SGS ก่อน" and a "สแกนใหม่" button so
+   the teacher can check it by hand and have the Bridge re-scan.
+2. **Bulk real fill has been removed.** Section 4 of the popup is now
+   detection + student mapping + a READ-ONLY preview (existing SGS value
+   vs. proposed value) — it never writes anything. In its place, section
+   5 scaffolds a much narrower **"ทดสอบ 1 คน" (test one student)** mode:
+   pick exactly one student and one column, see current/proposed values,
+   and a write path that can only ever touch that ONE cell
+   (`buildSingleCellTestPlan` in `src/lib/single-cell-test.js` guarantees
+   `writesByOffset` never contains more than one entry). Its confirm
+   button and checkbox ship **permanently disabled with no click
+   listener at all** — intentionally not wired up yet, pending detection
+   being revalidated against the live page.
 
 ## What this extension does NOT do
 
 - Does not ask for, store, or transmit an SGS username/password.
 - Does not read or store SGS session cookies.
 - Does not connect to any database directly (SGS's or KrunameClass's).
-- Does not auto-fill or auto-click Save/Submit on the SGS page — filling
-  a cell (once the teacher explicitly clicks "ทดลองกรอกเฉพาะช่องนี้")
-  only ever sets that cell's value and dispatches `input`/`change`
-  events; nothing here ever looks for, or clicks, a Save/Submit button.
+- Does not perform any automatic write to the live SGS page in this
+  phase — see "LIVE DISCOVERY" above. Section 4's preview only ever
+  READS existing values; section 5's single-cell test mode is built but
+  its write button stays disabled and unwired.
+- Never clicks or toggles a Save/Submit button, or an SGS header
+  checkbox — the one thing this prototype could someday write (a single
+  confirmed cell) only ever sets that cell's value and dispatches
+  `input`/`change` events; nothing here ever looks for, or clicks, any
+  other control on the page.
 - Does not write to more than one SGS score column per operation, and
   never touches any column other than the one the teacher confirmed —
   see "Column-specific fill" and "Phase 2: real SGS table wiring" below.
@@ -154,16 +200,29 @@ grid:
    (ปีการศึกษา, ชั้น, menu/language/login/logout labels).
 
    Each candidate column is then checked for real editability
-   (`analyzeColumnEditability`): every row in the run must have exactly
-   ONE input, of type `text`/`number`, never `disabled`/`readOnly`. A
-   column also gets rejected by its LABEL alone
-   (`isDerivedColumnLabel`) if it reads like a calculated/status field —
-   รวม/ตลอดภาค, %/เปอร์เซ็นต์/ร้อยละ, เกรด/GPA/ผลการเรียน, ปกติ/สถานะ.
-   Only a column that passes BOTH checks lands in
-   `writableScoreColumns`; everything else lands in `derivedColumns`,
-   tagged with why (`label_indicates_calculated_or_status`,
-   `disabled_input`, `readonly_input`, `no_input`, or
-   `not_uniformly_editable`) — see `classifyScoreColumns`.
+   (`analyzeColumnRowInputState`, item 6 of the live-discovery fix): every
+   row's ACTUAL VISIBLE input (never a hidden/cloned sibling control,
+   never the outer table, never a header element) must be one visible
+   `text`/`number` control per row. Combined with `findHeaderCheckboxState`
+   (does this column's header hold a checkbox, and is it checked?), a
+   column lands in exactly one of three buckets:
+   - `writableScoreColumns` — checkbox checked (or none exists) AND the
+     row inputs are actually enabled right now.
+   - `activatableScoreColumns` — a REAL score column that's merely
+     disabled because its header checkbox is unchecked (`reason:
+     'header_checkbox_unchecked'`) or otherwise disabled
+     (`'disabled_input'`) — **never** classified as derived just because
+     it's currently disabled.
+   - `derivedColumns` — rejected by LABEL (`isDerivedColumnLabel`: รวม/
+     ตลอดภาค, %/เปอร์เซ็นต์/ร้อยละ, เกรด/GPA/ผลการเรียน, ปกติ/แก้ตัว/
+     เรียนซ้ำ/Remark), has no input at all, isn't uniformly one input per
+     row, or is `readOnly` (a computed value shown read-only — unlike
+     `disabled`, checking/unchecking the header checkbox never toggles
+     `readOnly` on the live page, so a readonly input is never merely
+     "not activated yet").
+
+   See `classifyScoreColumns` / `scanScoreColumnState` in
+   `src/lib/sgs-table-extraction.js`.
 5. **Rank every table's candidate** — `pickBestStudentGridCandidate`
    scores each table that has a qualifying run (row count, whether all
    three identifier columns were found, how many WRITABLE score columns
@@ -171,14 +230,16 @@ grid:
    tables around the real grid are never confused with it.
 6. **Resolve the teacher's chosen column** — `matchTargetColumnToRealColumns`
    compares the payload's `targetColumn.label` against the winning
-   table's `writableScoreColumns` ONLY — a `derivedColumns` entry (a
-   total, a percentage, a status field) can never even be matched or
-   selected, whatever its label says. Exactly one label match
-   auto-selects it; zero or more than one shows a warning and requires
-   the teacher to pick the correct radio button by hand — the same
-   "never silently guess" rule this bridge already applies to student
-   matching. The popup also lists every `derivedColumns` entry, read-only
-   with its exclusion reason, purely for the teacher's own transparency.
+   table's `writableScoreColumns` ONLY — an `activatableScoreColumns` or
+   `derivedColumns` entry can never even be matched or selected, whatever
+   its label says. Exactly one label match auto-selects it; zero or more
+   than one shows a warning and requires the teacher to pick the correct
+   radio button by hand — the same "never silently guess" rule this
+   bridge already applies to student matching. The popup lists every
+   `activatableScoreColumns` entry with the exact "กรุณาติ๊กเปิดช่องคะแนนนี้
+   ใน SGS ก่อน" workflow message and a "สแกนใหม่" re-scan button, and every
+   `derivedColumns` entry read-only with its exclusion reason — purely
+   for the teacher's own transparency.
 7. **Read the target column's existing values** — `readColumnValues`
    (injected), given the CONFIRMED table index and row range from step
    5, reads only that one column's current cell values — never any
@@ -187,27 +248,25 @@ grid:
    step 1, no extra DOM call) becomes `sgsCandidates` for the existing
    `matchStudentsToSgs` (`src/lib/mapping.js`, unchanged), producing
    `MATCHED`/`AMBIGUOUS`/`NOT_FOUND` per student.
-9. **Preview** — เลขที่ | นักเรียน | คะแนน KrunameClass | คะแนนเดิม SGS |
-   คะแนนใหม่ (plus a mapping-status column), computed by
-   `computeSgsRealFillPlan`. The fill button
-   (`gridMeetsFillRequirements` in popup.js) stays disabled until the
-   grid was found, เลขที่/รหัส/ชื่อ are ALL identified, and at least one
-   **writable** score column exists — a second check
-   (`isConfirmedColumnWritable`), re-run in both the preview and the
-   fill step, also confirms the ONE column the teacher picked is
-   actually in `writableScoreColumns` and not a derived column that
-   merely happened to be displayed.
-10. **Fill ONLY the confirmed column** — clicking **"ทดลองกรอกเฉพาะช่องนี้"**
-    builds write instructions scoped to that one column
-    (`buildSgsRealWriteInstructions`) and calls `fillSgsColumnValues`
-    (injected, given the SAME confirmed table index/row range/column
-    index), which sets `input.value` and dispatches `input`/`change`
-    events for exactly those cells — never a different column's, and
-    never a Save/Submit click.
-11. **Result** — the five required buckets (matched / written / skipped
-    no score / skipped existing / ambiguous-or-not-found), from
-    `summarizeSgsRealFillPlan`, plus the DOM function's own reported
-    count as a cross-check.
+9. **Read-only preview** — เลขที่ | นักเรียน | คะแนน KrunameClass |
+   คะแนนเดิม SGS | คะแนนใหม่ (ตัวอย่าง) (plus a mapping-status column),
+   computed by `computeSgsRealFillPlan`. `gridMeetsFillRequirements` /
+   `isConfirmedColumnWritable` gate whether a column may even be
+   previewed at all (grid found, เลขที่/รหัส/ชื่อ ALL identified, the
+   confirmed column actually in `writableScoreColumns` — never a
+   derived/activatable column that merely happened to be displayed) —
+   but per the LIVE DISCOVERY above, **nothing in this preview ever
+   writes anything**; there is no bulk fill button anymore.
+10. **"ทดสอบ 1 คน" single-cell test (section 5, scaffolded but inert)** —
+    once the preview above succeeds, pickers for ONE student and ONE
+    writable column are populated; clicking "แสดงตัวอย่าง 1 ช่อง" reads
+    that ONE cell's current value (`readColumnValues` with `runLength: 1`
+    at the student's row offset — never a range) and builds a plan via
+    `buildSingleCellTestPlan`, which guarantees `writesByOffset` can never
+    contain more than the one requested offset. The actual "ยืนยันทดลอง
+    เขียน 1 ช่อง" button and its confirmation checkbox are **permanently
+    disabled with no click listener wired up in popup.js at all** — by
+    design, until detection has been revalidated against the live page.
 
 ### Pagination (best-effort, never automatic)
 
@@ -263,15 +322,16 @@ depends on them.
    the mapping algorithm against an empty SGS-candidate list (no live
    page read here) so a teacher can see the algorithm/UI before running
    the real inspection in step 4.
-4. **"ตรวจสอบตารางคะแนน SGS จริง" / "ทดลองกรอกเฉพาะช่องนี้"** — the real
-   Phase 2 workflow described above.
+4. **"ตรวจสอบตารางคะแนน SGS จริง"** — detection, column matching, and a
+   READ-ONLY preview (no bulk write — see "LIVE DISCOVERY" above), plus
+   the still-scaffolded-but-disabled "ทดสอบ 1 คน" single-cell test mode.
 5. **"ตรวจสอบโครงสร้างหน้า SGS" — three diagnostic modes, one output box**:
    - **แบบย่อ (compact, the primary one)** — `collectAllTableRowFacts` +
      `buildCompactStudentGridReport`: `pageTitle`, `pageUrl`,
      `subjectFilter`, `classroomFilter`, `studentGrid` (found/columns/
-     `writableScoreColumns`/`derivedColumns`), `pagination`,
-     `confidence`, `warnings` — no per-table dump, and never a student's
-     actual name/code.
+     `writableScoreColumns`/`activatableScoreColumns`/`derivedColumns`),
+     `pagination`, `confidence`, `warnings` — no per-table dump, and
+     never a student's actual name/code.
    - **แบบละเอียด (debug, anonymized)** — the compact report plus
      `debugRows`: per-row `{rowIndex, cellCount, textCellIndexes,
      inputCellIndexes, inputCount, probableNumberCell,
@@ -303,7 +363,7 @@ as-is.
 3. Under "5. ตรวจสอบโครงสร้างหน้า SGS", click the button.
 4. Click "คัดลอกผลลัพธ์" and paste the JSON back for cataloging.
 
-## Running the real column fill (dry run)
+## Running the real-page inspection (detection + read-only preview only)
 
 1. Load a bridge payload (section 1).
 2. Open the real SGS score-entry page for the matching subject/classroom
@@ -312,10 +372,17 @@ as-is.
    จริง".
 4. Confirm the highlighted column matches the teacher's intended target
    (or pick the correct one manually if the automatic match didn't
-   succeed).
-5. Review the preview table, then click "ทดลองกรอกเฉพาะช่องนี้".
-6. **Check the result in SGS and click Save there yourself** — this
-   extension never does that step for you.
+   succeed). If the intended column shows up under "ยังไม่ได้เปิดใช้งานใน
+   SGS" instead, manually check that column's header checkbox in SGS,
+   then click "สแกนใหม่".
+5. Review the read-only preview table — **this is where it stops.** There
+   is no bulk fill button. Per the LIVE DISCOVERY above, SGS auto-saves
+   with no Save button, so this prototype does not perform any automatic
+   write to the live page yet.
+6. Section 5 ("ทดสอบ 1 คน") lets you pick one student and one column and
+   preview a single cell's current/proposed value, but its write-confirm
+   button is intentionally disabled and has no click handler wired up —
+   it is scaffolding for a future phase, not a usable action yet.
 
 ## Tests
 
@@ -335,7 +402,15 @@ runtime dependencies and is a fully separate Node package.
   `src/lib/sgs-table-extraction.js` for anything the real pages' rows use
   that this prototype didn't anticipate, using the diagnostic captures
   collected via "ตรวจสอบโครงสร้างหน้า SGS".
-- Phase 7: DRY RUN → Preview → teacher confirmation → fill the SGS form
-  → teacher reviews SGS → final SGS Save. This extension now reaches
-  "fill the SGS form"; the final "click Save" step remains explicitly
-  out of scope until requested and reviewed separately.
+- **Superseded by the LIVE DISCOVERY above:** the earlier plan here was
+  "DRY RUN → Preview → teacher confirmation → fill the SGS form → teacher
+  reviews SGS → final SGS Save." That assumed a Save step existed to
+  review against; the real page auto-saves with no Save button, so that
+  plan is no longer the target architecture.
+- Next actual step: validate the header-checkbox/visible-input detection
+  above against a real SGS page (via "ตรวจสอบโครงสร้างหน้า SGS"), THEN
+  deliberately enable the single-cell test mode's write button (section
+  5) — one explicit, reviewed change, never bundled with an unrelated
+  fix. Only once that single-cell path has been proven safe on a real
+  page should a much more conservative bulk-fill design (if any) be
+  reconsidered — never a return to the old "fill the whole column" flow.

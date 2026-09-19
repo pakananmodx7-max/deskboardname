@@ -90,24 +90,39 @@
 
     <section>
       <h2>4. จับคู่กับตารางคะแนนจริงใน SGS</h2>
+      <p class="warning" id="auto-save-warning">
+        <strong>คำเตือน:</strong> หน้า SGS นี้ใช้ระบบ <strong>บันทึกอัตโนมัติ (Auto-Save)</strong> — ไม่มีปุ่ม Save
+        การพิมพ์หรือเขียนค่าใด ๆ ลงในช่องคะแนนอาจถูกบันทึกเป็นข้อมูลจริงทันที โปรดใช้ความระมัดระวังเป็นพิเศษ
+        เครื่องมือนี้จึง<strong>ยังไม่เปิดให้กรอกข้อมูลจริงแบบกลุ่ม</strong> — ทำได้เพียงตรวจสอบโครงสร้าง จับคู่นักเรียน
+        และดูตัวอย่างเท่านั้น (ดูหัวข้อ 5 สำหรับโหมดทดสอบทีละ 1 ช่องซึ่งยังปิดใช้งานอยู่เช่นกัน)
+      </p>
       <p class="hint">
         ต้องโหลด Bridge Payload ในขั้นตอนที่ 1 ก่อน — ตรวจสอบตารางคะแนนจริงบนหน้า SGS ที่เปิดอยู่ ค้นหาคอลัมน์ที่ตรงกับ
-        "<span id="real-target-label"></span>" และแสดงตัวอย่างค่าที่จะกรอกจริง ยังไม่มีการเขียนหรือกดบันทึกใด ๆ จนกว่าจะกดปุ่ม
-        "ทดลองกรอกเฉพาะช่องนี้" ด้านล่าง และแม้กดแล้วก็จะไม่มีการกดบันทึกใน SGS ให้อัตโนมัติ
+        "<span id="real-target-label"></span>" และแสดงตัวอย่างค่าที่จะกรอกจริง (อ่านค่าปัจจุบันจาก SGS เท่านั้น
+        ไม่มีการเขียนข้อมูลใด ๆ ในขั้นตอนนี้)
       </p>
       <button type="button" id="inspect-run">ตรวจสอบตารางคะแนน SGS จริง</button>
       <p id="real-inspect-error" class="error" hidden></p>
 
       <div id="real-column-picker-wrap" hidden>
         <fieldset>
-          <legend>คอลัมน์คะแนนที่กรอกได้จริง (คำนวณ/อ่านอย่างเดียวจะไม่แสดงที่นี่)</legend>
+          <legend>คอลัมน์คะแนนที่กรอกได้จริงตอนนี้ (writableNow)</legend>
           <div id="real-column-picker"></div>
         </fieldset>
         <p id="real-column-match-warning" class="error" hidden></p>
       </div>
 
+      <div id="real-activatable-columns-wrap" hidden>
+        <p class="hint">
+          คอลัมน์ต่อไปนี้เป็นช่องกรอกคะแนนจริง แต่ <strong>ยังไม่ได้เปิดใช้งานใน SGS</strong>
+          (checkbox ที่หัวคอลัมน์ยังไม่ได้ติ๊ก) — กรุณาติ๊กเปิดช่องคะแนนนี้ใน SGS ก่อน แล้วกด "สแกนใหม่" ด้านล่าง:
+        </p>
+        <ul id="real-activatable-columns"></ul>
+        <button type="button" id="real-rescan-btn">สแกนใหม่ (หลังติ๊ก checkbox ใน SGS แล้ว)</button>
+      </div>
+
       <div id="real-derived-columns-wrap" hidden>
-        <p class="hint">คอลัมน์ต่อไปนี้ถูกตัดออกจากตัวเลือก เพราะไม่ใช่ช่องกรอกคะแนนที่แก้ไขได้จริง:</p>
+        <p class="hint">คอลัมน์ต่อไปนี้ถูกตัดออกจากตัวเลือก เพราะไม่ใช่ช่องกรอกคะแนนที่แก้ไขได้จริง (คำนวณ/สถานะ/อ่านอย่างเดียว):</p>
         <ul id="real-derived-columns"></ul>
       </div>
 
@@ -119,18 +134,52 @@
               <th>นักเรียน</th>
               <th>คะแนน KrunameClass</th>
               <th>คะแนนเดิม SGS</th>
-              <th>คะแนนใหม่</th>
+              <th>คะแนนใหม่ (ตัวอย่าง)</th>
               <th>สถานะการจับคู่</th>
             </tr>
           </thead>
           <tbody id="real-fill-preview-body"></tbody>
         </table>
-        <button type="button" id="fill-selected-column" disabled>ทดลองกรอกเฉพาะช่องนี้</button>
         <p class="hint">
-          ครูต้องตรวจสอบผลลัพธ์และกดบันทึก ("Save") ในหน้า SGS ด้วยตนเองเสมอ — ปุ่มนี้ไม่กดบันทึกให้อัตโนมัติ
+          นี่คือ<strong>ตัวอย่างเท่านั้น</strong> — เครื่องมือนี้ยังไม่เขียนข้อมูลจริงแบบกลุ่มลงในหน้า SGS
+          เนื่องจากหน้า SGS บันทึกอัตโนมัติทันทีที่มีการเปลี่ยนค่า จึงต้องพัฒนาและตรวจสอบโหมดทดสอบทีละ 1 ช่อง (หัวข้อ 5)
+          ให้แน่ใจก่อนว่าจะเปิดใช้งานการกรอกแบบกลุ่มได้
         </p>
-        <div id="fill-result" hidden></div>
       </div>
+    </section>
+
+    <section id="single-cell-test-wrap" hidden>
+      <h2>5. ทดสอบทีละ 1 ช่อง (ทดสอบ 1 คน)</h2>
+      <p class="warning">
+        คำเตือน: SGS บันทึกอัตโนมัติ การทดลองนี้อาจเปลี่ยนข้อมูลจริงทันทีที่กดยืนยัน — เลือกนักเรียน 1 คน และคอลัมน์ 1 ช่อง
+        เท่านั้น ระบบจะเขียนค่าที่ช่องเดียวนี้เท่านั้น จะไม่แตะแถวหรือคอลัมน์อื่นใดทั้งสิ้น
+      </p>
+      <label>
+        นักเรียน
+        <select id="sct-student"></select>
+      </label>
+      <label>
+        คอลัมน์ (เฉพาะช่องที่กรอกได้จริงตอนนี้)
+        <select id="sct-column"></select>
+      </label>
+      <button type="button" id="sct-preview-btn">แสดงตัวอย่าง 1 ช่อง</button>
+      <dl id="sct-preview" hidden>
+        <dt>คอลัมน์</dt>
+        <dd id="sct-column-label"></dd>
+        <dt>คะแนนเดิมใน SGS</dt>
+        <dd id="sct-current-value"></dd>
+        <dt>คะแนนที่จะเขียน (จาก KrunameClass)</dt>
+        <dd id="sct-new-value"></dd>
+      </dl>
+      <label>
+        <input type="checkbox" id="sct-confirm" disabled />
+        ฉันเข้าใจว่า SGS บันทึกค่าอัตโนมัติทันที และต้องการทดลองเขียนช่องนี้จริง 1 ช่อง
+      </label>
+      <button type="button" id="sct-write-btn" disabled>ยืนยันทดลองเขียน 1 ช่อง (ทดสอบ 1 คน)</button>
+      <p class="hint">
+        ปุ่มนี้ยังปิดใช้งานอยู่โดยตั้งใจ — ยังไม่เปิดให้เขียนข้อมูลจริงจนกว่าการตรวจจับ (checkbox/สถานะ enable-disable)
+        จะได้รับการตรวจสอบซ้ำกับหน้า SGS จริงอีกครั้ง
+      </p>
     </section>
 
     <script type="module" src="popup.js"></script>

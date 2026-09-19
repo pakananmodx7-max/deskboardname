@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   analyzeColumnEditability,
+  analyzeColumnRowInputState,
   buildAnonymizedRowDiagnostics,
   buildColumnKey,
   buildGridWarnings,
@@ -13,6 +14,7 @@ import {
   deriveScoreColumnHeader,
   detectPagination,
   evaluateStudentGridCandidate,
+  findHeaderCheckboxState,
   findRepeatingRowRun,
   fingerprintsEqual,
   isDerivedColumnLabel,
@@ -21,6 +23,7 @@ import {
   matchTargetColumnToRealColumns,
   parseMaxScoreFromHeader,
   pickBestStudentGridCandidate,
+  scanScoreColumnState,
   sgsRowIndexFromKey,
   slugifyHeaderText,
   traceColumnHeaderTexts,
@@ -32,12 +35,34 @@ function text(t: string) {
 function link(t: string) {
   return { hasInput: false, hasLink: true, text: t, inputMeta: null }
 }
-function input(overrides: Partial<{ count: number; type: string; disabled: boolean; readonly: boolean }> = {}) {
+function input(
+  overrides: Partial<{
+    count: number
+    visibleCount: number
+    type: string
+    disabled: boolean
+    readonly: boolean
+    visible: boolean
+    checked: boolean | null
+  }> = {},
+) {
   return {
     hasInput: true,
     hasLink: false,
     text: '',
-    inputMeta: { count: 1, type: 'text', disabled: false, readonly: false, ...overrides },
+    inputMeta: { count: 1, type: 'text', disabled: false, readonly: false, visible: true, checked: null, ...overrides },
+  }
+}
+
+/** LIVE DISCOVERY: a real SGS header checkbox cell — carries the
+ * column's visible label text ALONGSIDE the checkbox (see
+ * content-diagnostic.js's inspectCellFormControl doc comment). */
+function checkboxCell(label: string, checked: boolean) {
+  return {
+    hasInput: true,
+    hasLink: false,
+    text: label,
+    inputMeta: { count: 1, visibleCount: 1, type: 'checkbox', disabled: false, readonly: false, visible: true, checked },
   }
 }
 
@@ -361,12 +386,34 @@ describe('classifyScoreColumns — the ONLY function allowed to produce writable
   const identifierColumns = { numberColumnIndex: 0, codeColumnIndex: 1, nameColumnIndex: 2 }
   const run = { startIndex: 1, length: 3 }
 
+  /** The full shape a writableScoreColumns entry carries since the
+   * live-discovery header-checkbox fix — headerCheckboxPresent/Checked
+   * and the row-level visible/enabled/disabled/readonly counts, on top
+   * of the original columnIndex/key/label/maxScore/inputPattern/inputCount. */
+  function sharedShape(overrides: Record<string, unknown>) {
+    return {
+      headerCheckboxPresent: false,
+      headerCheckboxChecked: false,
+      visibleInputCount: 3,
+      enabledInputCount: 3,
+      disabledInputCount: 0,
+      readonlyInputCount: 0,
+      ...overrides,
+    }
+  }
+  function writableShape(overrides: Record<string, unknown>) {
+    return sharedShape({ inputPattern: 'text', inputCount: 3, ...overrides })
+  }
+  function activatableShape(overrides: Record<string, unknown>) {
+    return sharedShape(overrides)
+  }
+
   it('classifies a normal editable score column as writable', () => {
     const headerRow = [text(''), text(''), text(''), text('10 (15)')]
     const tableFacts = gridWithColumns(headerRow, () => input())
     const { writableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
     expect(writableScoreColumns).toEqual([
-      { columnIndex: 3, key: buildColumnKey('10 (15)', 3), label: '10 (15)', maxScore: 15, inputPattern: 'text', inputCount: 3 },
+      writableShape({ columnIndex: 3, key: buildColumnKey('10 (15)', 3), label: '10 (15)', maxScore: 15 }),
     ])
     expect(derivedColumns).toEqual([])
   })
@@ -395,11 +442,23 @@ describe('classifyScoreColumns — the ONLY function allowed to produce writable
     expect(derivedColumns[0].reason).toBe('label_indicates_calculated_or_status')
   })
 
-  it('rejects a column with a DISABLED input, tagging the reason', () => {
+  it('LIVE DISCOVERY: a column with a DISABLED input is ACTIVATABLE, never derived — "do not classify a real score column as derived only because its inputs are currently disabled"', () => {
     const headerRow = [text(''), text(''), text(''), text('ช่อง 1')]
     const tableFacts = gridWithColumns(headerRow, () => input({ disabled: true }))
-    const { derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
-    expect(derivedColumns).toEqual([{ columnIndex: 3, label: 'ช่อง 1', reason: 'disabled_input' }])
+    const { derivedColumns, activatableScoreColumns, writableScoreColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(derivedColumns).toEqual([])
+    expect(writableScoreColumns).toEqual([])
+    expect(activatableScoreColumns).toEqual([
+      activatableShape({
+        columnIndex: 3,
+        key: buildColumnKey('ช่อง 1', 3),
+        label: 'ช่อง 1',
+        maxScore: 1,
+        enabledInputCount: 0,
+        disabledInputCount: 3,
+        reason: 'disabled_input',
+      }),
+    ])
   })
 
   it('rejects a column with a READONLY input, tagging the reason', () => {
@@ -428,8 +487,96 @@ describe('classifyScoreColumns — the ONLY function allowed to produce writable
       ],
     }
     const { writableScoreColumns } = classifyScoreColumns(tableFacts, { startIndex: 2, length: 3 }, identifierColumns)
+    expect(writableScoreColumns).toEqual([writableShape({ columnIndex: 3, key: buildColumnKey('10', 3), label: '10', maxScore: 15 })])
+  })
+
+  it('LIVE DISCOVERY: a header checkbox CHECKED makes the column writableNow', () => {
+    const headerRow = [text(''), text(''), text(''), checkboxCell('11', true)]
+    const tableFacts = gridWithColumns(headerRow, () => input())
+    const { writableScoreColumns, activatableScoreColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(activatableScoreColumns).toEqual([])
     expect(writableScoreColumns).toEqual([
-      { columnIndex: 3, key: buildColumnKey('10', 3), label: '10', maxScore: 15, inputPattern: 'text', inputCount: 3 },
+      writableShape({
+        columnIndex: 3,
+        key: buildColumnKey('11', 3),
+        label: '11',
+        maxScore: null,
+        headerCheckboxPresent: true,
+        headerCheckboxChecked: true,
+      }),
+    ])
+  })
+
+  it('LIVE DISCOVERY: a header checkbox UNCHECKED makes the column activatable — never writable, never derived', () => {
+    const headerRow = [text(''), text(''), text(''), checkboxCell('11', false)]
+    // Unchecked in SGS renders the row inputs disabled — matching what
+    // was actually observed on the live page ("unchecked columns'
+    // inputs appear disabled").
+    const tableFacts = gridWithColumns(headerRow, () => input({ disabled: true }))
+    const { writableScoreColumns, derivedColumns, activatableScoreColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(writableScoreColumns).toEqual([])
+    expect(derivedColumns).toEqual([])
+    expect(activatableScoreColumns).toEqual([
+      activatableShape({
+        columnIndex: 3,
+        key: buildColumnKey('11', 3),
+        label: '11',
+        maxScore: null,
+        headerCheckboxPresent: true,
+        headerCheckboxChecked: false,
+        enabledInputCount: 0,
+        disabledInputCount: 3,
+        reason: 'header_checkbox_unchecked',
+      }),
+    ])
+  })
+
+  it('a genuinely calculated/status column (label-derived) stays non-writable even with a CHECKED header checkbox', () => {
+    const headerRow = [text(''), text(''), text(''), checkboxCell('รวมตลอดภาค', true)]
+    const tableFacts = gridWithColumns(headerRow, () => input())
+    const { writableScoreColumns, activatableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(writableScoreColumns).toEqual([])
+    expect(activatableScoreColumns).toEqual([])
+    expect(derivedColumns).toEqual([{ columnIndex: 3, label: 'รวมตลอดภาค', reason: 'label_indicates_calculated_or_status' }])
+  })
+
+  it('rejects a retake/repeat/remark status column, never treating it as a real score-entry column', () => {
+    expect(isDerivedColumnLabel('แก้ตัว')).toBe(true)
+    expect(isDerivedColumnLabel('เรียนซ้ำ')).toBe(true)
+    expect(isDerivedColumnLabel('Remark')).toBe(true)
+  })
+
+  it('SECTION 6 fix: a visible ENABLED input is never misclassified because of an unrelated hidden/disabled sibling control in the same cell', () => {
+    const headerRow = [text(''), text(''), text(''), text('คอลัมน์ทดสอบ')]
+    // count: 2 (a hidden helper control exists alongside the real one),
+    // but visibleCount: 1 and the CHOSEN (visible) control is enabled —
+    // must be classified as writable, never "not_uniformly_editable" or
+    // disabled just because a second, hidden control also exists.
+    const tableFacts = gridWithColumns(headerRow, () => input({ count: 2, visibleCount: 1, visible: true, disabled: false }))
+    const { writableScoreColumns, derivedColumns, activatableScoreColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(derivedColumns).toEqual([])
+    expect(activatableScoreColumns).toEqual([])
+    expect(writableScoreColumns).toEqual([
+      writableShape({ columnIndex: 3, key: buildColumnKey('คอลัมน์ทดสอบ', 3), label: 'คอลัมน์ทดสอบ', maxScore: null }),
+    ])
+  })
+
+  it('SECTION 6 fix: a cell whose only control is HIDDEN (no visible control at all) is never reported enabled', () => {
+    const headerRow = [text(''), text(''), text(''), text('คอลัมน์ทดสอบ')]
+    const tableFacts = gridWithColumns(headerRow, () => input({ visible: false, visibleCount: 0 }))
+    const { writableScoreColumns, activatableScoreColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(writableScoreColumns).toEqual([])
+    expect(activatableScoreColumns).toEqual([
+      activatableShape({
+        columnIndex: 3,
+        key: buildColumnKey('คอลัมน์ทดสอบ', 3),
+        label: 'คอลัมน์ทดสอบ',
+        maxScore: null,
+        visibleInputCount: 0,
+        enabledInputCount: 0,
+        disabledInputCount: 3,
+        reason: 'disabled_input',
+      }),
     ])
   })
 })
@@ -492,7 +639,17 @@ describe('evaluateStudentGridCandidate / pickBestStudentGridCandidate — reject
 })
 
 describe('computeGridConfidence / buildGridWarnings', () => {
-  function candidateWith(overrides: Partial<{ numberColumnIndex: number | null; codeColumnIndex: number | null; nameColumnIndex: number | null; writableCount: number; derivedCount: number; studentRowCount: number }>) {
+  function candidateWith(
+    overrides: Partial<{
+      numberColumnIndex: number | null
+      codeColumnIndex: number | null
+      nameColumnIndex: number | null
+      writableCount: number
+      activatableCount: number
+      derivedCount: number
+      studentRowCount: number
+    }>,
+  ) {
     const identifierColumns = {
       numberColumnIndex: 'numberColumnIndex' in overrides ? overrides.numberColumnIndex : 0,
       codeColumnIndex: 'codeColumnIndex' in overrides ? overrides.codeColumnIndex : 1,
@@ -506,6 +663,13 @@ describe('computeGridConfidence / buildGridWarnings', () => {
       inputPattern: 'text',
       inputCount: 10,
     }))
+    const activatableScoreColumns = Array.from({ length: overrides.activatableCount ?? 0 }, (_, i) => ({
+      columnIndex: 20 + i,
+      key: `a${i}`,
+      label: `activatable${i}`,
+      maxScore: 10,
+      reason: 'header_checkbox_unchecked',
+    }))
     const derivedColumns = Array.from({ length: overrides.derivedCount ?? 0 }, (_, i) => ({
       columnIndex: 10 + i,
       label: `derived${i}`,
@@ -517,6 +681,7 @@ describe('computeGridConfidence / buildGridWarnings', () => {
       run: { startIndex: 1, length: overrides.studentRowCount ?? 10 },
       identifierColumns,
       writableScoreColumns,
+      activatableScoreColumns,
       derivedColumns,
       studentRowCount: overrides.studentRowCount ?? 10,
       score: 0,
@@ -557,6 +722,115 @@ describe('computeGridConfidence / buildGridWarnings', () => {
   it('warns generically when there are no score columns of any kind', () => {
     const warnings = buildGridWarnings(candidateWith({ writableCount: 0, derivedCount: 0 }))
     expect(warnings).toContain('ไม่พบคอลัมน์คะแนนที่กรอกได้จริง')
+  })
+
+  it('LIVE DISCOVERY: warns distinctly (never as "calculated/read-only") when score columns exist but are only ACTIVATABLE (checkbox not yet checked)', () => {
+    const warnings = buildGridWarnings(candidateWith({ writableCount: 0, activatableCount: 2, derivedCount: 0 }))
+    expect(warnings.some((w) => w.includes('activatable0') && w.includes('activatable1'))).toBe(true)
+    expect(warnings.some((w) => w.includes('คำนวณ/อ่านอย่างเดียว'))).toBe(false)
+  })
+})
+
+describe('findHeaderCheckboxState — item 1: header checkbox presence/checked state', () => {
+  function tableWithHeaderRow(headerRow: ReturnType<typeof text>[]) {
+    return {
+      tableIndex: 0,
+      selectorFingerprint: 'table[0]',
+      rows: [headerRow, ...[1, 2, 3].map((i) => studentRow(String(i), String(i).padStart(5, '0'), `S${i}`))],
+    }
+  }
+
+  it('reports present:true, checked:true for a checked header checkbox', () => {
+    const tableFacts = tableWithHeaderRow([text(''), text(''), text(''), checkboxCell('11', true), text('')])
+    expect(findHeaderCheckboxState(tableFacts, 3, 1)).toEqual({ present: true, checked: true })
+  })
+
+  it('reports present:true, checked:false for an unchecked header checkbox', () => {
+    const tableFacts = tableWithHeaderRow([text(''), text(''), text(''), checkboxCell('11', false), text('')])
+    expect(findHeaderCheckboxState(tableFacts, 3, 1)).toEqual({ present: true, checked: false })
+  })
+
+  it('reports present:false — never a guess — when the header cell has no checkbox at all', () => {
+    const tableFacts = tableWithHeaderRow([text(''), text(''), text(''), text('กลางภาค'), text('')])
+    expect(findHeaderCheckboxState(tableFacts, 3, 1)).toEqual({ present: false, checked: false })
+  })
+
+  it('never confuses a DIFFERENT column\'s checkbox with the requested one', () => {
+    const tableFacts = tableWithHeaderRow([text(''), text(''), text(''), text(''), checkboxCell('12', true)])
+    expect(findHeaderCheckboxState(tableFacts, 3, 1)).toEqual({ present: false, checked: false })
+    expect(findHeaderCheckboxState(tableFacts, 4, 1)).toEqual({ present: true, checked: true })
+  })
+})
+
+describe('analyzeColumnRowInputState — item 6: per-row visible/enabled/disabled/readonly counts from the ACTUAL visible input', () => {
+  it('matches the spec\'s example shape for a fully checked/enabled column', () => {
+    const rows = Array.from({ length: 10 }, () => [input()])
+    const result = analyzeColumnRowInputState(0, rows)
+    expect(result.visibleInputCount).toBe(10)
+    expect(result.enabledInputCount).toBe(10)
+    expect(result.disabledInputCount).toBe(0)
+    expect(result.readonlyInputCount).toBe(0)
+  })
+
+  it('never trusts a hidden sibling control\'s disabled state over the chosen VISIBLE control', () => {
+    const rows = Array.from({ length: 5 }, () => [input({ count: 2, visibleCount: 1, visible: true, disabled: false })])
+    const result = analyzeColumnRowInputState(0, rows)
+    expect(result.enabledInputCount).toBe(5)
+    expect(result.disabledInputCount).toBe(0)
+    expect(result.allSingleInput).toBe(true)
+  })
+
+  it('treats a cell with no VISIBLE control at all as disabled, never enabled', () => {
+    const rows = Array.from({ length: 5 }, () => [input({ visible: false, visibleCount: 0 })])
+    const result = analyzeColumnRowInputState(0, rows)
+    expect(result.visibleInputCount).toBe(0)
+    expect(result.enabledInputCount).toBe(0)
+    expect(result.disabledInputCount).toBe(5)
+  })
+})
+
+describe('scanScoreColumnState — item 1, standalone: raw per-column state before any classification', () => {
+  it('produces the exact example shape from the live-discovery spec for a checked, fully-enabled column', () => {
+    const tableFacts = {
+      tableIndex: 0,
+      selectorFingerprint: 'table[0]',
+      rows: [
+        [text(''), text(''), text(''), checkboxCell('10', true)],
+        ...Array.from({ length: 10 }, (_, i) => [text(String(i + 1)), text(String(i + 1).padStart(5, '0')), text(`S${i}`), input()]),
+      ],
+    }
+    const state = scanScoreColumnState(tableFacts, 3, { startIndex: 1, length: 10 })
+    expect(state).toMatchObject({
+      columnIndex: 3,
+      label: '10',
+      headerCheckboxPresent: true,
+      headerCheckboxChecked: true,
+      visibleInputCount: 10,
+      enabledInputCount: 10,
+      disabledInputCount: 0,
+      readonlyInputCount: 0,
+      writableNow: true,
+    })
+  })
+
+  it('writableNow is false for a structurally sound column whose header checkbox is unchecked — never inferred from the label', () => {
+    const tableFacts = {
+      tableIndex: 0,
+      selectorFingerprint: 'table[0]',
+      rows: [
+        [text(''), text(''), text(''), checkboxCell('11', false)],
+        ...Array.from({ length: 3 }, (_, i) => [
+          text(String(i + 1)),
+          text(String(i + 1).padStart(5, '0')),
+          text(`S${i}`),
+          input({ disabled: true }),
+        ]),
+      ],
+    }
+    const state = scanScoreColumnState(tableFacts, 3, { startIndex: 1, length: 3 })
+    expect(state.writableNow).toBe(false)
+    expect(state.headerCheckboxPresent).toBe(true)
+    expect(state.headerCheckboxChecked).toBe(false)
   })
 })
 
