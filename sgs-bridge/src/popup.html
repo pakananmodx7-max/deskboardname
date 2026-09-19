@@ -30,17 +30,28 @@
         <dd id="preview-classroom"></dd>
         <dt>งาน</dt>
         <dd id="preview-assignment"></dd>
-        <dt>คะแนนเต็ม</dt>
+        <dt>ช่องที่จะกรอก</dt>
+        <dd id="preview-target-column"></dd>
+        <dt>คะแนนเต็มของช่องนี้</dt>
         <dd id="preview-max-score"></dd>
+        <dt>หากมีคะแนนเดิมอยู่แล้ว</dt>
+        <dd id="preview-overwrite-mode"></dd>
         <dt>จำนวนนักเรียน (มีคะแนน)</dt>
         <dd id="preview-count"></dd>
       </dl>
+
+      <p class="hint">
+        ช่องอื่นในหน้า SGS นอกเหนือจาก "<span id="preview-target-column-inline"></span>" จะไม่ถูกแตะต้องเลย —
+        การอ่านคะแนนเดิมจริงจากหน้า SGS ยังไม่พร้อมใช้งาน (รอขั้นตอนที่ 3) จึงแสดงคอลัมน์ "คะแนนเดิม SGS" เป็นว่างเสมอในขณะนี้
+      </p>
       <table>
         <thead>
           <tr>
             <th>เลขที่</th>
             <th>นักเรียน</th>
-            <th>คะแนน</th>
+            <th>คะแนน KrunameClass</th>
+            <th>คะแนนเดิม SGS</th>
+            <th>คะแนนใหม่</th>
           </tr>
         </thead>
         <tbody id="preview-table-body"></tbody>

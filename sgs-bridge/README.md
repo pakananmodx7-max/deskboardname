@@ -13,6 +13,9 @@ prototype and stops well short of ever writing to SGS.**
 - Does not read or store SGS session cookies.
 - Does not connect to any database directly (SGS's or KrunameClass's).
 - Does not auto-fill or auto-click Save/Submit on the SGS page.
+- Does not write to more than one SGS score column per operation, and
+  never touches any column other than the one the teacher picked in
+  KrunameClass (see "Column-specific fill" below).
 - Does not send anything over the network — every chrome.storage write
   is local to the browser (`storage.session`/`storage.local`, never
   `storage.sync`).
@@ -40,6 +43,40 @@ phase doesn't need). Instead:
    never assumes a file on disk is safe just because KrunameClass
    produced it.
 
+## Column-specific fill
+
+Every bridge payload (v2+) is scoped to exactly ONE SGS score column,
+chosen by the teacher in KrunameClass's "เลือกช่องคะแนน SGS" picker
+before the file is even downloaded (`targetColumn` in the payload — see
+`src/types/sgs-bridge.ts` on the KrunameClass side). This extension:
+
+- Never lets a payload through validation without a `targetColumn`
+  (`key`/`label`/`maxScore`) and an explicit `overwriteMode`
+  (`skip_existing` or `overwrite_selected_column`) — see
+  `src/lib/payload-validation.js`.
+- Computes what would actually happen per student with
+  `computeSgsColumnFillPlan` (`src/lib/column-fill.js`): a blank
+  KrunameClass score is always skipped, an explicit `0` is always
+  preserved, and an already-filled cell in the target column is only
+  ever overwritten when the teacher chose `overwrite_selected_column` —
+  `skip_existing` (the default) leaves it exactly as-is.
+- Turns that plan into "what to write" with
+  `buildSgsColumnWriteInstructions(plan, columnKey)`, which **only ever
+  tags instructions with the one `columnKey` it was called with** — see
+  `sgs-bridge/tests/column-fill.test.ts`'s "selecting one column never
+  modifies another" cases. A future DOM-filling step that only accepts
+  this shape is structurally unable to touch a different SGS column.
+- The popup always calls this with `payload.targetColumn.key` — never a
+  hardcoded or second column — enforced by a source guard in
+  `tests/source-guards.test.ts`.
+
+The popup's own preview table (เลขที่ | นักเรียน | คะแนน KrunameClass |
+คะแนนเดิม SGS | คะแนนใหม่) runs through this exact same pipeline, using
+an intentionally empty "existing SGS value" map for now — Phase 2's real
+selectors don't exist yet (see "Future phases" below), so every existing
+value reads as "ว่าง" until that's wired up; only that one lookup needs
+to change later, not the skip/overwrite/write decision logic itself.
+
 ## Current functions (Phase 1)
 
 1. **Connection status** — "พบหน้า SGS" / "กรุณาเปิดหน้า SGS", based on
@@ -47,8 +84,10 @@ phase doesn't need). Instead:
    title/URL (Options page). The real SGS URL/DOM isn't known yet
    (Phase 5), so this deliberately stays a simple heuristic rather than
    a guessed domain match.
-2. **Load + preview a bridge payload** — classroom, assignment, max
-   score, student count, and the score table.
+2. **Load + preview a bridge payload** — subject, classroom, assignment,
+   the ONE target SGS column and its max score, the chosen overwrite
+   mode, student count, and the full column-fill table (existing/new
+   value per student).
 3. **"ตรวจสอบการจับคู่นักเรียน" (mapping dry run)** — runs the Phase 6
    mapping algorithm (`src/lib/mapping.js`) against the loaded payload.
    Because Phase 5's SGS selectors don't exist yet, this currently runs

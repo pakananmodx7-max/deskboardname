@@ -1,3 +1,9 @@
+import {
+  buildSgsColumnWriteInstructions,
+  computeSgsColumnFillPlan,
+  formatSgsExistingScoreDisplay,
+  formatSgsNewValueDisplay,
+} from './lib/column-fill.js'
 import { collectRawSgsFacts } from './content-diagnostic.js'
 import { buildDiagnosticReport, formatDiagnosticReportForCopy } from './lib/diagnostic-report.js'
 import { matchStudentsToSgs } from './lib/mapping.js'
@@ -5,6 +11,22 @@ import { validateSgsBridgePayload } from './lib/payload-validation.js'
 
 const DEFAULT_SGS_KEYWORD = 'sgs'
 const SESSION_PAYLOAD_KEY = 'sgsBridgeLoadedPayload'
+
+const OVERWRITE_MODE_LABEL = {
+  skip_existing: 'ข้ามคะแนนที่มีอยู่แล้ว',
+  overwrite_selected_column: 'เขียนทับเฉพาะช่องที่เลือก',
+}
+
+/**
+ * The extension can't yet read the live SGS page's actual column values
+ * (Phase 5's diagnostic mode exists, but Phase 2's real selectors don't
+ * yet) — so, exactly like sgs-export-dialog.tsx on the KrunameClass
+ * side, every existing-value lookup here is honestly empty for now.
+ * Once real selectors exist, only this becomes a real DOM read; nothing
+ * else in computeSgsColumnFillPlan/buildSgsColumnWriteInstructions needs
+ * to change.
+ */
+const NO_KNOWN_EXISTING_SCORES = {}
 
 /** @type {import('./lib/payload-validation.js').SgsBridgePayload | null} */
 let loadedPayload = null
@@ -51,19 +73,57 @@ function renderPreview(payload) {
   document.getElementById('preview-subject').textContent = payload.subjectName
   document.getElementById('preview-classroom').textContent = payload.classroomName
   document.getElementById('preview-assignment').textContent = payload.assignmentTitle
-  document.getElementById('preview-max-score').textContent = String(payload.maxScore)
+  document.getElementById('preview-target-column').textContent = payload.targetColumn.label
+  document.getElementById('preview-target-column-inline').textContent = payload.targetColumn.label
+  document.getElementById('preview-max-score').textContent = String(payload.targetColumn.maxScore)
+  document.getElementById('preview-overwrite-mode').textContent =
+    OVERWRITE_MODE_LABEL[payload.overwriteMode] ?? payload.overwriteMode
   document.getElementById('preview-count').textContent = String(payload.students.length)
 
+  // Rebuilds the FULL roster view (graded + skipped) the same way
+  // KrunameClass's own preview does, from the payload's two lists —
+  // `students` (score field) and `skippedStudentIds` (no score at all,
+  // always null here) — so a teacher sees every student, not just the
+  // ones that will actually transfer.
+  const rows = [
+    ...payload.students.map((s) => ({
+      studentId: s.studentId,
+      studentNumber: s.studentNumber,
+      fullName: s.fullName,
+      krunameScore: s.score,
+    })),
+    ...payload.skippedStudentIds.map((s) => ({
+      studentId: s.studentId,
+      studentNumber: s.studentNumber,
+      fullName: s.fullName,
+      krunameScore: null,
+    })),
+  ]
+
+  // The column-fill plan/instructions below are ALWAYS scoped to
+  // payload.targetColumn.key — the one column the teacher picked in
+  // KrunameClass. This popup never asks for, and never could produce,
+  // an instruction for a different column.
+  const plan = computeSgsColumnFillPlan(rows, NO_KNOWN_EXISTING_SCORES, payload.overwriteMode)
+  // Computed here only to keep the plan/instructions pipeline exercised
+  // end-to-end in this dry-run phase — never handed to any DOM-writing
+  // code yet.
+  buildSgsColumnWriteInstructions(plan, payload.targetColumn.key)
+
   previewTableBody.replaceChildren(
-    ...payload.students.map((student) => {
+    ...plan.map((row) => {
       const tr = document.createElement('tr')
       const tdNumber = document.createElement('td')
-      tdNumber.textContent = student.studentNumber === null ? '-' : String(student.studentNumber)
+      tdNumber.textContent = row.studentNumber === null ? '-' : String(row.studentNumber)
       const tdName = document.createElement('td')
-      tdName.textContent = student.fullName
-      const tdScore = document.createElement('td')
-      tdScore.textContent = String(student.score)
-      tr.append(tdNumber, tdName, tdScore)
+      tdName.textContent = row.fullName
+      const tdKruname = document.createElement('td')
+      tdKruname.textContent = row.krunameScore === null ? '—' : String(row.krunameScore)
+      const tdExisting = document.createElement('td')
+      tdExisting.textContent = formatSgsExistingScoreDisplay(row.sgsExistingScore)
+      const tdNew = document.createElement('td')
+      tdNew.textContent = formatSgsNewValueDisplay(row)
+      tr.append(tdNumber, tdName, tdKruname, tdExisting, tdNew)
       return tr
     }),
   )

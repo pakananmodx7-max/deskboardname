@@ -7,14 +7,14 @@ function readSource(): string {
 }
 
 // ==================================================
-// SgsExportDialog — SGS integration Phase 2. This is a DRY-RUN preview
-// only: it must never contain a fetch/XHR to any SGS-looking host, never
-// reference chrome.* extension APIs directly (that only happens inside
-// sgs-bridge/, a fully separate folder), and never auto-trigger a
-// download on open — only on an explicit button click. Source-text
-// guards, the same convention every other component in this codebase
-// uses since vitest.config.ts runs in a `node` environment with no
-// DOM/jsdom.
+// SgsExportDialog — SGS integration, column-specific fill. This is a
+// DRY-RUN preview only: it must never contain a fetch/XHR to any
+// SGS-looking host, never reference chrome.* extension APIs directly
+// (that only happens inside sgs-bridge/), and never auto-trigger a
+// download on open — only on an explicit button click, and only once a
+// single target column has been chosen. Source-text guards, the same
+// convention every other component in this codebase uses since
+// vitest.config.ts runs in a `node` environment with no DOM/jsdom.
 // ==================================================
 
 describe('SgsExportDialog — never talks to SGS or the network directly', () => {
@@ -33,6 +33,42 @@ describe('SgsExportDialog — never talks to SGS or the network directly', () =>
   it('never imports a Supabase client — this dialog only reshapes already-loaded props', () => {
     expect(source).not.toContain("from '@/lib/supabase'")
     expect(source).not.toContain('getSupabaseClient')
+  })
+})
+
+describe('SgsExportDialog — exactly one SGS column must be selected before anything can be sent', () => {
+  const source = readSource()
+
+  it('renders every SGS_COLUMNS entry as its own radio option', () => {
+    expect(source).toContain('SGS_COLUMNS.map((col) =>')
+    expect(source).toContain('type="radio"')
+    expect(source).toContain('name="sgs-target-column"')
+  })
+
+  it('both export buttons are disabled until a column is picked', () => {
+    expect(source).toContain('onClick={handleDownloadCsv} disabled={!targetColumn}')
+    expect(source).toContain('onClick={handlePrepareBridgePayload} disabled={!targetColumn}')
+  })
+
+  it('bails out of both handlers if somehow called with no column selected — never sends an empty/undefined column', () => {
+    const csvFn = source.slice(source.indexOf('function handleDownloadCsv'), source.indexOf('function handlePrepareBridgePayload'))
+    const payloadFn = source.slice(source.indexOf('function handlePrepareBridgePayload'), source.indexOf('return ('))
+    expect(csvFn).toContain('if (!targetColumn) return')
+    expect(payloadFn).toContain('if (!targetColumn) return')
+  })
+})
+
+describe('SgsExportDialog — overwrite mode defaults to skipping existing values', () => {
+  const source = readSource()
+
+  it('initializes state with DEFAULT_SGS_OVERWRITE_MODE, never a hardcoded overwrite default', () => {
+    expect(source).toContain('useState<SgsOverwriteMode>(DEFAULT_SGS_OVERWRITE_MODE)')
+  })
+
+  it('offers both modes as explicit, mutually exclusive radio choices', () => {
+    expect(source).toContain('name="sgs-overwrite-mode"')
+    expect(source).toContain('ข้ามคะแนนที่มีอยู่แล้ว')
+    expect(source).toContain('เขียนทับเฉพาะช่องที่เลือก')
   })
 })
 
@@ -60,6 +96,19 @@ describe('SgsExportDialog — the three required actions exist and nothing auto-
   })
 })
 
+describe('SgsExportDialog — the preview never fabricates a known SGS existing value', () => {
+  const source = readSource()
+
+  it('always computes the plan against an empty/known-none existing-scores map — KrunameClass has no live SGS access', () => {
+    expect(source).toContain('NO_KNOWN_EXISTING_SCORES')
+    expect(source).toContain('computeSgsColumnFillPlan(rows, NO_KNOWN_EXISTING_SCORES, overwriteMode)')
+  })
+
+  it('discloses this limitation to the teacher in plain text', () => {
+    expect(source).toContain('ยังไม่สามารถอ่านคะแนนเดิมจากหน้า SGS ได้โดยตรง')
+  })
+})
+
 describe('SgsExportDialog — reads rows from the SAME assignment_submissions-backed data already on screen', () => {
   const source = readSource()
 
@@ -67,8 +116,10 @@ describe('SgsExportDialog — reads rows from the SAME assignment_submissions-ba
     expect(source).toContain('buildSgsExportRows(roster, submissions)')
   })
 
-  it('shows an explicit "ไม่ส่ง" for a skipped row rather than silently omitting the student', () => {
-    expect(source).toContain('ไม่ส่ง')
+  it('shows the full 5-column preview shape required by the spec', () => {
+    expect(source).toContain('เลขที่')
+    expect(source).toContain('คะแนนเดิม SGS')
+    expect(source).toContain('คะแนนใหม่')
   })
 
   it('states explicitly that this phase never auto-sends to SGS', () => {

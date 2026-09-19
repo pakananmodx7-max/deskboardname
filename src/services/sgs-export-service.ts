@@ -1,6 +1,12 @@
 import type { ExportTable } from '@/lib/export/export-table'
 import type { AssignmentSubmission } from '@/types/assignment'
-import { SGS_BRIDGE_PAYLOAD_VERSION, type SgsBridgePayload } from '@/types/sgs-bridge'
+import {
+  DEFAULT_SGS_OVERWRITE_MODE,
+  SGS_BRIDGE_PAYLOAD_VERSION,
+  type SgsBridgePayload,
+  type SgsColumnDefinition,
+  type SgsOverwriteMode,
+} from '@/types/sgs-bridge'
 import type { ClassroomStudent } from '@/types/student'
 
 /**
@@ -20,7 +26,7 @@ export interface SgsExportRow {
   fullName: string
   /** null means "no score recorded in KrunameClass yet" — never 0. */
   krunameScore: number | null
-  /** Whether this row would be included in the CSV/bridge payload —
+  /** Whether this row would be included in the bridge payload —
    * always exactly `krunameScore !== null`, kept as its own field so
    * callers never need to re-derive (and risk drifting from) that rule. */
   willSend: boolean
@@ -65,27 +71,139 @@ export function computeSgsExportSummary(rows: SgsExportRow[], maxScore: number):
   }
 }
 
+// ==================================================
+// Column-specific fill — the teacher must pick exactly ONE SGS score
+// column per operation (ช่อง 1 / ช่อง 2 / .../ กลางภาค / ปลายภาค), and
+// every other column must stay completely untouched. This section is
+// mirrored, line-for-rule, in sgs-bridge/src/lib/column-fill.js — the
+// extension can't import a TS module from this app's src/, the same
+// reason sgs-mapping-service.ts is mirrored there too.
+// ==================================================
+
 /**
- * "ดาวน์โหลด CSV" — a teacher-readable snapshot of exactly what would be
- * sent to SGS, including the skipped rows (marked ไม่ส่ง) so the file is
- * a complete record, not just the subset that would transfer.
+ * Placeholder default column set. The real SGS instance's actual
+ * columns/labels/max scores are unknown until Phase 5's diagnostic mode
+ * has been run against the live page — this list is the one thing that
+ * needs to change once that's confirmed; nothing else in this file
+ * depends on these exact values.
  */
-export function buildSgsExportCsvTable(
+export const SGS_COLUMNS: SgsColumnDefinition[] = [
+  { key: 'col1', label: 'ช่อง 1', maxScore: 15 },
+  { key: 'col2', label: 'ช่อง 2', maxScore: 15 },
+  { key: 'col3', label: 'ช่อง 3', maxScore: 15 },
+  { key: 'col4', label: 'ช่อง 4', maxScore: 15 },
+  { key: 'midterm', label: 'กลางภาค', maxScore: 10 },
+  { key: 'final', label: 'ปลายภาค', maxScore: 30 },
+]
+
+export type SgsColumnFillAction = 'skip_no_score' | 'skip_existing' | 'write'
+
+export interface SgsColumnFillRow {
+  studentId: string
+  studentNumber: number | null
+  fullName: string
+  krunameScore: number | null
+  /** What the target column currently holds for this student, as read
+   * by the extension from the live SGS page — null means "empty," NOT
+   * "unknown." KrunameClass itself has no way to read the live SGS page,
+   * so every call made from sgs-export-dialog.tsx passes an empty map
+   * here (see the dialog's own on-screen disclosure about this). */
+  sgsExistingScore: number | null
+  action: SgsColumnFillAction
+}
+
+/**
+ * The one function that decides, per student, whether the target
+ * column's cell gets written — and the ONLY three things it ever
+ * decides:
+ *   1. no KrunameClass score at all -> 'skip_no_score' (blank in
+ *      KrunameClass always means skip, regardless of overwrite mode —
+ *      there is nothing to write).
+ *   2. the column already has a value AND the teacher chose
+ *      'skip_existing' (the default) -> 'skip_existing'.
+ *   3. otherwise -> 'write', using the KrunameClass score exactly,
+ *      including an explicit 0.
+ * This never looks at, and has no way to reference, any OTHER column —
+ * every input row here is already scoped to one column's existing
+ * value, and every output row is a decision about that same one column.
+ */
+export function computeSgsColumnFillPlan(
+  rows: Pick<SgsExportRow, 'studentId' | 'studentNumber' | 'fullName' | 'krunameScore'>[],
+  existingScoresByStudentId: Record<string, number | null>,
+  overwriteMode: SgsOverwriteMode,
+): SgsColumnFillRow[] {
+  return rows.map((row) => {
+    const sgsExistingScore = existingScoresByStudentId[row.studentId] ?? null
+    let action: SgsColumnFillAction
+    if (row.krunameScore === null) {
+      action = 'skip_no_score'
+    } else if (sgsExistingScore !== null && overwriteMode === 'skip_existing') {
+      action = 'skip_existing'
+    } else {
+      action = 'write'
+    }
+    return {
+      studentId: row.studentId,
+      studentNumber: row.studentNumber,
+      fullName: row.fullName,
+      krunameScore: row.krunameScore,
+      sgsExistingScore,
+      action,
+    }
+  })
+}
+
+export function formatSgsExistingScoreDisplay(score: number | null): string {
+  return score === null ? 'ว่าง' : String(score)
+}
+
+export function formatSgsNewValueDisplay(row: SgsColumnFillRow): string {
+  return row.action === 'write' ? String(row.krunameScore) : 'ไม่เปลี่ยน'
+}
+
+export interface SgsColumnWriteInstruction {
+  studentId: string
+  columnKey: string
+  value: number
+}
+
+/**
+ * The actual "what to write" list for ONE column — every instruction
+ * carries the SAME `columnKey` (the one passed in), so a future DOM-
+ * filling function that only ever accepts a single-column instruction
+ * list is structurally unable to touch any other SGS column. Rows
+ * whose action isn't 'write' simply produce no instruction — an
+ * unrelated existing value is left exactly as-is because nothing here
+ * ever asks to change it.
+ */
+export function buildSgsColumnWriteInstructions(plan: SgsColumnFillRow[], columnKey: string): SgsColumnWriteInstruction[] {
+  return plan
+    .filter((row): row is SgsColumnFillRow & { krunameScore: number } => row.action === 'write')
+    .map((row) => ({ studentId: row.studentId, columnKey, value: row.krunameScore }))
+}
+
+/**
+ * "ดาวน์โหลด CSV" — a teacher-readable snapshot of exactly what would
+ * happen for the selected column: existing value, new value (or "ไม่
+ * เปลี่ยน" when skipped), for every roster student.
+ */
+export function buildSgsColumnFillCsvTable(
   subjectName: string,
   classroomName: string,
   assignmentTitle: string,
-  maxScore: number,
-  rows: SgsExportRow[],
+  targetColumn: SgsColumnDefinition,
+  plan: SgsColumnFillRow[],
 ): ExportTable {
   return {
     title: `ส่งคะแนนไป SGS — ${assignmentTitle}`,
-    subtitle: `รายวิชา: ${subjectName} · ห้อง: ${classroomName} · คะแนนเต็ม: ${maxScore}`,
-    headers: ['เลขที่', 'นักเรียน', 'คะแนน KrunameClass', 'ส่งไป SGS'],
-    rows: rows.map((r) => [
+    subtitle: `รายวิชา: ${subjectName} · ห้อง: ${classroomName} · ช่องที่จะกรอก: ${targetColumn.label} · คะแนนเต็ม: ${targetColumn.maxScore}`,
+    headers: ['เลขที่', 'นักเรียน', 'คะแนน KrunameClass', 'คะแนนเดิม SGS', 'คะแนนใหม่'],
+    rows: plan.map((r) => [
       r.studentNumber ?? '-',
       r.fullName,
       r.krunameScore ?? '—',
-      r.willSend ? (r.krunameScore as number) : 'ไม่ส่ง',
+      formatSgsExistingScoreDisplay(r.sgsExistingScore),
+      formatSgsNewValueDisplay(r),
     ]),
   }
 }
@@ -97,16 +215,23 @@ export interface BuildSgsBridgePayloadArgs {
   classroomName: string
   assignmentId: string
   assignmentTitle: string
-  maxScore: number
+  assignmentMaxScore: number
+  targetColumn: SgsColumnDefinition
+  overwriteMode?: SgsOverwriteMode
 }
 
 /**
  * Builds the exact payload handed to the SGS Bridge extension (as a
  * downloaded JSON file — see sgs-export-dialog.tsx). Only rows with
  * `willSend` end up in `students`; every other row is recorded in
- * `skippedStudentIds` for audit purposes only. Nothing here ever reads
- * or forwards a Supabase session/token — this function's only inputs
- * are already-fetched, already-on-screen grade data.
+ * `skippedStudentIds` for audit purposes only. `students[]` always
+ * includes every graded student regardless of `overwriteMode` — the
+ * skip-if-already-filled decision needs the column's CURRENT value on
+ * the live SGS page, which only the extension can read, so that
+ * decision is deliberately deferred to computeSgsColumnFillPlan running
+ * there, not made here. Nothing here ever reads or forwards a Supabase
+ * session/token — this function's only inputs are already-fetched,
+ * already-on-screen grade data.
  */
 export function buildSgsBridgePayload(args: BuildSgsBridgePayloadArgs, rows: SgsExportRow[]): SgsBridgePayload {
   return {
@@ -118,7 +243,9 @@ export function buildSgsBridgePayload(args: BuildSgsBridgePayloadArgs, rows: Sgs
     classroomName: args.classroomName,
     assignmentId: args.assignmentId,
     assignmentTitle: args.assignmentTitle,
-    maxScore: args.maxScore,
+    assignmentMaxScore: args.assignmentMaxScore,
+    targetColumn: args.targetColumn,
+    overwriteMode: args.overwriteMode ?? DEFAULT_SGS_OVERWRITE_MODE,
     students: rows
       .filter((r) => r.willSend)
       .map((r) => ({
@@ -157,6 +284,8 @@ function findForbiddenKey(value: unknown, path = ''): string | null {
   }
   return null
 }
+
+const OVERWRITE_MODES: SgsOverwriteMode[] = ['skip_existing', 'overwrite_selected_column']
 
 export interface SgsBridgePayloadValidation {
   ok: boolean
@@ -197,9 +326,32 @@ export function validateSgsBridgePayload(raw: unknown): SgsBridgePayloadValidati
     }
   }
 
-  const maxScore = payload.maxScore
-  if (typeof maxScore !== 'number' || !Number.isFinite(maxScore) || maxScore <= 0) {
-    errors.push('maxScore ต้องเป็นตัวเลขมากกว่า 0')
+  const assignmentMaxScore = payload.assignmentMaxScore
+  if (typeof assignmentMaxScore !== 'number' || !Number.isFinite(assignmentMaxScore) || assignmentMaxScore <= 0) {
+    errors.push('assignmentMaxScore ต้องเป็นตัวเลขมากกว่า 0')
+  }
+
+  let targetColumnMaxScore: number | null = null
+  const targetColumn = payload.targetColumn
+  if (typeof targetColumn !== 'object' || targetColumn === null) {
+    errors.push('targetColumn ต้องเป็น object')
+  } else {
+    const col = targetColumn as Record<string, unknown>
+    if (typeof col.key !== 'string' || col.key.trim() === '') {
+      errors.push('targetColumn.key ต้องเป็นข้อความที่ไม่ว่าง')
+    }
+    if (typeof col.label !== 'string' || col.label.trim() === '') {
+      errors.push('targetColumn.label ต้องเป็นข้อความที่ไม่ว่าง')
+    }
+    if (typeof col.maxScore !== 'number' || !Number.isFinite(col.maxScore) || col.maxScore <= 0) {
+      errors.push('targetColumn.maxScore ต้องเป็นตัวเลขมากกว่า 0')
+    } else {
+      targetColumnMaxScore = col.maxScore
+    }
+  }
+
+  if (!OVERWRITE_MODES.includes(payload.overwriteMode as SgsOverwriteMode)) {
+    errors.push(`overwriteMode ต้องเป็นหนึ่งใน ${OVERWRITE_MODES.join(', ')}`)
   }
 
   if (!Array.isArray(payload.students)) {
@@ -224,8 +376,11 @@ export function validateSgsBridgePayload(raw: unknown): SgsBridgePayloadValidati
         errors.push(`students[${index}].score ต้องเป็นตัวเลข (ห้ามเป็น null — แถวที่ไม่มีคะแนนต้องไม่อยู่ใน students)`)
       } else {
         if (r.score < 0) errors.push(`students[${index}].score ติดลบไม่ได้`)
-        if (typeof maxScore === 'number' && r.score > maxScore) {
-          errors.push(`students[${index}].score (${r.score}) เกินคะแนนเต็ม (${maxScore})`)
+        if (typeof assignmentMaxScore === 'number' && r.score > assignmentMaxScore) {
+          errors.push(`students[${index}].score (${r.score}) เกินคะแนนเต็มของงาน (${assignmentMaxScore})`)
+        }
+        if (targetColumnMaxScore !== null && r.score > targetColumnMaxScore) {
+          errors.push(`students[${index}].score (${r.score}) เกินคะแนนเต็มของช่อง SGS ที่เลือก (${targetColumnMaxScore})`)
         }
       }
     })

@@ -68,6 +68,20 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     const fn = source.slice(source.indexOf('function renderMappingResult'), source.indexOf('fileInput.addEventListener'))
     expect(fn).toContain('matchStudentsToSgs(krunameStudents, [])')
   })
+
+  it('buildSgsColumnWriteInstructions is only ever called with payload.targetColumn.key — never a hardcoded or different column', () => {
+    const fn = source.slice(source.indexOf('function renderPreview'), source.indexOf('function loadPayloadFromFile'))
+    expect(fn).toContain('buildSgsColumnWriteInstructions(plan, payload.targetColumn.key)')
+    // Guard against a second, differently-scoped call slipping in anywhere else in the file.
+    const allCalls = [...source.matchAll(/buildSgsColumnWriteInstructions\(([^)]*)\)/g)]
+    expect(allCalls.length).toBe(1)
+    expect(allCalls[0][1]).toBe('plan, payload.targetColumn.key')
+  })
+
+  it('the column-fill plan is computed from payload.overwriteMode — never a hardcoded overwrite choice', () => {
+    expect(source).toContain('computeSgsColumnFillPlan(rows, NO_KNOWN_EXISTING_SCORES, payload.overwriteMode)')
+    expect(source).not.toMatch(/computeSgsColumnFillPlan\([^)]*'overwrite_selected_column'/)
+  })
 })
 
 describe('options.js — only ever writes the non-sensitive keyword setting', () => {

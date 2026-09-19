@@ -1046,7 +1046,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
         classroomName={classroomName ?? ''}
         assignmentId={currentAssignmentId}
         assignmentTitle={currentAssignment.title}
-        maxScore={currentAssignment.maxScore}
+        assignmentMaxScore={currentAssignment.maxScore}
         roster={roster}
         submissions={submissions}
       />

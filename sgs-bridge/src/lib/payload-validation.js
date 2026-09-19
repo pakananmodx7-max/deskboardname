@@ -1,13 +1,20 @@
 /**
  * Mirrors src/services/sgs-export-service.ts's validateSgsBridgePayload
- * EXACTLY, for the same reason mapping.js mirrors
- * sgs-mapping-service.ts — this extension cannot import a TS module
- * from the main app's src/. The extension re-validates every payload
- * a teacher loads from disk, even though KrunameClass already validated
- * it before offering the download: a hand-edited or corrupted file must
- * never be trusted just because it has the right shape at a glance.
+ * EXACTLY, for the same reason mapping.js/column-fill.js mirror their
+ * counterparts — this extension cannot import a TS module from the main
+ * app's src/. The extension re-validates every payload a teacher loads
+ * from disk, even though KrunameClass already validated it before
+ * offering the download: a hand-edited or corrupted file must never be
+ * trusted just because it has the right shape at a glance.
+ *
+ * v2 requires `targetColumn` and `overwriteMode` — a payload missing
+ * either is rejected outright, since this extension must never write to
+ * SGS without an explicit, single target column and an explicit
+ * overwrite choice.
  */
-export const SGS_BRIDGE_PAYLOAD_VERSION = 1
+export const SGS_BRIDGE_PAYLOAD_VERSION = 2
+
+const OVERWRITE_MODES = ['skip_existing', 'overwrite_selected_column']
 
 const FORBIDDEN_KEY_PATTERN = /password|token|cookie|secret|service_?role|credential|session/i
 
@@ -48,9 +55,31 @@ export function validateSgsBridgePayload(raw) {
     }
   }
 
-  const maxScore = payload.maxScore
-  if (typeof maxScore !== 'number' || !Number.isFinite(maxScore) || maxScore <= 0) {
-    errors.push('maxScore ต้องเป็นตัวเลขมากกว่า 0')
+  const assignmentMaxScore = payload.assignmentMaxScore
+  if (typeof assignmentMaxScore !== 'number' || !Number.isFinite(assignmentMaxScore) || assignmentMaxScore <= 0) {
+    errors.push('assignmentMaxScore ต้องเป็นตัวเลขมากกว่า 0')
+  }
+
+  let targetColumnMaxScore = null
+  const targetColumn = payload.targetColumn
+  if (typeof targetColumn !== 'object' || targetColumn === null) {
+    errors.push('targetColumn ต้องเป็น object')
+  } else {
+    if (typeof targetColumn.key !== 'string' || targetColumn.key.trim() === '') {
+      errors.push('targetColumn.key ต้องเป็นข้อความที่ไม่ว่าง')
+    }
+    if (typeof targetColumn.label !== 'string' || targetColumn.label.trim() === '') {
+      errors.push('targetColumn.label ต้องเป็นข้อความที่ไม่ว่าง')
+    }
+    if (typeof targetColumn.maxScore !== 'number' || !Number.isFinite(targetColumn.maxScore) || targetColumn.maxScore <= 0) {
+      errors.push('targetColumn.maxScore ต้องเป็นตัวเลขมากกว่า 0')
+    } else {
+      targetColumnMaxScore = targetColumn.maxScore
+    }
+  }
+
+  if (!OVERWRITE_MODES.includes(payload.overwriteMode)) {
+    errors.push(`overwriteMode ต้องเป็นหนึ่งใน ${OVERWRITE_MODES.join(', ')}`)
   }
 
   if (!Array.isArray(payload.students)) {
@@ -74,8 +103,11 @@ export function validateSgsBridgePayload(raw) {
         errors.push(`students[${index}].score ต้องเป็นตัวเลข (ห้ามเป็น null)`)
       } else {
         if (row.score < 0) errors.push(`students[${index}].score ติดลบไม่ได้`)
-        if (typeof maxScore === 'number' && row.score > maxScore) {
-          errors.push(`students[${index}].score (${row.score}) เกินคะแนนเต็ม (${maxScore})`)
+        if (typeof assignmentMaxScore === 'number' && row.score > assignmentMaxScore) {
+          errors.push(`students[${index}].score (${row.score}) เกินคะแนนเต็มของงาน (${assignmentMaxScore})`)
+        }
+        if (targetColumnMaxScore !== null && row.score > targetColumnMaxScore) {
+          errors.push(`students[${index}].score (${row.score}) เกินคะแนนเต็มของช่อง SGS ที่เลือก (${targetColumnMaxScore})`)
         }
       }
     })
