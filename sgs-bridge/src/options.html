@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <title>SGS Bridge — ตั้งค่า</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>ตั้งค่า SGS Bridge</h1>
+    <p class="hint">
+      ยังไม่ทราบ URL/โครงสร้างหน้าของ SGS ที่แน่นอน จึงใช้คำค้นในชื่อหน้า/URL แทนการเจาะจงโดเมน —
+      ปรับได้เมื่อทราบข้อมูลจริงแล้ว
+    </p>
+    <label>
+      คำค้นสำหรับตรวจจับหน้า SGS (ในชื่อหน้าเว็บหรือ URL)
+      <br />
+      <input type="text" id="sgs-keyword" placeholder="sgs" />
+    </label>
+    <br />
+    <button type="button" id="save">บันทึก</button>
+    <p id="saved-message" class="hint" hidden>บันทึกแล้ว</p>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

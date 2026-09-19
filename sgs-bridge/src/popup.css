@@ -1,0 +1,97 @@
+body {
+  width: 420px;
+  padding: 12px;
+  font-family: -apple-system, 'Segoe UI', Tahoma, sans-serif;
+  font-size: 13px;
+  color: #1a1a1a;
+}
+
+h1 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+h2 {
+  font-size: 13px;
+  margin: 4px 0;
+}
+
+section {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e2e2;
+}
+
+section:last-child {
+  border-bottom: none;
+}
+
+#status {
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+#status[data-state='ok'] {
+  background: #e6f4ea;
+  color: #1e7e34;
+}
+
+#status[data-state='warn'] {
+  background: #fdecea;
+  color: #b3261e;
+}
+
+.hint {
+  color: #666;
+  font-size: 11px;
+}
+
+.error {
+  color: #b3261e;
+  font-size: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+th,
+td {
+  border: 1px solid #ddd;
+  padding: 4px 6px;
+  text-align: left;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+dt {
+  color: #666;
+}
+
+dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+button {
+  margin: 4px 4px 4px 0;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 11px;
+}

@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "KrunameClass SGS Bridge (Prototype — Dry Run)",
+  "version": "0.1.0",
+  "description": "Local dry-run bridge between KrunameClass and the teacher's already-open SGS tab. Never stores SGS credentials or cookies, never connects to any database, never auto-submits to SGS.",
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "SGS Bridge (Dry Run)"
+  },
+  "options_page": "src/options.html",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "minimum_chrome_version": "116"
+}

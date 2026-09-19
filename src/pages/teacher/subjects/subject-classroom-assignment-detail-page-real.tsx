@@ -21,6 +21,7 @@ import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
 import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
 import { AssignmentResourcesSection } from '@/features/subjects-real/assignment-resources-section'
+import { SgsExportDialog } from '@/features/subjects-real/sgs-export-dialog'
 import { SubmissionViewerDrawer } from '@/features/subjects-real/submission-viewer-drawer'
 import { buildAssignmentDetailPath, buildSubjectClassroomTabPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
@@ -160,6 +161,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
 
   const [editOpen, setEditOpen] = useState(false)
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+  const [sgsExportOpen, setSgsExportOpen] = useState(false)
 
   /** Bumped whenever a score entry is rejected as out-of-range, forcing
    * the (uncontrolled, defaultValue-based) score input to remount and
@@ -685,6 +687,9 @@ export function SubjectClassroomAssignmentDetailPageReal() {
               >
                 เก็บถาวรงาน
               </Button>
+              <Button variant="outline" size="sm" onClick={() => setSgsExportOpen(true)}>
+                ส่งคะแนนไป SGS
+              </Button>
             </div>
           </div>
         </div>
@@ -1030,6 +1035,20 @@ export function SubjectClassroomAssignmentDetailPageReal() {
         description={`เก็บถาวร "${currentAssignment.title}"?\nงานและคะแนนของนักเรียนจะยังคงอยู่ในระบบ`}
         confirmLabel="เก็บถาวร"
         onConfirm={handleArchive}
+      />
+
+      <SgsExportDialog
+        open={sgsExportOpen}
+        onOpenChange={setSgsExportOpen}
+        subjectId={currentSubjectId}
+        subjectName={subjectName ?? ''}
+        classroomId={currentClassroomId}
+        classroomName={classroomName ?? ''}
+        assignmentId={currentAssignmentId}
+        assignmentTitle={currentAssignment.title}
+        maxScore={currentAssignment.maxScore}
+        roster={roster}
+        submissions={submissions}
       />
 
       <SubmissionViewerDrawer

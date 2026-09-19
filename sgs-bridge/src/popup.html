@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <title>SGS Bridge (Dry Run)</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>SGS Bridge — โหมดทดลอง (Dry Run)</h1>
+
+    <section>
+      <p id="status" data-state="warn">กำลังตรวจสอบหน้าปัจจุบัน...</p>
+      <p class="hint">
+        ตั้งค่ารูปแบบ URL/ชื่อหน้าของ SGS ได้ที่ <a href="options.html" target="_blank" rel="noopener">ตั้งค่า</a>
+      </p>
+    </section>
+
+    <section>
+      <h2>1. โหลด Bridge Payload จาก KrunameClass</h2>
+      <input type="file" id="payload-file" accept="application/json" />
+      <p id="payload-error" class="error" hidden></p>
+    </section>
+
+    <section id="preview" hidden>
+      <h2>2. ตัวอย่างข้อมูล</h2>
+      <dl>
+        <dt>รายวิชา</dt>
+        <dd id="preview-subject"></dd>
+        <dt>ห้อง</dt>
+        <dd id="preview-classroom"></dd>
+        <dt>งาน</dt>
+        <dd id="preview-assignment"></dd>
+        <dt>คะแนนเต็ม</dt>
+        <dd id="preview-max-score"></dd>
+        <dt>จำนวนนักเรียน (มีคะแนน)</dt>
+        <dd id="preview-count"></dd>
+      </dl>
+      <table>
+        <thead>
+          <tr>
+            <th>เลขที่</th>
+            <th>นักเรียน</th>
+            <th>คะแนน</th>
+          </tr>
+        </thead>
+        <tbody id="preview-table-body"></tbody>
+      </table>
+
+      <button type="button" id="mapping-dry-run" disabled>ตรวจสอบการจับคู่นักเรียน</button>
+      <p class="hint">
+        โหมดนี้ยังไม่สามารถดึงรายชื่อจริงจากหน้า SGS ได้ (รอผลจากขั้นตอนที่ 3 ก่อน) — ผลลัพธ์ด้านล่างจึงแสดงสถานะเริ่มต้นจากข้อมูลใน
+        Bridge Payload เท่านั้น ยังไม่มีการเขียนหรือส่งข้อมูลใด ๆ ไปยัง SGS
+      </p>
+      <table id="mapping-result" hidden>
+        <thead>
+          <tr>
+            <th>นักเรียนใน SGS</th>
+            <th>นักเรียนใน KrunameClass</th>
+            <th>คะแนน</th>
+            <th>สถานะการจับคู่</th>
+          </tr>
+        </thead>
+        <tbody id="mapping-result-body"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>3. ตรวจสอบโครงสร้างหน้า SGS</h2>
+      <p class="hint">
+        เก็บเฉพาะข้อมูลโครงสร้างหน้า (จำนวนตาราง/แถว/ประเภทช่องกรอกข้อมูล/หัวคอลัมน์ที่มองเห็น) — ไม่เก็บรหัสผ่าน คุกกี้ โทเคน
+        หรือข้อมูลส่วนตัวนักเรียนที่ไม่จำเป็น
+      </p>
+      <button type="button" id="diagnostic-run">ตรวจสอบโครงสร้างหน้า SGS</button>
+      <button type="button" id="copy-diagnostic">คัดลอกผลลัพธ์</button>
+      <textarea id="diagnostic-output" readonly rows="12" placeholder="ผลลัพธ์จะแสดงที่นี่หลังกดตรวจสอบ"></textarea>
+    </section>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
