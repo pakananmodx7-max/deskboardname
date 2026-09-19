@@ -71,7 +71,7 @@ export function CheckAndGradesTab({ subject, classroomId, classroomName }: Check
             type="button"
             onClick={() => handleSubTabClick(tab.key)}
             className={cn(
-              'rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors',
+              'rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
               subTab === tab.key
                 ? 'bg-card text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',

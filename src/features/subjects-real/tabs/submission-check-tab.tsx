@@ -677,7 +677,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                 each pill carries its own real (never fabricated) item
                 count from the same modeSubmittedCount/modeMissingCount/
                 modeExpectedCount math the summary banner above uses. */}
-            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/50 p-1">
+            <div className="inline-flex flex-wrap items-center gap-1.5">
               {SUBMISSION_CHECK_MODES.map((m) => {
                 const count = m.key === 'all' ? modeExpectedCount : m.key === 'submitted' ? modeSubmittedCount : modeMissingCount
                 return (
@@ -686,14 +686,14 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                     type="button"
                     onClick={() => setMode(m.key)}
                     className={cn(
-                      'shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                      'shrink-0 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
                       mode === m.key
                         ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'text-muted-foreground hover:bg-background hover:text-foreground',
+                        : 'bg-secondary text-secondary-foreground hover:bg-accent',
                     )}
                   >
                     {m.label}
-                    <span className={cn('ml-1.5 tabular-nums', mode === m.key ? 'text-primary-foreground/80' : 'text-muted-foreground/70')}>
+                    <span className={cn('ml-1.5 tabular-nums', mode === m.key ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
                       {count}
                     </span>
                   </button>
@@ -724,7 +724,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
               wrapping tabs), so stacking a second sticky bar under it
               without a hardcoded offset would risk overlapping it. */}
           {(selectedStudentIds.size > 0 || selectedAssignmentIds.size > 0) && (
-            <div className="flex flex-col gap-2.5 rounded-lg border border-primary/40 bg-card px-3.5 py-3 text-sm shadow-md">
+            <div className="flex flex-col gap-2.5 rounded-2xl border border-primary/40 bg-card px-3.5 py-3 text-sm shadow-soft">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                   <Users className="size-4" />
@@ -859,7 +859,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
               at the start of every runBulkStatusUpdate call, so a stale
               result from a previous action never lingers on screen. */}
           {bulkStatusResult && (
-            <div className="rounded-lg border border-border border-l-4 border-l-success bg-card px-3.5 py-2.5 text-sm shadow-sm">
+            <div className="rounded-2xl border border-border border-l-4 border-l-success bg-card px-3.5 py-2.5 text-sm shadow-soft">
               <div className="flex items-start justify-between gap-2">
                 <div className="space-y-0.5">
                   <p className="font-semibold text-success">บันทึกสถานะสำเร็จ {bulkStatusResult.changedCount} รายการ</p>
@@ -899,7 +899,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
               runBulkScoreUpdate call, so a stale result from a previous
               action never lingers on screen. */}
           {bulkScoreResult && (
-            <div className="rounded-lg border border-border border-l-4 border-l-success bg-card px-3.5 py-2.5 text-sm shadow-sm">
+            <div className="rounded-2xl border border-border border-l-4 border-l-success bg-card px-3.5 py-2.5 text-sm shadow-soft">
               <div className="flex items-start justify-between gap-2">
                 <div className="space-y-0.5">
                   <p className="font-semibold text-success">ให้คะแนนสำเร็จ {bulkScoreResult.changedCount} คน</p>
@@ -941,7 +941,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                             type="checkbox"
                             checked={allVisibleSelected}
                             onChange={toggleSelectAllVisible}
-                            className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-ring/50"
+                            className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-primary/40"
                             aria-label="เลือกนักเรียนทั้งหมด"
                           />
                           ชื่อ-นามสกุล
@@ -960,7 +960,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                               type="checkbox"
                               checked={selectedAssignmentIds.has(assignment.id)}
                               onChange={() => toggleAssignmentSelected(assignment.id)}
-                              className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-ring/50"
+                              className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-primary/40"
                               aria-label={`เลือกคอลัมน์ ${assignment.title}`}
                             />
                             <span className="truncate text-foreground" title={assignment.title}>
@@ -1081,7 +1081,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                                 type="checkbox"
                                 checked={selectedStudentIds.has(student.id)}
                                 onChange={() => toggleStudentSelected(student.id)}
-                                className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-ring/50"
+                                className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-primary/40"
                                 aria-label={`เลือก ${studentDisplayName(student)}`}
                               />
                               {studentDisplayName(student)}
@@ -1096,7 +1096,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                                   type="button"
                                   onClick={() => openTargetDialog(assignment, student)}
                                   title={cellTitle(display)}
-                                  className="inline-flex h-8 min-w-14 items-center justify-center gap-1 rounded-md px-2 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                                  className="inline-flex h-8 min-w-14 items-center justify-center gap-1 rounded-full px-2 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                                 >
                                   <CellVisual display={display} maxScore={assignment.maxScore} />
                                 </button>
@@ -1188,7 +1188,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                       type="button"
                       onClick={() => setStatusDraft(action.key)}
                       data-active={statusDraft === action.key}
-                      className="rounded-md border border-input px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors data-[active=true]:border-transparent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
+                      className="rounded-full border border-input px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 data-[active=true]:border-transparent data-[active=true]:bg-primary data-[active=true]:text-primary-foreground"
                     >
                       {action.label}
                     </button>
@@ -1261,7 +1261,7 @@ function SummaryStat({ label, tone }: { label: string; tone: 'warning' | 'succes
     success: 'border-success/25 bg-success/5 text-success',
   }[tone]
 
-  return <div className={cn('rounded-lg border px-3.5 py-2 text-sm font-semibold tracking-tight', toneClass)}>{label}</div>
+  return <div className={cn('rounded-2xl border px-3.5 py-2 text-sm font-semibold tracking-tight', toneClass)}>{label}</div>
 }
 
 /**

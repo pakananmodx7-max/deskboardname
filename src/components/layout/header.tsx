@@ -27,7 +27,7 @@ function MenuButton({ onOpenMobileMenu }: HeaderProps) {
     <button
       type="button"
       onClick={onOpenMobileMenu}
-      className="rounded-md p-2 text-muted-foreground hover:bg-accent md:hidden"
+      className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 md:hidden"
       aria-label="Open menu"
     >
       <Menu className="size-5" />
@@ -54,7 +54,7 @@ function GlobalSearchField() {
         onChange={(e) => setValue(e.target.value)}
         placeholder="ค้นหานักเรียน ห้องเรียน รายวิชา หรืองาน..."
         aria-label="ค้นหา"
-        className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-9 w-full rounded-xl border border-input bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
       />
     </div>
   )
@@ -73,7 +73,7 @@ function NotificationButton() {
   return (
     <button
       type="button"
-      className="relative rounded-md p-2 text-muted-foreground hover:bg-accent"
+      className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
       aria-label="การแจ้งเตือน"
     >
       <Bell className="size-5" />
@@ -119,7 +119,7 @@ function DemoHeader({ onOpenMobileMenu }: HeaderProps) {
       <button
         type="button"
         onClick={handleReset}
-        className="hidden items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground sm:flex"
+        className="hidden items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:flex"
         title="รีเซ็ตข้อมูลเดโมทั้งหมด"
       >
         <RotateCcw className="size-3.5" />
@@ -129,7 +129,7 @@ function DemoHeader({ onOpenMobileMenu }: HeaderProps) {
       <button
         type="button"
         onClick={handleReset}
-        className="rounded-md p-2 text-muted-foreground hover:bg-accent sm:hidden"
+        className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent sm:hidden"
         aria-label="รีเซ็ตข้อมูลเดโม"
       >
         <RotateCcw className="size-5" />
@@ -194,7 +194,7 @@ function RealHeader({ onOpenMobileMenu }: HeaderProps) {
       <button
         type="button"
         onClick={handleSignOut}
-        className="hidden items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground sm:flex"
+        className="hidden items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:flex"
         title="ออกจากระบบ"
       >
         <LogOut className="size-3.5" />
@@ -204,7 +204,7 @@ function RealHeader({ onOpenMobileMenu }: HeaderProps) {
       <button
         type="button"
         onClick={handleSignOut}
-        className="rounded-md p-2 text-muted-foreground hover:bg-accent sm:hidden"
+        className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent sm:hidden"
         aria-label="ออกจากระบบ"
       >
         <LogOut className="size-5" />

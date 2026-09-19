@@ -11,7 +11,7 @@ interface SidebarProps {
 }
 
 const LINK_CLASSES =
-  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors'
+  'flex items-center gap-3 rounded-full px-3 py-2 text-sm font-medium transition-colors'
 const LINK_ACTIVE = 'bg-primary/10 text-primary'
 const LINK_INACTIVE = 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
 
@@ -52,7 +52,7 @@ function NavGroupRow({ group, onNavigate }: { group: NavGroup; onNavigate?: () =
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
-          className="shrink-0 rounded p-1 hover:bg-accent"
+          className="shrink-0 rounded-full p-1 hover:bg-accent"
           aria-label={expanded ? `ย่อ ${group.label}` : `ขยาย ${group.label}`}
           aria-expanded={expanded}
         >
@@ -138,7 +138,7 @@ function CompactSidebarContent() {
             title={item.label}
             className={({ isActive }) =>
               cn(
-                'flex size-10 items-center justify-center rounded-md transition-colors',
+                'flex size-10 items-center justify-center rounded-full transition-colors',
                 isActive
                   ? 'bg-primary/10 text-primary'
                   : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
@@ -172,11 +172,11 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
             onClick={onCloseMobile}
             aria-hidden="true"
           />
-          <div className="relative z-10 h-full w-64 bg-card shadow-xl">
+          <div className="relative z-10 h-full w-64 bg-card shadow-soft">
             <button
               type="button"
               onClick={onCloseMobile}
-              className="absolute right-3 top-3 rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+              className="absolute right-3 top-3 rounded-full p-1.5 text-muted-foreground hover:bg-accent"
               aria-label="Close menu"
             >
               <X className="size-4" />
