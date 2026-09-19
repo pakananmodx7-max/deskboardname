@@ -77,7 +77,7 @@ export function SubjectsPageReal() {
     return (
       <Card
         key={subject.id}
-        className="cursor-pointer transition-shadow hover:shadow-md"
+        className="cursor-pointer transition-shadow hover:shadow-elevated"
         onClick={() => navigate(`/teacher/subjects/${subject.id}`)}
       >
         <CardHeader>
@@ -191,7 +191,7 @@ export function SubjectsPageReal() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">รายวิชา</h1>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">รายวิชา</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {loading ? 'กำลังโหลด...' : `${activeSummaries.length} รายวิชา`}
           </p>

@@ -57,7 +57,7 @@ export function ReportsPageReal() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">รายงาน</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">รายงาน</h1>
         <p className="mt-1 text-sm text-muted-foreground">รายงานจากข้อมูลจริงในระบบ — กรองตามห้องเรียน วิชา และช่วงวันที่</p>
       </div>
 

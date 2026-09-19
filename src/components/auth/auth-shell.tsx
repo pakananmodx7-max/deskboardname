@@ -16,7 +16,7 @@ export function AuthShell({ title, description, children, footer }: AuthShellPro
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="flex size-10 items-center justify-center rounded-full bg-primary text-primary-foreground">
             <GraduationCap className="size-5" />
           </div>
           <div className="leading-tight">

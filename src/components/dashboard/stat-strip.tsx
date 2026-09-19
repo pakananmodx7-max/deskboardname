@@ -21,15 +21,15 @@ const toneStyles: Record<NonNullable<StatStripItem['tone']>, string> = {
 export function StatStrip({ items }: { items: StatStripItem[] }) {
   return (
     <Card>
-      <CardContent className="grid grid-cols-2 gap-4 pt-5 sm:grid-cols-4">
+      <CardContent className="grid grid-cols-2 gap-5 pt-5 sm:grid-cols-4">
         {items.map((item) => (
           <div key={item.label} className="flex items-center gap-3">
-            <div className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', toneStyles[item.tone ?? 'default'])}>
-              <item.icon className="size-4" />
+            <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-full', toneStyles[item.tone ?? 'default'])}>
+              <item.icon className="size-5" />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-lg font-semibold tracking-tight">{item.value}</p>
-              <p className="truncate text-xs text-muted-foreground">{item.label}</p>
+              <p className="truncate text-lg font-bold tracking-tight text-foreground">{item.value}</p>
+              <p className="truncate text-xs font-medium text-muted-foreground">{item.label}</p>
             </div>
           </div>
         ))}

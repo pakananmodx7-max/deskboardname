@@ -17,13 +17,13 @@ function SheetContent({
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
       <DialogPrimitive.Content
         className={cn(
-          'fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-md flex-col gap-4 border-l border-border bg-card p-6 shadow-lg focus:outline-none overflow-y-auto',
+          'fixed inset-y-0 right-0 z-50 flex h-full w-full max-w-md flex-col gap-4 border-l border-border bg-card p-6 shadow-elevated focus:outline-none overflow-y-auto',
           className,
         )}
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-1 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus:outline-none">
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full p-1 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
           <X className="size-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>

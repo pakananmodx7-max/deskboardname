@@ -60,7 +60,7 @@ export function RowActionsMenu({ actions, label = 'ตัวเลือก' }: 
           e.stopPropagation()
           setOpen((prev) => !prev)
         }}
-        className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+        className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -71,7 +71,7 @@ export function RowActionsMenu({ actions, label = 'ตัวเลือก' }: 
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-md border border-border bg-card py-1 shadow-lg"
+          className="absolute right-0 z-20 mt-1.5 w-44 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-elevated"
           onClick={(e) => e.stopPropagation()}
         >
           {actions.map((action) => (

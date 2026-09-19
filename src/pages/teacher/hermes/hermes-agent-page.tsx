@@ -49,7 +49,7 @@ export function HermesAgentPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
           <Bot className="size-5" />
         </div>
         <div>

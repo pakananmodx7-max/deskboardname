@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { useToast } from '@/components/ui/toast'
+import { CopyLessonDialog } from '@/features/subjects-real/copy-lesson-dialog'
 import { LessonDialog } from '@/features/subjects-real/lesson-dialog'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
@@ -19,7 +20,7 @@ import {
   reorderLessonsLocally,
   unpublishLesson,
 } from '@/services/lesson-service'
-import type { Lesson } from '@/types/lesson'
+import type { Lesson, LessonCopyOutcome } from '@/types/lesson'
 import type { Subject } from '@/types/subject'
 
 interface LessonsTabProps {
@@ -48,6 +49,7 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
 
   const [createOpen, setCreateOpen] = useState(false)
   const [editingLesson, setEditingLesson] = useState<Lesson | null>(null)
+  const [copyingLesson, setCopyingLesson] = useState<Lesson | null>(null)
   const [archivingLesson, setArchivingLesson] = useState<Lesson | null>(null)
   const [deletingLesson, setDeletingLesson] = useState<Lesson | null>(null)
   const [publishBusyId, setPublishBusyId] = useState<string | null>(null)
@@ -78,6 +80,19 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
     } finally {
       setPublishBusyId(null)
     }
+  }
+
+  function handleCopied(outcomes: LessonCopyOutcome[]) {
+    const succeeded = outcomes.filter((o) => o.ok).length
+    const failed = outcomes.length - succeeded
+    if (succeeded > 0 && failed === 0) {
+      toast(`คัดลอกบทเรียนไป ${succeeded} ห้องแล้ว`)
+    } else if (succeeded > 0 && failed > 0) {
+      toast(`คัดลอกบทเรียนไป ${succeeded} ห้องสำเร็จ, ${failed} ห้องไม่สำเร็จ`)
+    } else {
+      toast('ไม่สามารถคัดลอกบทเรียนไปห้องที่เลือกได้')
+    }
+    refresh()
   }
 
   async function handleArchive() {
@@ -194,6 +209,7 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
                   <RowActionsMenu
                     actions={[
                       { key: 'edit', label: 'แก้ไข/เพิ่มสื่อการสอน', onSelect: () => setEditingLesson(lesson) },
+                      { key: 'copy', label: 'คัดลอกไปห้องอื่น', onSelect: () => setCopyingLesson(lesson) },
                       { key: 'archive', label: 'เก็บถาวร', onSelect: () => setArchivingLesson(lesson) },
                       {
                         key: 'delete',
@@ -232,6 +248,15 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
             setEditingLesson(null)
             refresh()
           }}
+        />
+      )}
+
+      {copyingLesson && (
+        <CopyLessonDialog
+          open={Boolean(copyingLesson)}
+          onOpenChange={(open) => !open && setCopyingLesson(null)}
+          lesson={copyingLesson}
+          onCopied={handleCopied}
         />
       )}
 

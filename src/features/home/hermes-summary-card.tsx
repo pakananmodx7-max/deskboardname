@@ -26,11 +26,11 @@ const HERMES_SAMPLE_CAPABILITIES = ['เช็กชื่อ', 'สร้าง
 export function HermesSummaryCard() {
   return (
     <Link to="/teacher/hermes" className="block">
-      <Card className="transition-shadow hover:shadow-md">
+      <Card className="transition-shadow hover:shadow-elevated">
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <Bot className="size-5" />
               </div>
               <CardTitle className="text-base">Hermes Agent</CardTitle>

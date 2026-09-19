@@ -38,7 +38,7 @@ export function AiPage() {
   return (
     <div className="mx-auto flex h-full max-w-3xl flex-col space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">AI Classroom Assistant</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">AI Classroom Assistant</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           ผู้ช่วย AI สำหรับถามเกี่ยวกับนักเรียน คะแนน งาน หรือการเข้าเรียน (เดโม — ยังไม่เชื่อมต่อ LLM จริง)
         </p>

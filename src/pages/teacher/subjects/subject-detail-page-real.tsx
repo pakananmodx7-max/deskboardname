@@ -81,7 +81,7 @@ export function SubjectDetailPageReal() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight">{subject.name}</h1>
+            <h1 className="text-xl font-bold tracking-tight text-foreground">{subject.name}</h1>
             {subject.subjectCode && <Badge variant="outline">{subject.subjectCode}</Badge>}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -116,7 +116,7 @@ export function SubjectDetailPageReal() {
           {links.map((link) => (
             <Card
               key={link.id}
-              className="cursor-pointer transition-shadow hover:shadow-md"
+              className="cursor-pointer transition-shadow hover:shadow-elevated"
               onClick={() => navigate(buildSubjectClassroomPath(subject.id, link.classroomId))}
             >
               <CardContent className="flex items-center justify-between pt-5">

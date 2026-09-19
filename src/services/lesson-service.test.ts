@@ -288,3 +288,101 @@ describe('deleteLessonPermanently — Storage cleanup before the row delete; nev
     expect(fnBody).not.toMatch(/getLessonResources\((?!lessonId\))/)
   })
 })
+
+// ==================================================
+// "ใช้บทเรียนนี้กับห้องอื่นด้วย" / "คัดลอกไปห้องอื่น" — cross-classroom
+// lesson copy. No such functionality existed anywhere in this codebase's
+// history before it was added here (verified against git log across
+// every branch) — these three functions mirror assignment-service.ts's
+// own getAssignmentCopyTargets/copyResourceToAssignment/
+// copyAssignmentToClassrooms exactly, same reasoning, same shape. Same
+// "thin network-calling wrapper, pin the exact Supabase calls" testing
+// convention as the rest of this describe suite (and as
+// assignment-service.test.ts's own copy tests).
+// ==================================================
+
+describe('getLessonCopyTargets — mirrors getAssignmentCopyTargets: every (subject, classroom) pair, excluding only the current one', () => {
+  const source = readFileSync(new URL('./lesson-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function getLessonCopyTargets'),
+    source.indexOf('\n}\n', source.indexOf('export async function getLessonCopyTargets')),
+  )
+
+  it('lists every (subject, classroom) pair via getSubjects + getSubjectClassrooms — not scoped to one subject', () => {
+    expect(fnBody).toContain('getSubjects()')
+    expect(fnBody).toContain('getSubjectClassrooms(subject.id)')
+  })
+
+  it('skips a link ONLY when BOTH subjectId and classroomId match the excluded pair — not either alone', () => {
+    expect(fnBody).toContain('if (subject.id === excludeSubjectId && link.classroomId === excludeClassroomId) continue')
+  })
+})
+
+describe('copyResourceToLesson — a link resource never touches Google Drive; a file resource is copied only in this app\'s own Storage', () => {
+  const source = readFileSync(new URL('./lesson-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function copyResourceToLesson'),
+    source.indexOf('\n}\n', source.indexOf('export async function copyResourceToLesson')),
+  )
+
+  it('a url-based resource is copied as a plain new row pointing at the SAME url — no Storage call, no Google API call', () => {
+    const linkBranch = fnBody.slice(fnBody.indexOf('if (resource.url)'), fnBody.indexOf('// url is null'))
+    expect(linkBranch).toContain('url: resource.url')
+    // drive_file_id is a plain DB column copied alongside url (metadata,
+    // not an API call) — the real assertion is that no Storage or actual
+    // Google API surface is ever touched for a url-based resource.
+    expect(linkBranch).not.toMatch(/\.storage\.|drive\.google|googleapis/i)
+  })
+
+  it('a file-based resource is copied server-side via Storage .copy() into a fresh path, never re-uploaded from the client', () => {
+    const fileBranch = fnBody.slice(fnBody.indexOf('// url is null'))
+    expect(fileBranch).toContain('.storage.from(RESOURCE_BUCKET).copy(resource.filePath, newPath)')
+    expect(fileBranch).toContain('file_path: newPath')
+  })
+
+  it('never calls the Google Drive API anywhere in this function — Drive references are only ever a url value passed through', () => {
+    expect(fnBody).not.toMatch(/drive\.google|googleapis/i)
+  })
+})
+
+describe('copyLessonToClassrooms — new independent lesson per target, always an unpublished draft, never carries over publish state', () => {
+  const source = readFileSync(new URL('./lesson-service.ts', import.meta.url), 'utf-8')
+  const fnBody = source.slice(
+    source.indexOf('export async function copyLessonToClassrooms'),
+    source.indexOf('\n}\n', source.indexOf('export async function copyLessonToClassrooms')),
+  )
+
+  it('creates a brand-new lesson via createLesson (a fresh DB-generated id) — never reuses source.id', () => {
+    expect(fnBody).toContain('const created = await createLesson(')
+    expect(fnBody).not.toMatch(/id:\s*source\.id/)
+  })
+
+  it('copies only title/description — never isPublished/isArchived/createdBy from the source', () => {
+    const createCall = fnBody.slice(fnBody.indexOf('createLesson(\n'), fnBody.indexOf('computeNextLessonSortOrder(existing)'))
+    expect(createCall).toContain('title: source.title')
+    expect(createCall).toContain('description: source.description')
+    expect(createCall).not.toContain('isPublished')
+    expect(createCall).not.toContain('isArchived')
+  })
+
+  it('appends to the TARGET classroom\'s own lesson list via computeNextLessonSortOrder(existing) — never reuses source.sortOrder', () => {
+    expect(fnBody).toContain('const existing = await getLessons(target.subjectId, target.classroomId)')
+    expect(fnBody).toContain('computeNextLessonSortOrder(existing)')
+    expect(fnBody).not.toMatch(/sortOrder:\s*source\.sortOrder/)
+  })
+
+  it('copies each resource onto the NEW lesson via copyResourceToLesson, scoped to the target subject/classroom', () => {
+    expect(fnBody).toContain('copyResourceToLesson(resource, created.id, target.subjectId, target.classroomId)')
+  })
+
+  it('one target failing is caught independently and never aborts/rolls back the others (Promise.all of per-target try/catch)', () => {
+    expect(fnBody).toContain('Promise.all(')
+    expect(fnBody).toContain('try {')
+    expect(fnBody).toContain('} catch (err) {')
+    expect(fnBody).toContain('return { target, ok: false')
+  })
+
+  it('never references Google/Drive anywhere — copying a lesson never touches the teacher\'s original Drive file', () => {
+    expect(fnBody).not.toMatch(/drive\.google|googleapis/i)
+  })
+})

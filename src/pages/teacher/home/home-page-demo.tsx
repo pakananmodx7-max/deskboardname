@@ -13,7 +13,7 @@ export function HomePageDemo() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">สวัสดี, ครู</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">สวัสดี, ครู</h1>
         <p className="mt-1 text-sm text-muted-foreground">นี่คือภาพรวมของทุกระบบที่คุณใช้งานอยู่</p>
       </div>
 

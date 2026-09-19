@@ -42,11 +42,26 @@ function emptyForm() {
  * An existing assignment's topicId is preserved as-is on edit; a newly
  * created assignment simply has no topic. */
 export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, assignment }: AssignmentDialogProps) {
-  const { addSubjectAssignment, updateSubjectAssignment } = useDemoClassroom()
+  const { addSubjectAssignment, updateSubjectAssignment, subjects, classrooms } = useDemoClassroom()
   const { toast } = useToast()
   const [form, setForm] = useState(emptyForm)
   const [error, setError] = useState<string | null>(null)
   const isEditing = Boolean(assignment)
+
+  // "ห้องที่ใช้" — every OTHER classroom this same subject is linked to,
+  // from the SAME demo state addSubjectAssignment itself reads (subject.
+  // classroomIds + classrooms) — never fabricated/mocked data, and never
+  // a second, differently-scoped source of truth. Only relevant for the
+  // CREATE flow; editing an existing assignment never touches this.
+  const subject = subjects.find((s) => s.id === subjectId)
+  const currentClassroomName = classrooms.find((c) => c.id === classroomId)?.name ?? ''
+  const otherClassrooms = (subject?.classroomIds ?? [])
+    .filter((id) => id !== classroomId)
+    .map((id) => classrooms.find((c) => c.id === id))
+    .filter((c): c is NonNullable<typeof c> => Boolean(c))
+
+  const [useOtherClassrooms, setUseOtherClassrooms] = useState(false)
+  const [selectedExtraClassroomIds, setSelectedExtraClassroomIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (open) {
@@ -62,8 +77,23 @@ export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, a
           : emptyForm(),
       )
       setError(null)
+      setUseOtherClassrooms(false)
+      setSelectedExtraClassroomIds(new Set())
     }
   }, [open, assignment])
+
+  function toggleExtraClassroom(id: string) {
+    setSelectedExtraClassroomIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function selectAllExtraClassrooms() {
+    setSelectedExtraClassroomIds(new Set(otherClassrooms.map((c) => c.id)))
+  }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -87,15 +117,27 @@ export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, a
       })
       toast('บันทึกงานแล้ว')
     } else {
-      addSubjectAssignment(subjectId, classroomId, {
+      const input = {
         title: form.title.trim(),
         topicId: null,
         type: form.type,
         maxScore,
         dueDate: form.dueDate,
         description: form.description.trim(),
-      })
-      toast('เพิ่มงานใหม่แล้ว')
+      }
+      addSubjectAssignment(subjectId, classroomId, input)
+
+      // Reuses the EXACT SAME addSubjectAssignment — once per additionally
+      // selected classroom — never a separate demo "copy" implementation.
+      // Each call seeds its own submissions fresh from THAT classroom's
+      // own roster (see addSubjectAssignment's own doc comment), so no
+      // submission/score/status ever carries over between classrooms.
+      const extraTargets = useOtherClassrooms ? otherClassrooms.filter((c) => selectedExtraClassroomIds.has(c.id)) : []
+      for (const target of extraTargets) {
+        addSubjectAssignment(subjectId, target.id, input)
+      }
+
+      toast(extraTargets.length > 0 ? `เพิ่มงานใหม่แล้วใน ${1 + extraTargets.length} ห้อง` : 'เพิ่มงานใหม่แล้ว')
     }
     onOpenChange(false)
   }
@@ -168,6 +210,63 @@ export function AssignmentDialog({ open, onOpenChange, subjectId, classroomId, a
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             />
           </div>
+
+          {/* "ห้องที่ใช้" — ALWAYS shown for the create flow (never
+              editing), even with zero other classrooms, so a teacher can
+              tell "feature exists but no eligible classroom" apart from
+              "feature is missing." Current classroom is always locked
+              checked — this is always where the assignment is created —
+              and every other same-subject classroom only copies in once
+              the teacher explicitly opts in via "เพิ่มงานนี้ไปยังห้องอื่นด้วย". */}
+          {!isEditing && (
+            <div className="space-y-1.5 rounded-lg border border-border p-3">
+              <Label>ห้องที่ใช้</Label>
+              <label className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-sm opacity-70">
+                <input type="checkbox" checked disabled className="size-4 rounded border-input" />
+                ห้องปัจจุบัน {currentClassroomName}
+              </label>
+
+              {otherClassrooms.length === 0 ? (
+                <p className="px-2 text-xs text-muted-foreground">ไม่มีห้องอื่นในรายวิชานี้</p>
+              ) : (
+                <>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent">
+                    <input
+                      type="checkbox"
+                      checked={useOtherClassrooms}
+                      onChange={(e) => setUseOtherClassrooms(e.target.checked)}
+                      className="size-4 rounded border-input"
+                    />
+                    เพิ่มงานนี้ไปยังห้องอื่นด้วย
+                  </label>
+
+                  {useOtherClassrooms && (
+                    <div className="ml-2 space-y-1 border-l border-border pl-3">
+                      <div className="flex justify-end">
+                        <Button type="button" variant="ghost" size="sm" onClick={selectAllExtraClassrooms}>
+                          เลือกทั้งหมด
+                        </Button>
+                      </div>
+                      {otherClassrooms.map((c) => (
+                        <label
+                          key={c.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedExtraClassroomIds.has(c.id)}
+                            onChange={() => toggleExtraClassroom(c.id)}
+                            className="size-4 rounded border-input"
+                          />
+                          {c.name}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           <DialogFooter>
             <Button type="submit">{isEditing ? 'บันทึก' : 'เพิ่มงาน'}</Button>

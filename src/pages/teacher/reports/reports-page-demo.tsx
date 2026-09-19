@@ -42,7 +42,7 @@ export function ReportsPageDemo() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">รายงาน</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">รายงาน</h1>
         <p className="mt-1 text-sm text-muted-foreground">เลือกประเภทรายงานที่ต้องการสร้าง (เดโม — ยังไม่มีการสร้าง PDF จริง)</p>
       </div>
 
@@ -50,7 +50,7 @@ export function ReportsPageDemo() {
         {REPORT_TYPES.map((report) => (
           <Card key={report.type}>
             <CardHeader>
-              <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <div className="flex size-9 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <report.icon className="size-4" />
               </div>
               <CardTitle className="text-base">{report.title}</CardTitle>

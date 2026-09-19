@@ -82,3 +82,28 @@ export interface AddLessonLinkResourceInput {
   driveFileId?: string | null
   mimeType?: string | null
 }
+
+/**
+ * One selectable target in "ใช้บทเรียนนี้กับห้องอื่นด้วย"/"เผยแพร่ไปยังห้อง" —
+ * a (subject, classroom) pair the calling teacher owns, with both names
+ * carried alongside the ids so the picker can show "subjectName ·
+ * classroomName" without a second lookup. Mirrors AssignmentCopyTarget
+ * (src/types/assignment.ts) exactly — same shape, same reasoning, kept as
+ * its own type because a lesson copy target set is never interchangeable
+ * with an assignment one at the call site.
+ */
+export interface LessonCopyTarget {
+  subjectId: string
+  subjectName: string
+  classroomId: string
+  classroomName: string
+}
+
+/** Per-target outcome of copyLessonToClassrooms — a partial failure (e.g.
+ * one target's resource copy fails) never rolls back or blocks the other
+ * targets. Mirrors AssignmentCopyOutcome exactly. */
+export interface LessonCopyOutcome {
+  target: LessonCopyTarget
+  ok: boolean
+  error?: string
+}

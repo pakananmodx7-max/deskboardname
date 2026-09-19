@@ -1,9 +1,12 @@
 import { getSupabaseClient } from '@/lib/supabase'
+import { getSubjectClassrooms, getSubjects } from '@/services/subject-service'
 import type {
   AddLessonFileResourceInput,
   AddLessonLinkResourceInput,
   CreateLessonInput,
   Lesson,
+  LessonCopyOutcome,
+  LessonCopyTarget,
   LessonResource,
   LessonResourceType,
   UpdateLessonInput,
@@ -560,4 +563,154 @@ export async function getLessonResourceSignedUrl(filePath: string, expiresInSeco
   const { data, error } = await supabase.storage.from(RESOURCE_BUCKET).createSignedUrl(filePath, expiresInSeconds)
   if (error) throw error
   return data.signedUrl
+}
+
+// ==================================================
+// "ใช้บทเรียนนี้กับห้องอื่นด้วย" / "เผยแพร่ไปยังห้อง" — copy a lesson
+// (title/description + every resource) into one or more OTHER (subject,
+// classroom) pairs the teacher owns. Mirrors assignment-service.ts's own
+// "คัดลอกไปห้องอื่น" section (getAssignmentCopyTargets/
+// copyAssignmentToClassrooms/copyResourceToAssignment) exactly — same
+// reasoning, same shape — since no prior lesson copy/cross-classroom
+// functionality ever existed in this codebase (verified against git
+// history before writing this). Each copy is a brand-new lessons row
+// (new id), always created as an unpublished draft regardless of the
+// source's own publish state, with zero students able to see it until
+// the teacher explicitly publishes THAT copy — publishing one classroom's
+// lesson never publishes another's. A 'link' resource (including every
+// Google Drive/Slides/YouTube reference) is copied as a new row pointing
+// at the SAME url — this never calls the Google Drive API and never
+// duplicates or deletes the teacher's original Drive file. A 'file'
+// resource (an uploaded PDF/PPTX/DOCX/image actually stored in this
+// app's own 'lesson-files' bucket) is copied server-side via Storage's
+// own .copy() into a fresh path scoped to the target lesson — that
+// Storage object belongs to this app, never the teacher's Drive.
+// ==================================================
+
+/**
+ * Every (subject, classroom) pair the calling teacher owns and can
+ * legally create a lesson in — i.e. exactly the set `lessons_insert_
+ * teacher` (0015) would already authorize. Deliberately NOT limited to
+ * "other classrooms under the current subject" — covers every
+ * subject+classroom pair the teacher has, excluding only the exact
+ * (excludeSubjectId, excludeClassroomId) pair itself (the lesson's own
+ * current home). See assignment-service.ts's getAssignmentCopyTargets —
+ * identical shape, kept as its own function (rather than a shared
+ * helper) because that function's own exact body is pinned by an
+ * existing regression test and must not change.
+ */
+export async function getLessonCopyTargets(
+  excludeSubjectId: string,
+  excludeClassroomId: string,
+): Promise<LessonCopyTarget[]> {
+  const subjects = await getSubjects()
+  const linksBySubject = await Promise.all(subjects.map((subject) => getSubjectClassrooms(subject.id)))
+
+  const targets: LessonCopyTarget[] = []
+  subjects.forEach((subject, i) => {
+    for (const link of linksBySubject[i]) {
+      if (subject.id === excludeSubjectId && link.classroomId === excludeClassroomId) continue
+      targets.push({
+        subjectId: subject.id,
+        subjectName: subject.name,
+        classroomId: link.classroomId,
+        classroomName: link.classroomName ?? '',
+      })
+    }
+  })
+  return targets
+}
+
+/**
+ * Copies one lesson resource onto a NEW lesson — a 'link' resource
+ * (url set) is a plain new row pointing at the same url (never touches
+ * Google Drive); a 'file' resource (filePath set) is copied server-side
+ * in Storage into a fresh path scoped to the target lesson, then
+ * recorded as a new row. Mirrors assignment-resource-service.ts's
+ * copyResourceToAssignment exactly — same per-field copy, same
+ * never-carry-over-createdBy-as-the-original-teacher stance (always the
+ * CALLING teacher, via requireTeacherId, since RLS requires created_by
+ * to be meaningful audit trail for whoever actually owns the copy).
+ */
+export async function copyResourceToLesson(
+  resource: LessonResource,
+  targetLessonId: string,
+  targetSubjectId: string,
+  targetClassroomId: string,
+): Promise<void> {
+  const supabase = getSupabaseClient()
+  const teacherId = await requireTeacherId()
+
+  if (resource.url) {
+    const { error } = await supabase.from('lesson_resources').insert({
+      lesson_id: targetLessonId,
+      resource_type: resource.resourceType,
+      title: resource.title,
+      url: resource.url,
+      mime_type: resource.mimeType,
+      drive_file_id: resource.driveFileId,
+      sort_order: resource.sortOrder,
+      created_by: teacherId,
+    })
+    if (error) throw error
+    return
+  }
+
+  // url is null — the migration's own check constraint guarantees
+  // filePath is set whenever url isn't.
+  if (!resource.filePath) return
+  const newFileName = generateLessonResourceFileName(resource.mimeType ?? '')
+  const newPath = buildLessonResourcePath(teacherId, targetSubjectId, targetClassroomId, targetLessonId, newFileName)
+
+  const { error: copyError } = await supabase.storage.from(RESOURCE_BUCKET).copy(resource.filePath, newPath)
+  if (copyError) throw copyError
+
+  const { error } = await supabase.from('lesson_resources').insert({
+    lesson_id: targetLessonId,
+    resource_type: resource.resourceType,
+    title: resource.title,
+    file_path: newPath,
+    mime_type: resource.mimeType,
+    sort_order: resource.sortOrder,
+    created_by: teacherId,
+  })
+  if (error) throw error
+}
+
+/**
+ * Copies `source` into every target — each target is an independent
+ * create-then-attach-resources operation, so one target failing (e.g. a
+ * resource file copy error) never rolls back or blocks any other target.
+ * Every copy starts as a fresh, UNPUBLISHED draft (createLesson's own
+ * default — isPublished is never passed here) regardless of whether the
+ * source is currently published, appended to the end of that target's
+ * own lesson list (computeNextLessonSortOrder against THAT target's
+ * existing lessons, never the source's sort_order). Mirrors
+ * copyAssignmentToClassrooms exactly.
+ */
+export async function copyLessonToClassrooms(source: Lesson, targets: LessonCopyTarget[]): Promise<LessonCopyOutcome[]> {
+  const resources = await getLessonResources(source.id)
+
+  return Promise.all(
+    targets.map(async (target): Promise<LessonCopyOutcome> => {
+      try {
+        const existing = await getLessons(target.subjectId, target.classroomId)
+        const created = await createLesson(
+          {
+            subjectId: target.subjectId,
+            classroomId: target.classroomId,
+            title: source.title,
+            description: source.description,
+          },
+          computeNextLessonSortOrder(existing),
+        )
+        for (const resource of resources) {
+          await copyResourceToLesson(resource, created.id, target.subjectId, target.classroomId)
+        }
+        return { target, ok: true }
+      } catch (err) {
+        return { target, ok: false, error: err instanceof Error ? err.message : 'ไม่สามารถคัดลอกบทเรียนได้' }
+      }
+    }),
+  )
 }

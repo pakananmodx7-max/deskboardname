@@ -40,7 +40,7 @@ export function StudentSubjectsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">รายวิชาของฉัน</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">รายวิชาของฉัน</h1>
         <p className="mt-1 text-sm text-muted-foreground">รายวิชาที่เปิดสอนในห้องเรียนของฉัน</p>
       </div>
 

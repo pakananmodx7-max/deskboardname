@@ -334,7 +334,12 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     )
 
     const assignment: DemoSubjectAssignment = {
-      id: `demo-subject-assignment-${Date.now()}`,
+      // A random suffix (not just Date.now()) — this is called once per
+      // TARGET classroom when a teacher creates one assignment across
+      // several classrooms at once (see AssignmentDialog's "ห้องที่ใช้"),
+      // and two calls in the same tick would otherwise collide on the
+      // same millisecond and produce two rows sharing one id.
+      id: `demo-subject-assignment-${Date.now()}-${crypto.randomUUID()}`,
       subjectId,
       classroomId,
       topicId: input.topicId,
@@ -371,7 +376,11 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
   function addLesson(subjectId: string, classroomId: string, input: NewLessonInput): DemoLesson {
     const siblingCount = state.lessons.filter((l) => l.subjectId === subjectId && l.classroomId === classroomId).length
     const lesson: DemoLesson = {
-      id: `demo-lesson-${Date.now()}`,
+      // A random suffix (not just Date.now()) — this is called once per
+      // TARGET classroom when a teacher uses one lesson across several
+      // classrooms at once ("เผยแพร่ไปยังห้อง"), and two calls in the same
+      // tick would otherwise collide on the same millisecond.
+      id: `demo-lesson-${Date.now()}-${crypto.randomUUID()}`,
       subjectId,
       classroomId,
       title: input.title,

@@ -1,4 +1,4 @@
-import { Download } from 'lucide-react'
+import { Download, Gauge, TrendingDown, TrendingUp } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/toast'
 import { buildClassroomGradesExportTable } from '@/features/subjects-real/classroom-export-builders'
 import { downloadCsv } from '@/lib/export/csv-export'
 import { toFriendlyErrorMessage } from '@/lib/errors'
+import { cn } from '@/lib/utils'
 import {
   computeClassGradeStats,
   computeGradeRows,
@@ -158,48 +159,63 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card>
-          <CardContent className="pt-5">
-            <p className="text-sm text-muted-foreground">คะแนนเฉลี่ยห้อง</p>
-            <p className="mt-1.5 text-2xl font-semibold tracking-tight">
-              {stats.classAverage !== null ? `${stats.classAverage.toFixed(1)}%` : '-'}
-            </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Card className="transition-shadow hover:shadow-elevated">
+          <CardContent className="flex items-center justify-between pt-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">คะแนนเฉลี่ยห้อง</p>
+              <p className="mt-1 text-xl font-bold tracking-tight text-foreground">
+                {stats.classAverage !== null ? `${stats.classAverage.toFixed(1)}%` : '-'}
+              </p>
+            </div>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Gauge className="size-5" />
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-5">
-            <p className="text-sm text-muted-foreground">คะแนนสูงสุด</p>
-            <p className="mt-1.5 text-2xl font-semibold tracking-tight text-success">
-              {stats.highest !== null ? `${stats.highest.toFixed(1)}%` : '-'}
-            </p>
+        <Card className="transition-shadow hover:shadow-elevated">
+          <CardContent className="flex items-center justify-between pt-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">คะแนนสูงสุด</p>
+              <p className="mt-1 text-xl font-bold tracking-tight text-success">
+                {stats.highest !== null ? `${stats.highest.toFixed(1)}%` : '-'}
+              </p>
+            </div>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-success/15 text-success">
+              <TrendingUp className="size-5" />
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-5">
-            <p className="text-sm text-muted-foreground">คะแนนต่ำสุด</p>
-            <p className="mt-1.5 text-2xl font-semibold tracking-tight text-destructive">
-              {stats.lowest !== null ? `${stats.lowest.toFixed(1)}%` : '-'}
-            </p>
+        <Card className="transition-shadow hover:shadow-elevated">
+          <CardContent className="flex items-center justify-between pt-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">คะแนนต่ำสุด</p>
+              <p className="mt-1 text-xl font-bold tracking-tight text-destructive">
+                {stats.lowest !== null ? `${stats.lowest.toFixed(1)}%` : '-'}
+              </p>
+            </div>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+              <TrendingDown className="size-5" />
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+          <div className="max-h-[70vh] overflow-auto rounded-xl">
+            <table className="w-full border-separate border-spacing-0 text-left text-sm">
               <thead>
-                <tr className="border-b border-border text-xs text-muted-foreground">
-                  <th className="sticky left-0 bg-card px-5 py-3 font-medium">ชื่อ-นามสกุล</th>
+                <tr className="text-xs text-muted-foreground">
+                  <th className="sticky left-0 top-0 z-20 border-b border-border bg-card px-5 py-2.5 font-semibold">ชื่อ-นามสกุล</th>
                   {assignments.map((assignment) => (
-                    <th key={assignment.id} className="px-3 py-3 text-center font-medium">
+                    <th key={assignment.id} className="sticky top-0 z-10 border-b border-border bg-card px-3 py-2.5 text-center font-semibold">
                       {assignment.title}
-                      <div className="font-normal">/{assignment.maxScore}</div>
+                      <div className="font-normal text-muted-foreground">/{assignment.maxScore}</div>
                     </th>
                   ))}
-                  <th className="px-3 py-3 text-center font-medium">รวม</th>
-                  <th className="px-3 py-3 text-center font-medium">%</th>
+                  <th className="sticky top-0 z-10 border-b border-border bg-card px-3 py-2.5 text-center font-semibold">รวม</th>
+                  <th className="sticky top-0 z-10 border-b border-border bg-card px-3 py-2.5 text-center font-semibold">%</th>
                 </tr>
               </thead>
               <tbody>
@@ -216,11 +232,17 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
                     </td>
                   </tr>
                 ) : (
-                  roster.map((student) => {
+                  roster.map((student, rowIndex) => {
                     const row = rowById[student.id]
                     return (
-                      <tr key={student.id} className="border-b border-border last:border-0">
-                        <td className="sticky left-0 whitespace-nowrap bg-card px-5 py-2 font-medium">
+                      <tr
+                        key={student.id}
+                        className={cn(
+                          'border-b border-border last:border-0 transition-colors hover:bg-muted/40',
+                          rowIndex % 2 === 1 && 'bg-muted/20',
+                        )}
+                      >
+                        <td className="sticky left-0 z-10 whitespace-nowrap bg-card px-5 py-2 font-medium text-foreground">
                           {student.number ?? '-'}. {student.firstName} {student.lastName}
                         </td>
                         {assignments.map((assignment) => {

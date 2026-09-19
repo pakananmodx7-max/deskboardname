@@ -11,9 +11,12 @@ interface SidebarProps {
 }
 
 const LINK_CLASSES =
-  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors'
-const LINK_ACTIVE = 'bg-primary/10 text-primary'
-const LINK_INACTIVE = 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+  'flex items-center gap-3 rounded-full px-3 py-2 text-sm font-medium transition-all'
+/** A fully filled pill (not just a tint) — the strongest, most obvious
+ * "you are here" signal in the nav, matching the same solid-primary
+ * pill language used by the segmented filters elsewhere in the app. */
+const LINK_ACTIVE = 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'
+const LINK_INACTIVE = 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground'
 
 function NavLeafRow({ item, indent, onNavigate }: { item: NavLinkItem; indent?: boolean; onNavigate?: () => void }) {
   return (
@@ -52,7 +55,7 @@ function NavGroupRow({ group, onNavigate }: { group: NavGroup; onNavigate?: () =
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
-          className="shrink-0 rounded p-1 hover:bg-accent"
+          className="shrink-0 rounded-full p-1 hover:bg-accent"
           aria-label={expanded ? `ย่อ ${group.label}` : `ขยาย ${group.label}`}
           aria-expanded={expanded}
         >
@@ -75,7 +78,7 @@ function NavEntryRow({ entry, onNavigate }: { entry: NavEntry; onNavigate?: () =
   if (entry.type === 'group') return <NavGroupRow group={entry} onNavigate={onNavigate} />
   return (
     <div className="space-y-0.5">
-      <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+      <p className="px-3 pb-1.5 pt-4 text-[11px] font-bold uppercase tracking-wider text-muted-foreground/80">
         {entry.label}
       </p>
       {entry.entries.map((child) => (
@@ -87,13 +90,13 @@ function NavEntryRow({ entry, onNavigate }: { entry: NavEntry; onNavigate?: () =
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center gap-2 border-b border-border px-5">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+      <div className="flex h-16 items-center gap-2.5 border-b border-sidebar-border px-5">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
           <GraduationCap className="size-5" />
         </div>
         <div className="min-w-0 leading-tight">
-          <p className="truncate text-sm font-bold tracking-tight">KrunameClass</p>
+          <p className="truncate text-sm font-bold tracking-tight text-foreground">KrunameClass</p>
           <p className="truncate text-xs text-muted-foreground">ระบบจัดการห้องเรียน</p>
         </div>
       </div>
@@ -104,7 +107,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
 
-      <div className="border-t border-border px-5 py-4 text-xs text-muted-foreground">
+      <div className="border-t border-sidebar-border px-5 py-4 text-xs text-muted-foreground">
         KrunameClass
         <br />
         v0.1.0 — Prototype
@@ -123,14 +126,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 function CompactSidebarContent() {
   const links = flattenNavLinks()
   return (
-    <div className="flex h-full flex-col items-center">
-      <div className="flex h-16 w-full items-center justify-center border-b border-border">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+    <div className="flex h-full flex-col items-center bg-sidebar text-sidebar-foreground">
+      <div className="flex h-16 w-full items-center justify-center border-b border-sidebar-border">
+        <div className="flex size-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
           <GraduationCap className="size-5" />
         </div>
       </div>
 
-      <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-4">
+      <nav className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto py-4">
         {links.map((item) => (
           <NavLink
             key={item.to}
@@ -138,10 +141,10 @@ function CompactSidebarContent() {
             title={item.label}
             className={({ isActive }) =>
               cn(
-                'flex size-10 items-center justify-center rounded-md transition-colors',
+                'flex size-10 items-center justify-center rounded-full transition-all',
                 isActive
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                  ? 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'
+                  : 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground',
               )
             }
           >
@@ -157,11 +160,11 @@ function CompactSidebarContent() {
 export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
   return (
     <>
-      <aside className="hidden w-64 shrink-0 border-r border-border bg-card lg:block">
+      <aside className="hidden w-64 shrink-0 border-r border-sidebar-border bg-sidebar lg:block">
         <SidebarContent />
       </aside>
 
-      <aside className="hidden w-16 shrink-0 border-r border-border bg-card md:block lg:hidden">
+      <aside className="hidden w-16 shrink-0 border-r border-sidebar-border bg-sidebar md:block lg:hidden">
         <CompactSidebarContent />
       </aside>
 
@@ -172,11 +175,11 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
             onClick={onCloseMobile}
             aria-hidden="true"
           />
-          <div className="relative z-10 h-full w-64 bg-card shadow-xl">
+          <div className="relative z-10 h-full w-64 bg-sidebar shadow-elevated">
             <button
               type="button"
               onClick={onCloseMobile}
-              className="absolute right-3 top-3 rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+              className="absolute right-3 top-3 rounded-full p-1.5 text-muted-foreground hover:bg-accent"
               aria-label="Close menu"
             >
               <X className="size-4" />

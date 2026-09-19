@@ -220,14 +220,14 @@ export function SubjectClassroomWorkspacePageReal() {
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 z-10 -mx-4 space-y-4 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-3 pt-1">
+      <div className="sticky top-0 z-10 -mx-4 space-y-3 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
+        <div className="flex flex-wrap items-start justify-between gap-3 pt-2">
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{subject.name}</h1>
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-xl font-bold tracking-tight text-foreground">{subject.name}</h1>
               {subject.subjectCode && <Badge variant="outline">{subject.subjectCode}</Badge>}
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-0.5 text-sm font-medium text-muted-foreground">
               {currentLink.classroomName} · {currentLink.studentCount} คน
             </p>
           </div>
@@ -262,17 +262,17 @@ export function SubjectClassroomWorkspacePageReal() {
           </div>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto">
+        <div className="flex gap-1 overflow-x-auto pb-3">
           {PILL_TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => handleTabClick(tab.key)}
               className={cn(
-                'shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
+                'shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
                 activeTab === tab.key
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground',
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-secondary hover:text-secondary-foreground',
               )}
             >
               {tab.label}

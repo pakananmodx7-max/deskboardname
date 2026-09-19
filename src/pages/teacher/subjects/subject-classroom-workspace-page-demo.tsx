@@ -57,7 +57,7 @@ export function SubjectClassroomWorkspacePageDemo() {
         <div className="flex flex-wrap items-start justify-between gap-3 pt-1">
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{subject.name}</h1>
+              <h1 className="text-xl font-bold tracking-tight text-foreground">{subject.name}</h1>
               <Badge variant="outline">{subject.code}</Badge>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">

@@ -450,7 +450,7 @@ export function AgentToolsDevPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Teacher Agent Tools — แผงทดสอบ</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">Teacher Agent Tools — แผงทดสอบ</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           เครื่องมือชั่วคราวสำหรับนักพัฒนา ใช้ทดสอบ Edge Function <code>teacher-agent-tools</code> ที่ deploy ไว้จริง
           ด้วยเซสชันครูที่ล็อกอินอยู่ในขณะนี้ — ยังไม่ใช่หน้าตาสุดท้ายของ Hermes

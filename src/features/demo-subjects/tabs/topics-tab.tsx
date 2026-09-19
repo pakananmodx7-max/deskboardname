@@ -47,7 +47,7 @@ export function TopicsTab({ subject }: TopicsTabProps) {
           {subjectTopics.map((topic) => (
             <Card
               key={topic.id}
-              className="cursor-pointer transition-shadow hover:shadow-md"
+              className="cursor-pointer transition-shadow hover:shadow-elevated"
               onClick={() => openDetail(topic)}
             >
               <CardContent className="flex items-center justify-between gap-3 py-4">

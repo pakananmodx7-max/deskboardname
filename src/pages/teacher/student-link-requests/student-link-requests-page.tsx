@@ -119,7 +119,7 @@ export function StudentLinkRequestsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">คำขอเชื่อมบัญชีนักเรียน</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">คำขอเชื่อมบัญชีนักเรียน</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           คำขอเชื่อมบัญชีจากนักเรียนในห้องเรียนของคุณ — อนุมัติเพื่อเชื่อมบัญชีถาวร หรือปฏิเสธหากข้อมูลไม่ถูกต้อง
         </p>

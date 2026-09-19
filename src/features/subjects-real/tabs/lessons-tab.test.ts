@@ -68,3 +68,37 @@ describe('LessonsTab — "ลบบทเรียน" (permanent delete) menu i
     expect(fn).toContain('await deleteLessonPermanently(deletingLesson.id)')
   })
 })
+
+describe('LessonsTab — "คัดลอกไปห้องอื่น" — new cross-classroom copy action, reusing CopyLessonDialog/copyLessonToClassrooms', () => {
+  const source = readSource()
+
+  it('imports CopyLessonDialog — never a re-implemented copy dialog', () => {
+    expect(source).toContain("from '@/features/subjects-real/copy-lesson-dialog'")
+    expect(source).toContain('CopyLessonDialog')
+  })
+
+  it('the card menu order is: แก้ไข/เพิ่มสื่อการสอน, คัดลอกไปห้องอื่น, เก็บถาวร, then ลบบทเรียน', () => {
+    const menuBlock = source.slice(source.indexOf('<RowActionsMenu'), source.indexOf('/>', source.indexOf('<RowActionsMenu')))
+    const editIndex = menuBlock.indexOf("key: 'edit'")
+    const copyIndex = menuBlock.indexOf("key: 'copy'")
+    const archiveIndex = menuBlock.indexOf("key: 'archive'")
+    const deleteIndex = menuBlock.indexOf("key: 'delete'")
+    expect(editIndex).toBeGreaterThan(-1)
+    expect(copyIndex).toBeGreaterThan(editIndex)
+    expect(archiveIndex).toBeGreaterThan(copyIndex)
+    expect(deleteIndex).toBeGreaterThan(archiveIndex)
+  })
+
+  it('renders CopyLessonDialog only when a lesson is being copied, wired to the lesson prop/onCopied pattern', () => {
+    const dialogBlock = source.slice(source.indexOf('{copyingLesson && ('), source.indexOf('{archivingLesson && ('))
+    expect(dialogBlock).toContain('<CopyLessonDialog')
+    expect(dialogBlock).toContain('lesson={copyingLesson}')
+    expect(dialogBlock).toContain('onCopied={handleCopied}')
+  })
+
+  it('handleCopied reports a concise, honest outcome summary via toast and refreshes the list — never a silent no-op', () => {
+    const fn = source.slice(source.indexOf('function handleCopied'), source.indexOf('async function handleArchive'))
+    expect(fn).toContain('outcomes.filter((o) => o.ok).length')
+    expect(fn).toContain('refresh()')
+  })
+})

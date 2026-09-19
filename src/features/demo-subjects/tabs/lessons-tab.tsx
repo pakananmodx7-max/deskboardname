@@ -39,12 +39,23 @@ function emptyForm() {
  * DemoLesson's own comment in demo/types.ts.
  */
 export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
-  const { lessons, addLesson, updateLesson, setLessonPublished, archiveLesson, reorderLessonsDemo } = useDemoClassroom()
+  const { lessons, addLesson, updateLesson, setLessonPublished, archiveLesson, reorderLessonsDemo, classrooms } = useDemoClassroom()
 
   const [createOpen, setCreateOpen] = useState(false)
   const [editingLesson, setEditingLesson] = useState<DemoLesson | null>(null)
   const [archivingLesson, setArchivingLesson] = useState<DemoLesson | null>(null)
   const [form, setForm] = useState(emptyForm)
+
+  // "เผยแพร่ไปยังห้อง" — every OTHER classroom this same subject is linked
+  // to, from the SAME demo state addLesson itself reads (subject.
+  // classroomIds + classrooms) — never fabricated data.
+  const currentClassroomName = classrooms.find((c) => c.id === classroomId)?.name ?? ''
+  const otherClassrooms = subject.classroomIds
+    .filter((id) => id !== classroomId)
+    .map((id) => classrooms.find((c) => c.id === id))
+    .filter((c): c is NonNullable<typeof c> => Boolean(c))
+  const [useOtherClassrooms, setUseOtherClassrooms] = useState(false)
+  const [selectedExtraClassroomIds, setSelectedExtraClassroomIds] = useState<Set<string>>(new Set())
 
   const visibleLessons = lessons
     .filter((l) => l.subjectId === subject.id && l.classroomId === classroomId && !l.isArchived)
@@ -52,6 +63,8 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
 
   function openCreate() {
     setForm(emptyForm())
+    setUseOtherClassrooms(false)
+    setSelectedExtraClassroomIds(new Set())
     setCreateOpen(true)
   }
 
@@ -60,9 +73,32 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
     setEditingLesson(lesson)
   }
 
+  function toggleExtraClassroom(id: string) {
+    setSelectedExtraClassroomIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function selectAllExtraClassrooms() {
+    setSelectedExtraClassroomIds(new Set(otherClassrooms.map((c) => c.id)))
+  }
+
   function handleCreateSubmit() {
     if (!form.title.trim()) return
-    addLesson(subject.id, classroomId, { title: form.title.trim(), description: form.description.trim() })
+    const input = { title: form.title.trim(), description: form.description.trim() }
+    addLesson(subject.id, classroomId, input)
+
+    // Reuses the EXACT SAME addLesson — once per additionally selected
+    // classroom — never a separate demo "copy" implementation. Each
+    // call is its own independent lesson, always starting unpublished.
+    if (useOtherClassrooms) {
+      for (const target of otherClassrooms.filter((c) => selectedExtraClassroomIds.has(c.id))) {
+        addLesson(subject.id, target.id, input)
+      }
+    }
     setCreateOpen(false)
   }
 
@@ -190,6 +226,57 @@ export function LessonsTab({ subject, classroomId }: LessonsTabProps) {
                 value={form.description}
                 onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
               />
+            </div>
+
+            {/* "เผยแพร่ไปยังห้อง" — ALWAYS shown here, even with zero other
+                classrooms, so a teacher can tell "feature exists but no
+                eligible classroom" apart from "feature is missing." */}
+            <div className="space-y-1.5 rounded-lg border border-border p-3">
+              <Label>เผยแพร่ไปยังห้อง</Label>
+              <label className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-sm opacity-70">
+                <input type="checkbox" checked disabled className="size-4 rounded border-input" />
+                ห้องปัจจุบัน {currentClassroomName}
+              </label>
+
+              {otherClassrooms.length === 0 ? (
+                <p className="px-2 text-xs text-muted-foreground">ไม่มีห้องอื่นในรายวิชานี้</p>
+              ) : (
+                <>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent">
+                    <input
+                      type="checkbox"
+                      checked={useOtherClassrooms}
+                      onChange={(e) => setUseOtherClassrooms(e.target.checked)}
+                      className="size-4 rounded border-input"
+                    />
+                    ใช้บทเรียนนี้กับห้องอื่นด้วย
+                  </label>
+
+                  {useOtherClassrooms && (
+                    <div className="ml-2 space-y-1 border-l border-border pl-3">
+                      <div className="flex justify-end">
+                        <Button type="button" variant="ghost" size="sm" onClick={selectAllExtraClassrooms}>
+                          เลือกทั้งหมด
+                        </Button>
+                      </div>
+                      {otherClassrooms.map((c) => (
+                        <label
+                          key={c.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedExtraClassroomIds.has(c.id)}
+                            onChange={() => toggleExtraClassroom(c.id)}
+                            className="size-4 rounded border-input"
+                          />
+                          {c.name}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
           <DialogFooter>
