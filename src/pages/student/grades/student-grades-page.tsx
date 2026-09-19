@@ -43,7 +43,7 @@ export function StudentGradesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">คะแนน</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">คะแนน</h1>
         <p className="mt-1 text-sm text-muted-foreground">คะแนนของฉันแยกตามรายวิชา</p>
       </div>
 

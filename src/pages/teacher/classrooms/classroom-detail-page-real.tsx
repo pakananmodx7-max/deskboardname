@@ -203,7 +203,7 @@ export function ClassroomDetailPageReal() {
          * three-row split fixes). */}
         <div className="pt-1">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight">{classroom.name}</h1>
+            <h1 className="text-xl font-bold tracking-tight text-foreground">{classroom.name}</h1>
             {!classroom.isActive && <Badge variant="outline">เก็บถาวร</Badge>}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">

@@ -64,7 +64,7 @@ export function StudentAttendancePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">การเข้าเรียน</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">การเข้าเรียน</h1>
         <p className="mt-1 text-sm text-muted-foreground">ประวัติการเข้าเรียนของฉันทุกห้องเรียนและรายวิชา</p>
       </div>
 

@@ -120,7 +120,7 @@ export function StudentsPageDemo() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">รายชื่อนักเรียน</h1>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">รายชื่อนักเรียน</h1>
           <p className="mt-1 text-sm text-muted-foreground">{students.length} คน</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

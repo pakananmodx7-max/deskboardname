@@ -26,7 +26,7 @@ interface ClassroomSummary {
  */
 function ClassroomCard({ classroom, studentCount, subjectNames, onOpen }: ClassroomSummary & { onOpen: () => void }) {
   return (
-    <Card className="cursor-pointer transition-shadow hover:shadow-md" onClick={onOpen}>
+    <Card className="cursor-pointer transition-shadow hover:shadow-elevated" onClick={onOpen}>
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="text-base">{classroom.name}</CardTitle>
@@ -105,7 +105,7 @@ export function ClassroomsPageReal() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">ห้องเรียน</h1>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">ห้องเรียน</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {loading ? 'กำลังโหลด...' : `${activeSummaries.length} ห้องเรียน`}
           </p>

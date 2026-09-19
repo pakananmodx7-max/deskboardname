@@ -71,7 +71,7 @@ export function RowActionsMenu({ actions, label = 'ตัวเลือก' }: 
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-20 mt-1.5 w-44 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-soft"
+          className="absolute right-0 z-20 mt-1.5 w-44 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-elevated"
           onClick={(e) => e.stopPropagation()}
         >
           {actions.map((action) => (

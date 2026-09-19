@@ -113,7 +113,7 @@ export function SubjectClassroomAssignmentDetailPageDemo() {
           กลับไปที่ห้องเรียน
         </button>
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-semibold tracking-tight">{assignment.title}</h1>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">{assignment.title}</h1>
           <Badge variant="outline">{SUBJECT_ASSIGNMENT_TYPE_LABEL[assignment.type]}</Badge>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">

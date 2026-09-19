@@ -62,7 +62,7 @@ export function ClassroomOverviewTab({ classroom, studentCount }: ClassroomOverv
               <p className="text-sm text-muted-foreground">นักเรียนทั้งหมด</p>
               <p className="mt-1.5 text-2xl font-semibold tracking-tight">{studentCount} คน</p>
             </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Users className="size-5" />
             </div>
           </CardContent>

@@ -1,4 +1,4 @@
-import { CheckCircle2, Plus, Search, Users, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Plus, Search, Users, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -631,9 +631,9 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-medium text-foreground">
+        <p className="text-sm font-semibold text-foreground">
           {loading ? 'กำลังโหลด...' : `${roster.length} นักเรียน · ${assignments.length} งาน`}
         </p>
         <Button onClick={() => setCreateOpen(true)}>
@@ -652,70 +652,81 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
         </Card>
       ) : (
         <>
-          {/* ONE counter, matching the active mode exactly — an ITEM count
-              (assignment submissions, or scored items), never a student
-              headcount, so the number is always mathematically honest
-              regardless of how many rows the mode below is hiding.
-              ทั้งหมด is the one exception: it has no single mode-specific
-              count, so it shows the submitted/ขาดส่ง split against the
-              full expected (students × assignments) total instead. */}
-          {mode === 'all' ? (
-            <SummaryStat
-              label={`ส่งแล้ว ${modeSubmittedCount} · ขาดส่ง ${modeMissingCount} จาก ${modeExpectedCount} รายการ`}
-              tone={modeMissingCount > 0 ? 'warning' : 'success'}
-            />
-          ) : (
-            <SummaryStat
-              label={`${SUBMISSION_CHECK_MODE_COUNT_LABEL[mode]} ${modeItemCount} รายการ`}
-              tone={mode === 'missing' ? 'warning' : 'success'}
-            />
-          )}
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Segmented control, not plain text tabs — active mode gets
-                strong solid-blue emphasis, inactive stays neutral, and
-                each pill carries its own real (never fabricated) item
-                count from the same modeSubmittedCount/modeMissingCount/
-                modeExpectedCount math the summary banner above uses. */}
-            <div className="inline-flex flex-wrap items-center gap-1.5">
-              {SUBMISSION_CHECK_MODES.map((m) => {
-                const count = m.key === 'all' ? modeExpectedCount : m.key === 'submitted' ? modeSubmittedCount : modeMissingCount
-                return (
-                  <button
-                    key={m.key}
-                    type="button"
-                    onClick={() => setMode(m.key)}
-                    className={cn(
-                      'shrink-0 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
-                      mode === m.key
-                        ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'bg-secondary text-secondary-foreground hover:bg-accent',
-                    )}
-                  >
-                    {m.label}
-                    <span className={cn('ml-1.5 tabular-nums', mode === m.key ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
-                      {count}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-            <Button type="button" variant="ghost" size="sm" onClick={handleSelectEntireClassroom} disabled={roster.length === 0}>
-              <Users className="size-3.5" />
-              เลือกทั้งห้อง ({roster.length})
-            </Button>
-            {assignments.length > 4 && (
-              <div className="relative ml-auto w-full max-w-xs">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={assignmentQuery}
-                  onChange={(e) => setAssignmentQuery(e.target.value)}
-                  placeholder="ค้นหางาน..."
-                  className="h-8 pl-8"
+          {/* One grouped "control panel" card — the mode summary, the
+              segmented filter, select-all, and search all live inside
+              ONE visually distinct surface, clearly separated from the
+              raw matrix below, instead of floating loosely on the page
+              (the "plain admin table" feeling this pass fixes). */}
+          <Card>
+            <CardContent className="space-y-3 pt-5">
+              {/* ONE counter, matching the active mode exactly — an ITEM
+                  count (assignment submissions, or scored items), never a
+                  student headcount, so the number is always
+                  mathematically honest regardless of how many rows the
+                  mode below is hiding. ทั้งหมด is the one exception: it
+                  has no single mode-specific count, so it shows the
+                  submitted/ขาดส่ง split against the full expected
+                  (students × assignments) total instead. */}
+              {mode === 'all' ? (
+                <SummaryStat
+                  label={`ส่งแล้ว ${modeSubmittedCount} · ขาดส่ง ${modeMissingCount} จาก ${modeExpectedCount} รายการ`}
+                  tone={modeMissingCount > 0 ? 'warning' : 'success'}
                 />
+              ) : (
+                <SummaryStat
+                  label={`${SUBMISSION_CHECK_MODE_COUNT_LABEL[mode]} ${modeItemCount} รายการ`}
+                  tone={mode === 'missing' ? 'warning' : 'success'}
+                />
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Segmented control, not plain text tabs — active mode
+                    gets strong solid-blue emphasis, inactive stays
+                    neutral, and each pill carries its own real (never
+                    fabricated) item count from the same
+                    modeSubmittedCount/modeMissingCount/modeExpectedCount
+                    math the summary banner above uses. */}
+                <div className="inline-flex flex-wrap items-center gap-1.5">
+                  {SUBMISSION_CHECK_MODES.map((m) => {
+                    const count = m.key === 'all' ? modeExpectedCount : m.key === 'submitted' ? modeSubmittedCount : modeMissingCount
+                    return (
+                      <button
+                        key={m.key}
+                        type="button"
+                        onClick={() => setMode(m.key)}
+                        className={cn(
+                          'shrink-0 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+                          mode === m.key
+                            ? 'bg-primary text-primary-foreground shadow-sm'
+                            : 'bg-secondary text-secondary-foreground hover:bg-accent',
+                        )}
+                      >
+                        {m.label}
+                        <span className={cn('ml-1.5 tabular-nums', mode === m.key ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
+                          {count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <Button type="button" variant="ghost" size="sm" onClick={handleSelectEntireClassroom} disabled={roster.length === 0}>
+                  <Users className="size-3.5" />
+                  เลือกทั้งห้อง ({roster.length})
+                </Button>
+                {assignments.length > 4 && (
+                  <div className="relative ml-auto w-full max-w-xs">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={assignmentQuery}
+                      onChange={(e) => setAssignmentQuery(e.target.value)}
+                      placeholder="ค้นหางาน..."
+                      className="h-8 pl-8"
+                    />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </CardContent>
+          </Card>
 
           {/* Prominent, elevated bar — only ever rendered once a
               selection exists, never taking up space otherwise. Not
@@ -1260,8 +1271,14 @@ function SummaryStat({ label, tone }: { label: string; tone: 'warning' | 'succes
     warning: 'border-destructive/25 bg-destructive/5 text-destructive',
     success: 'border-success/25 bg-success/5 text-success',
   }[tone]
+  const Icon = tone === 'warning' ? AlertTriangle : CheckCircle2
 
-  return <div className={cn('rounded-2xl border px-3.5 py-2 text-sm font-semibold tracking-tight', toneClass)}>{label}</div>
+  return (
+    <div className={cn('flex items-center gap-2 rounded-2xl border px-3.5 py-2.5 text-sm font-bold tracking-tight', toneClass)}>
+      <Icon className="size-4 shrink-0" />
+      {label}
+    </div>
+  )
 }
 
 /**

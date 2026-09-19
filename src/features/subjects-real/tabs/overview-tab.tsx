@@ -58,26 +58,26 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card>
+        <Card className="transition-shadow hover:shadow-elevated">
           <CardContent className="flex items-center justify-between pt-5">
             <div>
-              <p className="text-sm text-muted-foreground">นักเรียนทั้งหมด</p>
-              <p className="mt-1.5 text-2xl font-semibold tracking-tight">
+              <p className="text-sm font-medium text-muted-foreground">นักเรียนทั้งหมด</p>
+              <p className="mt-1.5 text-[1.75rem] font-bold leading-none tracking-tight text-foreground">
                 {loading ? '...' : `${studentCount ?? 0} คน`}
               </p>
             </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <div className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Users className="size-5" />
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="transition-shadow hover:shadow-elevated">
           <CardContent className="flex items-center justify-between pt-5">
             <div>
-              <p className="text-sm text-muted-foreground">หัวข้อ</p>
-              <p className="mt-1.5 text-2xl font-semibold tracking-tight">{loading ? '...' : topics.length}</p>
+              <p className="text-sm font-medium text-muted-foreground">หัวข้อ</p>
+              <p className="mt-1.5 text-[1.75rem] font-bold leading-none tracking-tight text-foreground">{loading ? '...' : topics.length}</p>
             </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+            <div className="flex size-11 items-center justify-center rounded-full bg-accent text-accent-foreground">
               <BookOpen className="size-5" />
             </div>
           </CardContent>
@@ -86,7 +86,7 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
 
       <Card>
         <CardContent className="pt-5">
-          <p className="mb-3 text-sm font-semibold">หัวข้อล่าสุด</p>
+          <p className="mb-3 text-sm font-bold text-foreground">หัวข้อล่าสุด</p>
           {topics.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {loading ? 'กำลังโหลด...' : 'ยังไม่มีหัวข้อในรายวิชานี้'}
@@ -106,7 +106,7 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
 
       <div className="space-y-2">
         <div>
-          <p className="text-sm font-semibold">การเชื่อมต่อและสื่อการสอน</p>
+          <p className="text-sm font-bold text-foreground">การเชื่อมต่อและสื่อการสอน</p>
           <p className="text-xs text-muted-foreground">
             เชื่อมต่อบัญชี Google แล้วเพิ่มสื่อการสอน สไลด์ วิดีโอ เอกสาร หรือลิงก์อื่น ๆ ได้จากแท็บ &ldquo;บทเรียน&rdquo;
             และ &ldquo;งาน&rdquo; ของห้องเรียนนี้

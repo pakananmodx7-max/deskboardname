@@ -46,7 +46,7 @@ export function StudentsSectionLayout() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">นักเรียน</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">นักเรียน</h1>
         <p className="mt-1 text-sm text-muted-foreground">รายชื่อนักเรียนและคำขอเชื่อมบัญชีจากผู้ปกครอง/นักเรียน</p>
       </div>
 

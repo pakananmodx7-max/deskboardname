@@ -19,7 +19,7 @@ export function ClassroomsPageDemo() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">ห้องเรียน</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">ห้องเรียน</h1>
         <p className="mt-1 text-sm text-muted-foreground">{classrooms.length} ห้องเรียน</p>
       </div>
 
@@ -39,7 +39,7 @@ export function ClassroomsPageDemo() {
             return (
               <Card
                 key={classroom.id}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className="cursor-pointer transition-shadow hover:shadow-elevated"
                 onClick={() => navigate(`/teacher/classrooms/${classroom.id}`)}
               >
                 <CardHeader>

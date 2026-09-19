@@ -622,7 +622,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{currentAssignment.title}</h1>
+              <h1 className="text-xl font-bold tracking-tight text-foreground">{currentAssignment.title}</h1>
               <Badge variant={currentAssignment.isArchived ? 'outline' : 'success'}>
                 {currentAssignment.isArchived ? 'เก็บถาวร' : 'ใช้งานอยู่'}
               </Badge>

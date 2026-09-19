@@ -80,7 +80,7 @@ export function ClassroomDetailPageDemo() {
         {/* Identity row — see classroom-detail-page-real.tsx for the
          * three-row rationale (identity/actions/scope never share a row). */}
         <div className="pt-1">
-          <h1 className="text-xl font-semibold tracking-tight">{classroom.name}</h1>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">{classroom.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{students.length} คน</p>
         </div>
 
@@ -130,7 +130,7 @@ export function ClassroomDetailPageDemo() {
               <p className="text-sm text-muted-foreground">นักเรียนทั้งหมด</p>
               <p className="mt-1.5 text-2xl font-semibold tracking-tight">{students.length} คน</p>
             </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Users className="size-5" />
             </div>
           </CardContent>

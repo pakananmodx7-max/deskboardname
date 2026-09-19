@@ -41,7 +41,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             className={cn(
-              'pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-2xl border border-border bg-card px-4 py-3 text-sm shadow-soft sm:w-auto',
+              'pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-elevated sm:w-auto',
             )}
           >
             {t.variant === 'success' ? (

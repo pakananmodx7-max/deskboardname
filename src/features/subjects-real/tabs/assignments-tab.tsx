@@ -168,7 +168,7 @@ export function AssignmentsTab({ subject, classroomId }: AssignmentsTabProps) {
             return (
               <Card
                 key={assignment.id}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className="cursor-pointer transition-shadow hover:shadow-elevated"
                 onClick={() => navigate(buildAssignmentDetailPath(subject.id, classroomId, assignment.id))}
               >
                 <CardContent className="space-y-3 pt-5">

@@ -155,7 +155,7 @@ export function StudentAssignmentDetailPage() {
         <>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{assignment.title}</h1>
+              <h1 className="text-xl font-bold tracking-tight text-foreground">{assignment.title}</h1>
               {status && <Badge variant={STUDENT_SUBMISSION_STATUS_BADGE_VARIANT[status]}>{STUDENT_SUBMISSION_STATUS_LABEL[status]}</Badge>}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">

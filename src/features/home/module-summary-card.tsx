@@ -29,11 +29,11 @@ interface ModuleSummaryCardProps {
 export function ModuleSummaryCard({ icon: Icon, title, subtitle, to, stats, badge, description }: ModuleSummaryCardProps) {
   return (
     <Link to={to} className="block h-full">
-      <Card className="h-full transition-shadow hover:shadow-md">
+      <Card className="h-full transition-shadow hover:shadow-elevated">
         <CardHeader>
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <Icon className="size-5" />
               </div>
               <div className="min-w-0">
@@ -54,7 +54,7 @@ export function ModuleSummaryCard({ icon: Icon, title, subtitle, to, stats, badg
             <div className="grid grid-cols-3 gap-2">
               {stats.map((stat) => (
                 <div key={stat.label}>
-                  <p className="text-lg font-semibold tracking-tight">{stat.value}</p>
+                  <p className="text-lg font-bold tracking-tight text-foreground">{stat.value}</p>
                   <p className="text-xs text-muted-foreground">{stat.label}</p>
                 </div>
               ))}

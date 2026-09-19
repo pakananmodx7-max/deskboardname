@@ -80,7 +80,7 @@ export function TopicsTab({ subject }: TopicsTabProps) {
       ) : (
         <div className="space-y-2">
           {topics.map((topic, index) => (
-            <Card key={topic.id} className="transition-shadow hover:shadow-md">
+            <Card key={topic.id} className="transition-shadow hover:shadow-elevated">
               <CardContent className="flex items-center justify-between gap-3 py-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="flex shrink-0 flex-col">

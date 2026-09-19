@@ -34,7 +34,7 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
               <p className="text-sm text-muted-foreground">นักเรียนทั้งหมด</p>
               <p className="mt-1.5 text-2xl font-semibold tracking-tight">{studentIds.length} คน</p>
             </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <div className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Users className="size-5" />
             </div>
           </CardContent>
@@ -45,7 +45,7 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
               <p className="text-sm text-muted-foreground">หัวข้อ</p>
               <p className="mt-1.5 text-2xl font-semibold tracking-tight">{subjectTopics.length}</p>
             </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+            <div className="flex size-10 items-center justify-center rounded-full bg-accent text-accent-foreground">
               <BookOpen className="size-5" />
             </div>
           </CardContent>
@@ -56,7 +56,7 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
               <p className="text-sm text-muted-foreground">งานทั้งหมด</p>
               <p className="mt-1.5 text-2xl font-semibold tracking-tight">{assignments.length}</p>
             </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-warning/20 text-warning-foreground">
+            <div className="flex size-10 items-center justify-center rounded-full bg-warning/20 text-warning-foreground">
               <ClipboardList className="size-5" />
             </div>
           </CardContent>
@@ -69,7 +69,7 @@ export function OverviewTab({ subject, classroomId }: OverviewTabProps) {
                 {averageScore !== null ? `${averageScore.toFixed(1)}%` : '-'}
               </p>
             </div>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-success/15 text-success">
+            <div className="flex size-10 items-center justify-center rounded-full bg-success/15 text-success">
               <GraduationCap className="size-5" />
             </div>
           </CardContent>

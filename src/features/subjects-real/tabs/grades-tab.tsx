@@ -1,4 +1,4 @@
-import { Download } from 'lucide-react'
+import { Download, Gauge, TrendingDown, TrendingUp } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -160,28 +160,43 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">คะแนนเฉลี่ยห้อง</p>
-            <p className="mt-1 text-xl font-semibold tracking-tight text-foreground">
-              {stats.classAverage !== null ? `${stats.classAverage.toFixed(1)}%` : '-'}
-            </p>
+        <Card className="transition-shadow hover:shadow-elevated">
+          <CardContent className="flex items-center justify-between pt-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">คะแนนเฉลี่ยห้อง</p>
+              <p className="mt-1 text-xl font-bold tracking-tight text-foreground">
+                {stats.classAverage !== null ? `${stats.classAverage.toFixed(1)}%` : '-'}
+              </p>
+            </div>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Gauge className="size-5" />
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">คะแนนสูงสุด</p>
-            <p className="mt-1 text-xl font-semibold tracking-tight text-success">
-              {stats.highest !== null ? `${stats.highest.toFixed(1)}%` : '-'}
-            </p>
+        <Card className="transition-shadow hover:shadow-elevated">
+          <CardContent className="flex items-center justify-between pt-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">คะแนนสูงสุด</p>
+              <p className="mt-1 text-xl font-bold tracking-tight text-success">
+                {stats.highest !== null ? `${stats.highest.toFixed(1)}%` : '-'}
+              </p>
+            </div>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-success/15 text-success">
+              <TrendingUp className="size-5" />
+            </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <p className="text-sm text-muted-foreground">คะแนนต่ำสุด</p>
-            <p className="mt-1 text-xl font-semibold tracking-tight text-destructive">
-              {stats.lowest !== null ? `${stats.lowest.toFixed(1)}%` : '-'}
-            </p>
+        <Card className="transition-shadow hover:shadow-elevated">
+          <CardContent className="flex items-center justify-between pt-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">คะแนนต่ำสุด</p>
+              <p className="mt-1 text-xl font-bold tracking-tight text-destructive">
+                {stats.lowest !== null ? `${stats.lowest.toFixed(1)}%` : '-'}
+              </p>
+            </div>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+              <TrendingDown className="size-5" />
+            </div>
           </CardContent>
         </Card>
       </div>

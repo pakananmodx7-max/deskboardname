@@ -125,7 +125,7 @@ export function DashboardPageReal() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">ภาพรวม</h1>
+        <h1 className="text-xl font-bold tracking-tight text-foreground">ภาพรวม</h1>
         <p className="mt-1 text-sm text-muted-foreground">ภาคเรียนที่ 1 / 2569</p>
       </div>
 

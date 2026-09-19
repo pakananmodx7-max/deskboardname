@@ -224,7 +224,7 @@ export function StudentSubjectDetailPage() {
     <div className="space-y-4">
       <div className="sticky top-0 z-10 -mx-4 space-y-4 border-b border-border bg-background px-4 pb-0 pt-0 sm:-mx-6 sm:px-6">
         <div className="pt-1">
-          <h1 className="text-xl font-semibold tracking-tight">{subject.name}</h1>
+          <h1 className="text-xl font-bold tracking-tight text-foreground">{subject.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {subject.classroomName}
             {subject.subjectCode ? ` · ${subject.subjectCode}` : ''}
