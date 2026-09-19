@@ -164,21 +164,41 @@
       </label>
       <button type="button" id="sct-preview-btn">แสดงตัวอย่าง 1 ช่อง</button>
       <dl id="sct-preview" hidden>
-        <dt>คอลัมน์</dt>
+        <dt>นักเรียน</dt>
+        <dd id="sct-student-name"></dd>
+        <dt>เลขที่</dt>
+        <dd id="sct-student-number"></dd>
+        <dt>รหัส</dt>
+        <dd id="sct-student-code"></dd>
+        <dt>ช่อง SGS</dt>
         <dd id="sct-column-label"></dd>
-        <dt>คะแนนเดิมใน SGS</dt>
+        <dt>คะแนนเดิม SGS</dt>
         <dd id="sct-current-value"></dd>
-        <dt>คะแนนที่จะเขียน (จาก KrunameClass)</dt>
+        <dt>คะแนนใหม่</dt>
         <dd id="sct-new-value"></dd>
       </dl>
+      <p id="sct-gate-reason" class="warning" hidden></p>
+      <p id="sct-write-warning" class="warning" hidden>SGS บันทึกอัตโนมัติ การยืนยันจะเปลี่ยนข้อมูลจริงทันที</p>
       <label>
         <input type="checkbox" id="sct-confirm" disabled />
-        ฉันเข้าใจว่า SGS บันทึกค่าอัตโนมัติทันที และต้องการทดลองเขียนช่องนี้จริง 1 ช่อง
+        ฉันเข้าใจว่าคะแนนจะถูกบันทึกจริงใน SGS
       </label>
-      <button type="button" id="sct-write-btn" disabled>ยืนยันทดลองเขียน 1 ช่อง (ทดสอบ 1 คน)</button>
+      <button type="button" id="sct-write-btn" disabled>ยืนยัน ทดสอบ 1 คน</button>
+      <dl id="sct-result" hidden>
+        <dt>นักเรียน</dt>
+        <dd id="sct-result-student"></dd>
+        <dt>คอลัมน์</dt>
+        <dd id="sct-result-column"></dd>
+        <dt>คะแนนเดิม</dt>
+        <dd id="sct-result-previous"></dd>
+        <dt>คะแนนใหม่</dt>
+        <dd id="sct-result-new"></dd>
+        <dt>ผลการเขียน</dt>
+        <dd id="sct-result-status"></dd>
+      </dl>
       <p class="hint">
-        ปุ่มนี้ยังปิดใช้งานอยู่โดยตั้งใจ — ยังไม่เปิดให้เขียนข้อมูลจริงจนกว่าการตรวจจับ (checkbox/สถานะ enable-disable)
-        จะได้รับการตรวจสอบซ้ำกับหน้า SGS จริงอีกครั้ง
+        โหมดนี้เขียนได้ครั้งละ 1 ช่องเท่านั้น (1 นักเรียน × 1 คอลัมน์) และปุ่มยืนยันจะเปิดใช้งานก็ต่อเมื่อทุกเงื่อนไขความปลอดภัย
+        ผ่านครบถ้วนเท่านั้น — ยังไม่มีโหมดกรอกทั้งคอลัมน์ (ส่งทั้งคอลัมน์) ในเฟสนี้
       </p>
     </section>
 
