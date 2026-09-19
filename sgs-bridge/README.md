@@ -141,24 +141,44 @@ grid:
    characters is ชื่อ-นามสกุล. Header text is never consulted for this —
    only content, and only columns appearing BEFORE the first score
    input.
-4. **Detect score columns + trace their headers** — every OTHER input
-   column in the run is a score-column candidate. Its header text comes
-   from the row immediately ABOVE the run (`deriveScoreColumns`), and a
-   max score is only accepted if it's a plausible 1-100 value AND the
-   header doesn't match `REJECT_HEADER_KEYWORDS` (ปีการศึกษา, ชั้น, menu/
-   language/login/logout labels) — an academic year like 2568 is never
-   mistaken for a max score.
+4. **Detect score columns, trace MULTI-ROW headers, and split writable
+   vs. derived** — every OTHER input column in the run is a score-column
+   candidate. `traceColumnHeaderTexts` walks UP through several rows
+   above the run (real SGS headers can spread a column's number/name and
+   its max score across more than one row), and `deriveScoreColumnHeader`
+   takes the text CLOSEST to the data as the `label` (e.g. "10",
+   "กลางภาค") and looks for a max score in the OTHER traced rows first —
+   so a bare numeric label like "10" is never also reported as its own
+   max score. A max score is only accepted if it's a plausible 1-100
+   value AND the header doesn't match `REJECT_HEADER_KEYWORDS`
+   (ปีการศึกษา, ชั้น, menu/language/login/logout labels).
+
+   Each candidate column is then checked for real editability
+   (`analyzeColumnEditability`): every row in the run must have exactly
+   ONE input, of type `text`/`number`, never `disabled`/`readOnly`. A
+   column also gets rejected by its LABEL alone
+   (`isDerivedColumnLabel`) if it reads like a calculated/status field —
+   รวม/ตลอดภาค, %/เปอร์เซ็นต์/ร้อยละ, เกรด/GPA/ผลการเรียน, ปกติ/สถานะ.
+   Only a column that passes BOTH checks lands in
+   `writableScoreColumns`; everything else lands in `derivedColumns`,
+   tagged with why (`label_indicates_calculated_or_status`,
+   `disabled_input`, `readonly_input`, `no_input`, or
+   `not_uniformly_editable`) — see `classifyScoreColumns`.
 5. **Rank every table's candidate** — `pickBestStudentGridCandidate`
    scores each table that has a qualifying run (row count, whether all
-   three identifier columns were found, how many score columns) and
-   picks the single best one, so ~200 candidate/layout tables around the
-   real grid are never confused with it.
+   three identifier columns were found, how many WRITABLE score columns
+   it has) and picks the single best one, so ~200 candidate/layout
+   tables around the real grid are never confused with it.
 6. **Resolve the teacher's chosen column** — `matchTargetColumnToRealColumns`
    compares the payload's `targetColumn.label` against the winning
-   table's real score columns. Exactly one label match auto-selects it;
-   zero or more than one shows a warning and requires the teacher to
-   pick the correct radio button by hand — the same "never silently
-   guess" rule this bridge already applies to student matching.
+   table's `writableScoreColumns` ONLY — a `derivedColumns` entry (a
+   total, a percentage, a status field) can never even be matched or
+   selected, whatever its label says. Exactly one label match
+   auto-selects it; zero or more than one shows a warning and requires
+   the teacher to pick the correct radio button by hand — the same
+   "never silently guess" rule this bridge already applies to student
+   matching. The popup also lists every `derivedColumns` entry, read-only
+   with its exclusion reason, purely for the teacher's own transparency.
 7. **Read the target column's existing values** — `readColumnValues`
    (injected), given the CONFIRMED table index and row range from step
    5, reads only that one column's current cell values — never any
@@ -169,10 +189,14 @@ grid:
    `MATCHED`/`AMBIGUOUS`/`NOT_FOUND` per student.
 9. **Preview** — เลขที่ | นักเรียน | คะแนน KrunameClass | คะแนนเดิม SGS |
    คะแนนใหม่ (plus a mapping-status column), computed by
-   `computeSgsRealFillPlan`. Item 7 of the spec: the fill button
+   `computeSgsRealFillPlan`. The fill button
    (`gridMeetsFillRequirements` in popup.js) stays disabled until the
    grid was found, เลขที่/รหัส/ชื่อ are ALL identified, and at least one
-   score column exists.
+   **writable** score column exists — a second check
+   (`isConfirmedColumnWritable`), re-run in both the preview and the
+   fill step, also confirms the ONE column the teacher picked is
+   actually in `writableScoreColumns` and not a derived column that
+   merely happened to be displayed.
 10. **Fill ONLY the confirmed column** — clicking **"ทดลองกรอกเฉพาะช่องนี้"**
     builds write instructions scoped to that one column
     (`buildSgsRealWriteInstructions`) and calls `fillSgsColumnValues`
@@ -184,6 +208,20 @@ grid:
     no score / skipped existing / ambiguous-or-not-found), from
     `summarizeSgsRealFillPlan`, plus the DOM function's own reported
     count as a cross-check.
+
+### Pagination (best-effort, never automatic)
+
+`detectPagination` (`src/lib/sgs-table-extraction.js`) looks for a
+"pager row" elsewhere on the page — a row with no inputs where every
+non-empty cell is a short (1-3 digit) page-number-looking string, never
+the accepted student run itself. When found, it reports `currentPage`
+only if exactly one of those cells isn't a link (the common ASP.NET
+GridView convention: every OTHER page is a link, the current one is
+plain text) — more or fewer than one non-link cell means `currentPage`
+stays `null` rather than a guess. `totalPages` is the largest number
+seen in that row. This never changes the page — it only tells the
+teacher whether `studentRowCount` likely means "the whole classroom" or
+"one page of it."
 
 Every step here that runs INSIDE the SGS page
 (`collectAllTableRowFacts`, `readColumnValues`, `fillSgsColumnValues`)
@@ -229,11 +267,11 @@ depends on them.
    Phase 2 workflow described above.
 5. **"ตรวจสอบโครงสร้างหน้า SGS" — three diagnostic modes, one output box**:
    - **แบบย่อ (compact, the primary one)** — `collectAllTableRowFacts` +
-     `buildCompactStudentGridReport`: the exact shape item 6 of the spec
-     asks for (`pageTitle`, `pageUrl`, `subjectFilter`, `classroomFilter`,
-     `studentGrid` with its found/columns/scoreColumns, `confidence`,
-     `warnings`) — no per-table dump, and never a student's actual
-     name/code.
+     `buildCompactStudentGridReport`: `pageTitle`, `pageUrl`,
+     `subjectFilter`, `classroomFilter`, `studentGrid` (found/columns/
+     `writableScoreColumns`/`derivedColumns`), `pagination`,
+     `confidence`, `warnings` — no per-table dump, and never a student's
+     actual name/code.
    - **แบบละเอียด (debug, anonymized)** — the compact report plus
      `debugRows`: per-row `{rowIndex, cellCount, textCellIndexes,
      inputCellIndexes, inputCount, probableNumberCell,

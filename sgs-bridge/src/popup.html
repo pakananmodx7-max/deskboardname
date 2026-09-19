@@ -100,10 +100,15 @@
 
       <div id="real-column-picker-wrap" hidden>
         <fieldset>
-          <legend>คอลัมน์คะแนนที่พบในหน้า SGS</legend>
+          <legend>คอลัมน์คะแนนที่กรอกได้จริง (คำนวณ/อ่านอย่างเดียวจะไม่แสดงที่นี่)</legend>
           <div id="real-column-picker"></div>
         </fieldset>
         <p id="real-column-match-warning" class="error" hidden></p>
+      </div>
+
+      <div id="real-derived-columns-wrap" hidden>
+        <p class="hint">คอลัมน์ต่อไปนี้ถูกตัดออกจากตัวเลือก เพราะไม่ใช่ช่องกรอกคะแนนที่แก้ไขได้จริง:</p>
+        <ul id="real-derived-columns"></ul>
       </div>
 
       <div id="real-fill-preview-wrap" hidden>

@@ -48,10 +48,10 @@ describe('buildDiagnosticReport (verbose/debug raw dump)', () => {
 })
 
 function text(t: string) {
-  return { hasInput: false, text: t }
+  return { hasInput: false, hasLink: false, text: t, inputMeta: null }
 }
 function input() {
-  return { hasInput: true, text: '' }
+  return { hasInput: true, hasLink: false, text: '', inputMeta: { count: 1, type: 'text', disabled: false, readonly: false } }
 }
 function studentRow(number: string, code: string, name: string) {
   return [text(number), text(code), text(name), input(), input()]
@@ -68,7 +68,7 @@ const gridFacts = {
       tableIndex: 1,
       selectorFingerprint: 'table[1]',
       rows: [
-        [text(''), text(''), text(''), text('ช่อง 1 (15)'), text('กลางภาค (10)')],
+        [text(''), text(''), text(''), text('ช่อง 1 (15)'), text('รวมตลอดภาค')],
         studentRow('1', '00001', 'สมชาย ใจดี'),
         studentRow('2', '00002', 'สมหญิง ใจดี'),
         studentRow('3', '00003', 'วิชัย เก่งกล้า'),
@@ -89,7 +89,15 @@ describe('buildCompactStudentGridReport — the exact shape the spec requires', 
     expect(report.studentGrid.numberColumnIndex).toBe(0)
     expect(report.studentGrid.codeColumnIndex).toBe(1)
     expect(report.studentGrid.nameColumnIndex).toBe(2)
-    expect(report.studentGrid.scoreColumns).toHaveLength(2)
+    // "ช่อง 1 (15)" is a real, editable score column; "รวมตลอดภาค" is a
+    // calculated total and must never appear in writableScoreColumns.
+    expect(report.studentGrid.writableScoreColumns).toEqual([
+      expect.objectContaining({ columnIndex: 3, label: 'ช่อง 1 (15)', maxScore: 15 }),
+    ])
+    expect(report.studentGrid.derivedColumns).toEqual([
+      { columnIndex: 4, label: 'รวมตลอดภาค', reason: 'label_indicates_calculated_or_status' },
+    ])
+    expect(report.pagination).toEqual({ detected: false, currentPage: null, totalPages: null, visibleStudentRows: 3 })
     // Only 3 sample rows here — computeGridConfidence requires >=5 rows
     // for "high," so this small fixture is honestly "medium."
     expect(report.confidence).toBe('medium')
@@ -107,8 +115,34 @@ describe('buildCompactStudentGridReport — the exact shape the spec requires', 
     const noGridFacts = { ...gridFacts, tables: [gridFacts.tables[0]] }
     const report = buildCompactStudentGridReport(noGridFacts)
     expect(report.studentGrid.found).toBe(false)
+    expect(report.studentGrid.writableScoreColumns).toEqual([])
+    expect(report.studentGrid.derivedColumns).toEqual([])
     expect(report.confidence).toBe('none')
     expect(report.warnings.length).toBeGreaterThan(0)
+  })
+
+  it('a grid with ONLY derived/calculated score columns is confidence "low" with a distinct warning', () => {
+    const onlyDerivedFacts = {
+      ...gridFacts,
+      tables: [
+        gridFacts.tables[0],
+        {
+          tableIndex: 1,
+          selectorFingerprint: 'table[1]',
+          rows: [
+            [text(''), text(''), text(''), text('รวมตลอดภาค'), text('%')],
+            studentRow('1', '00001', 'สมชาย ใจดี'),
+            studentRow('2', '00002', 'สมหญิง ใจดี'),
+            studentRow('3', '00003', 'วิชัย เก่งกล้า'),
+          ],
+        },
+      ],
+    }
+    const report = buildCompactStudentGridReport(onlyDerivedFacts)
+    expect(report.studentGrid.writableScoreColumns).toEqual([])
+    expect(report.studentGrid.derivedColumns).toHaveLength(2)
+    expect(report.confidence).toBe('low')
+    expect(report.warnings.some((w: string) => w.includes('คำนวณ/อ่านอย่างเดียว'))).toBe(true)
   })
 
   it('never contains a password/cookie/token-shaped field', () => {

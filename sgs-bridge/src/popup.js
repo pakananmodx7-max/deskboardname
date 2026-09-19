@@ -72,6 +72,8 @@ const realTargetLabelEl = document.getElementById('real-target-label')
 const realColumnPickerWrap = document.getElementById('real-column-picker-wrap')
 const realColumnPickerEl = document.getElementById('real-column-picker')
 const realColumnMatchWarningEl = document.getElementById('real-column-match-warning')
+const realDerivedColumnsWrap = document.getElementById('real-derived-columns-wrap')
+const realDerivedColumnsEl = document.getElementById('real-derived-columns')
 const realFillPreviewWrap = document.getElementById('real-fill-preview-wrap')
 const realFillPreviewBody = document.getElementById('real-fill-preview-body')
 const fillBtn = document.getElementById('fill-selected-column')
@@ -207,6 +209,8 @@ function resetRealInspectionState() {
   realColumnPickerWrap.hidden = true
   realColumnPickerEl.replaceChildren()
   realColumnMatchWarningEl.hidden = true
+  realDerivedColumnsWrap.hidden = true
+  realDerivedColumnsEl.replaceChildren()
   realFillPreviewWrap.hidden = true
   realFillPreviewBody.replaceChildren()
   fillBtn.disabled = true
@@ -277,15 +281,33 @@ function renderMappingResult(payload) {
 }
 
 /**
- * Item 7 of the spec: the fill button must stay disabled/hidden until
+ * Item 5 of the spec: the fill button must stay disabled/hidden until
  * studentGrid.found === true AND number/code/name are all confidently
- * identified AND at least one score column exists. Checked again right
- * before rendering the picker/preview, not just once at the top.
+ * identified AND at least one WRITABLE score column exists (never just
+ * "a score column" — a calculated total or a % column never counts).
+ * Checked again right before rendering the picker/preview, not just
+ * once at the top.
  */
 function gridMeetsFillRequirements(candidate) {
   if (!candidate) return false
   const { numberColumnIndex, codeColumnIndex, nameColumnIndex } = candidate.identifierColumns
-  return numberColumnIndex !== null && codeColumnIndex !== null && nameColumnIndex !== null && candidate.scoreColumns.length > 0
+  return (
+    numberColumnIndex !== null &&
+    codeColumnIndex !== null &&
+    nameColumnIndex !== null &&
+    candidate.writableScoreColumns.length > 0
+  )
+}
+
+/**
+ * Item 5's other half: even once the grid overall qualifies, the ONE
+ * column the teacher is about to fill must itself be in
+ * candidate.writableScoreColumns — never a calculated/derived column
+ * that merely happened to be rendered in the picker for transparency
+ * (see renderRealColumnPicker's own derived-columns list).
+ */
+function isConfirmedColumnWritable(candidate, column) {
+  return Boolean(candidate && column && candidate.writableScoreColumns.some((c) => c.key === column.key))
 }
 
 /**
@@ -326,8 +348,11 @@ async function runRealColumnInspection() {
     realInspectErrorEl.hidden = false
     return
   }
-  if (candidate.scoreColumns.length === 0) {
-    realInspectErrorEl.textContent = 'พบตารางนักเรียนแต่ไม่พบคอลัมน์คะแนนที่มีช่องกรอกข้อมูล'
+  if (candidate.writableScoreColumns.length === 0) {
+    realInspectErrorEl.textContent =
+      candidate.derivedColumns.length > 0
+        ? 'พบตารางนักเรียนแต่คอลัมน์คะแนนที่พบทั้งหมดเป็นคอลัมน์คำนวณ/อ่านอย่างเดียว (เช่น รวมตลอดภาค, %, ปกติ) — ไม่มีช่องให้กรอกจริง'
+        : 'พบตารางนักเรียนแต่ไม่พบคอลัมน์คะแนนที่กรอกได้จริง'
     realInspectErrorEl.hidden = false
     return
   }
@@ -338,8 +363,8 @@ async function runRealColumnInspection() {
     realColumnMatchWarningEl.hidden = false
   }
 
-  const matchResult = matchTargetColumnToRealColumns(loadedPayload.targetColumn.label, candidate.scoreColumns)
-  renderRealColumnPicker(candidate.scoreColumns, matchResult)
+  const matchResult = matchTargetColumnToRealColumns(loadedPayload.targetColumn.label, candidate.writableScoreColumns)
+  renderRealColumnPicker(candidate, matchResult)
 
   if (!gridMeetsFillRequirements(candidate)) {
     // Column may still be picked for review, but runColumnPreview()
@@ -358,9 +383,26 @@ async function runRealColumnInspection() {
   }
 }
 
-function renderRealColumnPicker(candidates, matchResult) {
+const DERIVED_COLUMN_REASON_LABEL = {
+  label_indicates_calculated_or_status: 'ชื่อคอลัมน์บ่งชี้ว่าเป็นค่าที่คำนวณ/สถานะ (เช่น รวมตลอดภาค, %, ปกติ)',
+  disabled_input: 'ช่องกรอกถูกปิดใช้งาน (disabled)',
+  readonly_input: 'ช่องกรอกเป็นแบบอ่านอย่างเดียว (readonly)',
+  no_input: 'ไม่มีช่องกรอกข้อมูลจริง',
+  not_uniformly_editable: 'ไม่ใช่ทุกแถวมีช่องกรอกแบบเดียวกัน',
+}
+
+/**
+ * Only ever offers candidate.writableScoreColumns as fill-target radio
+ * options — item 5's "never allow fill into a calculated total/
+ * percentage/grade-status/non-selected column" starts here: a derived
+ * column can never even be SELECTED, let alone filled. The excluded
+ * columns are still listed (read-only, with their reason) purely for
+ * the teacher's own transparency about what this scan found and why it
+ * was skipped.
+ */
+function renderRealColumnPicker(gridCandidate, matchResult) {
   realColumnPickerEl.replaceChildren(
-    ...candidates.map((candidate) => {
+    ...gridCandidate.writableScoreColumns.map((candidate) => {
       const label = document.createElement('label')
       const input = document.createElement('input')
       input.type = 'radio'
@@ -380,6 +422,15 @@ function renderRealColumnPicker(candidates, matchResult) {
     }),
   )
   realColumnPickerWrap.hidden = false
+
+  realDerivedColumnsEl.replaceChildren(
+    ...gridCandidate.derivedColumns.map((derived) => {
+      const li = document.createElement('li')
+      li.textContent = `${derived.label} — ${DERIVED_COLUMN_REASON_LABEL[derived.reason] ?? derived.reason}`
+      return li
+    }),
+  )
+  realDerivedColumnsWrap.hidden = gridCandidate.derivedColumns.length === 0
 }
 
 /**
@@ -394,6 +445,7 @@ function renderRealColumnPicker(candidates, matchResult) {
 async function runColumnPreview() {
   if (!confirmedRealColumn || !loadedPayload || !currentGridCandidate || !currentGridFacts) return
   if (!gridMeetsFillRequirements(currentGridCandidate)) return
+  if (!isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn)) return
 
   const { tableIndex, run, identifierColumns } = currentGridCandidate
 
@@ -474,6 +526,7 @@ function renderRealFillPreview(plan) {
 async function runFillSelectedColumn() {
   if (!confirmedRealColumn || !realPlan || !currentGridCandidate) return
   if (!gridMeetsFillRequirements(currentGridCandidate)) return
+  if (!isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn)) return
 
   const instructions = buildSgsRealWriteInstructions(realPlan, confirmedRealColumn.key)
   const writesByOffset = {}

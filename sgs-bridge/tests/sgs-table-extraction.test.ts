@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  analyzeColumnEditability,
   buildAnonymizedRowDiagnostics,
   buildColumnKey,
   buildGridWarnings,
   buildRowFingerprint,
   buildSgsRowKey,
   classifyIdentifierColumns,
+  classifyScoreColumns,
   computeGridConfidence,
-  deriveScoreColumns,
+  deriveScoreColumnHeader,
+  detectPagination,
   evaluateStudentGridCandidate,
   findRepeatingRowRun,
   fingerprintsEqual,
+  isDerivedColumnLabel,
   isRejectedHeaderText,
   looksLikeStudentRowFingerprint,
   matchTargetColumnToRealColumns,
@@ -19,18 +23,27 @@ import {
   pickBestStudentGridCandidate,
   sgsRowIndexFromKey,
   slugifyHeaderText,
+  traceColumnHeaderTexts,
 } from '../src/lib/sgs-table-extraction.js'
 
 function text(t: string) {
-  return { hasInput: false, text: t }
+  return { hasInput: false, hasLink: false, text: t, inputMeta: null }
 }
-function input() {
-  return { hasInput: true, text: '' }
+function link(t: string) {
+  return { hasInput: false, hasLink: true, text: t, inputMeta: null }
+}
+function input(overrides: Partial<{ count: number; type: string; disabled: boolean; readonly: boolean }> = {}) {
+  return {
+    hasInput: true,
+    hasLink: false,
+    text: '',
+    inputMeta: { count: 1, type: 'text', disabled: false, readonly: false, ...overrides },
+  }
 }
 
 /** A single realistic student row: เลขที่ | เลขประจำตัว | ชื่อ-นามสกุล | 2 score inputs. */
-function studentRow(number: string, code: string, name: string) {
-  return [text(number), text(code), text(name), input(), input()]
+function studentRow(number: string, code: string, name: string, ...extraCells: ReturnType<typeof input>[]) {
+  return [text(number), text(code), text(name), input(), input(), ...extraCells]
 }
 
 describe('BUG FIX — CSS selector vs id parsing (regression, exercised in content-diagnostic.js tests)', () => {
@@ -211,26 +224,213 @@ describe('slugifyHeaderText / buildColumnKey — stable and derived, never inven
   })
 })
 
-describe('deriveScoreColumns', () => {
+describe('traceColumnHeaderTexts / deriveScoreColumnHeader — multi-row SGS headers', () => {
+  const tableFacts = {
+    tableIndex: 0,
+    selectorFingerprint: 'table[0]',
+    rows: [
+      [text(''), text(''), text(''), text('เก็บคะแนนก่อนกลางภาค'), text('')], // group header, 2 rows above the run
+      [text(''), text(''), text(''), text('(15)'), text('(10)')], // max-score row, 1 row above the run
+      [text(''), text(''), text(''), text('10'), text('กลางภาค')], // closest row — the visible label
+      ...[1, 2, 3].map((i) => studentRow(String(i), String(i).padStart(5, '0'), `นักเรียน ${i}`)),
+    ],
+  }
+  const runStartIndex = 3
+
+  it('collects every non-empty header row above the run, furthest first', () => {
+    expect(traceColumnHeaderTexts(tableFacts, 3, runStartIndex)).toEqual(['เก็บคะแนนก่อนกลางภาค', '(15)', '10'])
+  })
+
+  it('label is the text CLOSEST to the data; maxScore comes from a DIFFERENT row, matching the spec\'s example', () => {
+    const headerTexts = traceColumnHeaderTexts(tableFacts, 3, runStartIndex)
+    expect(deriveScoreColumnHeader(headerTexts)).toEqual({ label: '10', maxScore: 15 })
+  })
+
+  it('a bare numeric label like "10" is NEVER also reported as that column\'s own max score', () => {
+    // Only ONE header row exists here ("10"), so there is no separate
+    // max-score row to find — maxScore must stay null, never fall back
+    // to treating the label itself as the max score.
+    expect(deriveScoreColumnHeader(['10'])).toEqual({ label: '10', maxScore: null })
+  })
+
+  it('a named column (กลางภาค) still finds its max score from a separate traced row', () => {
+    const headerTexts = traceColumnHeaderTexts(tableFacts, 4, runStartIndex)
+    expect(deriveScoreColumnHeader(headerTexts)).toEqual({ label: 'กลางภาค', maxScore: 10 })
+  })
+
+  it('falls back to parsing the label itself when it is already a combined header (e.g. "กลางภาค (10)")', () => {
+    expect(deriveScoreColumnHeader(['กลางภาค (10)'])).toEqual({ label: 'กลางภาค (10)', maxScore: 10 })
+  })
+
+  it('returns null/null when no header text exists at all (run starts at row 0)', () => {
+    expect(deriveScoreColumnHeader([])).toEqual({ label: null, maxScore: null })
+    expect(traceColumnHeaderTexts(tableFacts, 3, 0)).toEqual([])
+  })
+})
+
+describe('analyzeColumnEditability — writable vs calculated/disabled/readonly columns', () => {
+  it('a column with a plain text input in every row is editable', () => {
+    const rows = [studentRow('1', '00001', 'A'), studentRow('2', '00002', 'B'), studentRow('3', '00003', 'C')]
+    const result = analyzeColumnEditability(3, rows)
+    expect(result).toEqual({ hasEditableInput: true, inputCount: 3, inputType: 'text', disabled: false, readonly: false })
+  })
+
+  it('a number-type input is also editable', () => {
+    const rows = [1, 2, 3].map((i) => studentRow(String(i), String(i), `S${i}`, input({ type: 'number' })))
+    expect(analyzeColumnEditability(5, rows).hasEditableInput).toBe(true)
+  })
+
+  it('a DISABLED input is never editable, even though it technically "has an input"', () => {
+    const rows = [1, 2, 3].map((i) => studentRow(String(i), String(i), `S${i}`, input({ disabled: true })))
+    const result = analyzeColumnEditability(5, rows)
+    expect(result.hasEditableInput).toBe(false)
+    expect(result.disabled).toBe(true)
+  })
+
+  it('a READONLY input is never editable', () => {
+    const rows = [1, 2, 3].map((i) => studentRow(String(i), String(i), `S${i}`, input({ readonly: true })))
+    const result = analyzeColumnEditability(5, rows)
+    expect(result.hasEditableInput).toBe(false)
+    expect(result.readonly).toBe(true)
+  })
+
+  it('a non-text/number input type (e.g. hidden/checkbox) is never editable', () => {
+    const rows = [1, 2, 3].map((i) => studentRow(String(i), String(i), `S${i}`, input({ type: 'checkbox' })))
+    expect(analyzeColumnEditability(5, rows).hasEditableInput).toBe(false)
+  })
+
+  it('a cell with MORE THAN ONE input is never editable — "exactly one writable input per row" (item 5)', () => {
+    const rows = [1, 2, 3].map((i) => studentRow(String(i), String(i), `S${i}`, input({ count: 2 })))
+    expect(analyzeColumnEditability(5, rows).hasEditableInput).toBe(false)
+  })
+
+  it('a column where only SOME rows have an input (partial coverage) is never editable', () => {
+    const rows = [studentRow('1', '00001', 'A', input()), studentRow('2', '00002', 'B', text('รวม 10')), studentRow('3', '00003', 'C', input())]
+    expect(analyzeColumnEditability(5, rows).hasEditableInput).toBe(false)
+  })
+
+  it('a column with no input at all reports inputCount 0 and is never editable', () => {
+    const rows = [1, 2, 3].map((i) => studentRow(String(i), String(i), `S${i}`, text('10')))
+    const result = analyzeColumnEditability(5, rows)
+    expect(result.hasEditableInput).toBe(false)
+    expect(result.inputCount).toBe(0)
+  })
+})
+
+describe('isDerivedColumnLabel — total/percentage/status labels', () => {
+  it('rejects a running-total column (รวมตลอดภาค)', () => {
+    expect(isDerivedColumnLabel('รวมตลอดภาค')).toBe(true)
+  })
+
+  it('rejects a percentage column (%)', () => {
+    expect(isDerivedColumnLabel('%')).toBe(true)
+  })
+
+  it('rejects a status/behavior column (ปกติ)', () => {
+    expect(isDerivedColumnLabel('ปกติ')).toBe(true)
+  })
+
+  it('rejects a grade/GPA column', () => {
+    expect(isDerivedColumnLabel('เกรด')).toBe(true)
+    expect(isDerivedColumnLabel('GPA')).toBe(true)
+  })
+
+  it('accepts a normal assignment label', () => {
+    expect(isDerivedColumnLabel('10')).toBe(false)
+    expect(isDerivedColumnLabel('กลางภาค')).toBe(false)
+    expect(isDerivedColumnLabel('หลังกลางภาค')).toBe(false)
+  })
+
+  it('never crashes on null', () => {
+    expect(isDerivedColumnLabel(null)).toBe(false)
+  })
+})
+
+describe('classifyScoreColumns — the ONLY function allowed to produce writableScoreColumns', () => {
+  /** Builds a row with EXACTLY one score cell (at columnIndex 3) — never
+   * studentRow's own baked-in 2 default score cells, so these tests can
+   * precisely control that one column's input shape. */
+  function gridWithColumns(headerRow: ReturnType<typeof text>[], columnBuilder: (i: number) => ReturnType<typeof input>) {
+    const rows = [headerRow]
+    for (let i = 1; i <= 3; i++) {
+      rows.push([text(String(i)), text(String(i).padStart(5, '0')), text(`นักเรียน ${i}`), columnBuilder(i)])
+    }
+    return { tableIndex: 0, selectorFingerprint: 'table[0]', rows }
+  }
+
   const identifierColumns = { numberColumnIndex: 0, codeColumnIndex: 1, nameColumnIndex: 2 }
+  const run = { startIndex: 1, length: 3 }
 
-  it('builds one entry per input column not already claimed as an identifier column', () => {
-    const headerRow = [text(''), text(''), text(''), text('ช่อง 1 (15)'), text('กลางภาค (10)')]
-    const result = deriveScoreColumns([3, 4], headerRow, identifierColumns)
-    expect(result).toEqual([
-      { columnIndex: 3, key: buildColumnKey('ช่อง 1 (15)', 3), label: 'ช่อง 1 (15)', maxScore: 15 },
-      { columnIndex: 4, key: buildColumnKey('กลางภาค (10)', 4), label: 'กลางภาค (10)', maxScore: 10 },
+  it('classifies a normal editable score column as writable', () => {
+    const headerRow = [text(''), text(''), text(''), text('10 (15)')]
+    const tableFacts = gridWithColumns(headerRow, () => input())
+    const { writableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(writableScoreColumns).toEqual([
+      { columnIndex: 3, key: buildColumnKey('10 (15)', 3), label: '10 (15)', maxScore: 15, inputPattern: 'text', inputCount: 3 },
     ])
+    expect(derivedColumns).toEqual([])
   })
 
-  it('rejects a score column whose header is actually an academic-year/nav label', () => {
+  it('rejects a running-TOTAL column (รวมตลอดภาค) even if it happens to render a disabled input', () => {
+    const headerRow = [text(''), text(''), text(''), text('รวมตลอดภาค')]
+    const tableFacts = gridWithColumns(headerRow, () => input({ disabled: true }))
+    const { writableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(writableScoreColumns).toEqual([])
+    expect(derivedColumns).toEqual([{ columnIndex: 3, label: 'รวมตลอดภาค', reason: 'label_indicates_calculated_or_status' }])
+  })
+
+  it('rejects a PERCENTAGE column (%)', () => {
+    const headerRow = [text(''), text(''), text(''), text('%')]
+    const tableFacts = gridWithColumns(headerRow, () => input())
+    const { writableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(writableScoreColumns).toEqual([])
+    expect(derivedColumns[0].reason).toBe('label_indicates_calculated_or_status')
+  })
+
+  it('rejects a normal/behavior STATUS column (ปกติ)', () => {
+    const headerRow = [text(''), text(''), text(''), text('ปกติ')]
+    const tableFacts = gridWithColumns(headerRow, () => input())
+    const { writableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(writableScoreColumns).toEqual([])
+    expect(derivedColumns[0].reason).toBe('label_indicates_calculated_or_status')
+  })
+
+  it('rejects a column with a DISABLED input, tagging the reason', () => {
+    const headerRow = [text(''), text(''), text(''), text('ช่อง 1')]
+    const tableFacts = gridWithColumns(headerRow, () => input({ disabled: true }))
+    const { derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(derivedColumns).toEqual([{ columnIndex: 3, label: 'ช่อง 1', reason: 'disabled_input' }])
+  })
+
+  it('rejects a column with a READONLY input, tagging the reason', () => {
+    const headerRow = [text(''), text(''), text(''), text('ช่อง 1')]
+    const tableFacts = gridWithColumns(headerRow, () => input({ readonly: true }))
+    const { derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(derivedColumns).toEqual([{ columnIndex: 3, label: 'ช่อง 1', reason: 'readonly_input' }])
+  })
+
+  it('drops a column entirely (neither writable nor derived) when its header is an academic-year/nav label', () => {
     const headerRow = [text(''), text(''), text(''), text('ปีการศึกษา 2568')]
-    expect(deriveScoreColumns([3], headerRow, identifierColumns)).toEqual([])
+    const tableFacts = gridWithColumns(headerRow, () => input())
+    const { writableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
+    expect(writableScoreColumns).toEqual([])
+    expect(derivedColumns).toEqual([])
   })
 
-  it('handles a missing header row (run starts at row 0) gracefully — label falls back, maxScore is null', () => {
-    const result = deriveScoreColumns([3], null, identifierColumns)
-    expect(result).toEqual([{ columnIndex: 3, key: buildColumnKey('col-3', 3), label: 'คอลัมน์ 4', maxScore: null }])
+  it('extracts max score from a real SGS-shaped multi-row header (10 / (15))', () => {
+    const tableFacts = {
+      tableIndex: 0,
+      selectorFingerprint: 'table[0]',
+      rows: [
+        [text(''), text(''), text(''), text('(15)')],
+        [text(''), text(''), text(''), text('10')],
+        ...[1, 2, 3].map((i) => [text(String(i)), text(String(i).padStart(5, '0')), text(`นักเรียน ${i}`), input()]),
+      ],
+    }
+    const { writableScoreColumns } = classifyScoreColumns(tableFacts, { startIndex: 2, length: 3 }, identifierColumns)
+    expect(writableScoreColumns).toEqual([
+      { columnIndex: 3, key: buildColumnKey('10', 3), label: '10', maxScore: 15, inputPattern: 'text', inputCount: 3 },
+    ])
   })
 })
 
@@ -253,11 +453,23 @@ describe('evaluateStudentGridCandidate / pickBestStudentGridCandidate — reject
     expect(evaluateStudentGridCandidate(layoutTable(0))).toBeNull()
   })
 
-  it('accepts the real grid table and reports its identifier/score columns', () => {
+  it('accepts the real grid table and reports its identifier/writable-score columns', () => {
     const candidate = evaluateStudentGridCandidate(studentGridTable(5))
     expect(candidate?.identifierColumns).toEqual({ numberColumnIndex: 0, codeColumnIndex: 1, nameColumnIndex: 2 })
-    expect(candidate?.scoreColumns).toHaveLength(2)
+    expect(candidate?.writableScoreColumns).toHaveLength(2)
+    expect(candidate?.derivedColumns).toEqual([])
     expect(candidate?.studentRowCount).toBe(5)
+  })
+
+  it('a total/percentage column sits in derivedColumns, never writableScoreColumns, on a real grid', () => {
+    const header = [text(''), text(''), text(''), text('ช่อง 1 (15)'), text('รวมตลอดภาค')]
+    const rows = [header]
+    for (let i = 1; i <= 5; i++) {
+      rows.push(studentRow(String(i), String(i).padStart(5, '0'), `S${i}`))
+    }
+    const candidate = evaluateStudentGridCandidate({ tableIndex: 0, selectorFingerprint: 'table[0]', rows })
+    expect(candidate?.writableScoreColumns.map((c) => c.label)).toEqual(['ช่อง 1 (15)'])
+    expect(candidate?.derivedColumns.map((c) => c.label)).toEqual(['รวมตลอดภาค'])
   })
 
   it('picks the REAL grid over ~200 surrounding layout tables, never assuming the first/largest table', () => {
@@ -280,24 +492,32 @@ describe('evaluateStudentGridCandidate / pickBestStudentGridCandidate — reject
 })
 
 describe('computeGridConfidence / buildGridWarnings', () => {
-  function candidateWith(overrides: Partial<{ numberColumnIndex: number | null; codeColumnIndex: number | null; nameColumnIndex: number | null; scoreColumnCount: number; studentRowCount: number }>) {
+  function candidateWith(overrides: Partial<{ numberColumnIndex: number | null; codeColumnIndex: number | null; nameColumnIndex: number | null; writableCount: number; derivedCount: number; studentRowCount: number }>) {
     const identifierColumns = {
       numberColumnIndex: 'numberColumnIndex' in overrides ? overrides.numberColumnIndex : 0,
       codeColumnIndex: 'codeColumnIndex' in overrides ? overrides.codeColumnIndex : 1,
       nameColumnIndex: 'nameColumnIndex' in overrides ? overrides.nameColumnIndex : 2,
     }
-    const scoreColumns = Array.from({ length: overrides.scoreColumnCount ?? 1 }, (_, i) => ({
+    const writableScoreColumns = Array.from({ length: overrides.writableCount ?? 1 }, (_, i) => ({
       columnIndex: 3 + i,
       key: `k${i}`,
       label: `col${i}`,
       maxScore: 10,
+      inputPattern: 'text',
+      inputCount: 10,
+    }))
+    const derivedColumns = Array.from({ length: overrides.derivedCount ?? 0 }, (_, i) => ({
+      columnIndex: 10 + i,
+      label: `derived${i}`,
+      reason: 'label_indicates_calculated_or_status',
     }))
     return {
       tableIndex: 0,
       selectorFingerprint: 'table[0]',
       run: { startIndex: 1, length: overrides.studentRowCount ?? 10 },
       identifierColumns,
-      scoreColumns,
+      writableScoreColumns,
+      derivedColumns,
       studentRowCount: overrides.studentRowCount ?? 10,
       score: 0,
     }
@@ -308,11 +528,11 @@ describe('computeGridConfidence / buildGridWarnings', () => {
     expect(buildGridWarnings(null)).toEqual(['ไม่พบโครงสร้างแถวนักเรียนที่ซ้ำกันในหน้านี้'])
   })
 
-  it('is "high" with all identifiers, a score column, and a healthy row count', () => {
+  it('is "high" with all identifiers, a writable score column, and a healthy row count', () => {
     expect(computeGridConfidence(candidateWith({}))).toBe('high')
   })
 
-  it('is "medium" with core identifiers and a score column but few rows', () => {
+  it('is "medium" with core identifiers and a writable score column but few rows', () => {
     expect(computeGridConfidence(candidateWith({ studentRowCount: 3 }))).toBe('medium')
   })
 
@@ -320,10 +540,23 @@ describe('computeGridConfidence / buildGridWarnings', () => {
     expect(computeGridConfidence(candidateWith({ nameColumnIndex: null }))).toBe('low')
   })
 
-  it('warns about each missing identifier/score column specifically', () => {
-    const warnings = buildGridWarnings(candidateWith({ codeColumnIndex: null, scoreColumnCount: 0 }))
+  it('is "low" when every score column found is derived (calculated/status), not writable', () => {
+    expect(computeGridConfidence(candidateWith({ writableCount: 0, derivedCount: 2 }))).toBe('low')
+  })
+
+  it('warns about each missing identifier column specifically', () => {
+    const warnings = buildGridWarnings(candidateWith({ codeColumnIndex: null }))
     expect(warnings).toContain('ไม่พบคอลัมน์รหัสนักเรียน')
-    expect(warnings).toContain('ไม่พบคอลัมน์คะแนน')
+  })
+
+  it('warns distinctly when score columns exist but are ALL derived/calculated', () => {
+    const warnings = buildGridWarnings(candidateWith({ writableCount: 0, derivedCount: 3 }))
+    expect(warnings.some((w) => w.includes('คำนวณ/อ่านอย่างเดียว'))).toBe(true)
+  })
+
+  it('warns generically when there are no score columns of any kind', () => {
+    const warnings = buildGridWarnings(candidateWith({ writableCount: 0, derivedCount: 0 }))
+    expect(warnings).toContain('ไม่พบคอลัมน์คะแนนที่กรอกได้จริง')
   })
 })
 
@@ -396,5 +629,75 @@ describe('sgsRowKey helpers', () => {
 
   it('returns null for a malformed key rather than guessing an index', () => {
     expect(sgsRowIndexFromKey('not-a-row-key')).toBeNull()
+  })
+})
+
+describe('detectPagination — best-effort, never blocking, never auto-changing pages', () => {
+  function studentGridTableFacts(tableIndex: number, studentCount = 10) {
+    const header = [text(''), text(''), text(''), text('ช่อง 1 (15)')]
+    const rows = [header]
+    for (let i = 1; i <= studentCount; i++) {
+      rows.push(studentRow(String(i), String(i).padStart(5, '0'), `นักเรียน ${i}`))
+    }
+    return { tableIndex, selectorFingerprint: `table[${tableIndex}]`, rows }
+  }
+
+  it('reports not detected, with no guess, when there is no plausible pager row anywhere', () => {
+    const tables = [studentGridTableFacts(0)]
+    const candidate = pickBestStudentGridCandidate(tables)
+    expect(detectPagination(tables, candidate)).toEqual({
+      detected: false,
+      currentPage: null,
+      totalPages: null,
+      visibleStudentRows: 10,
+    })
+  })
+
+  it('detects a pager row in a DIFFERENT table, with the current page as the one non-link numeric cell', () => {
+    const gridTable = studentGridTableFacts(0)
+    const pagerTable = {
+      tableIndex: 1,
+      selectorFingerprint: 'table[1]',
+      rows: [[link('1'), text('2'), link('3')]],
+    }
+    const tables = [gridTable, pagerTable]
+    const candidate = pickBestStudentGridCandidate(tables)
+    expect(detectPagination(tables, candidate)).toEqual({
+      detected: true,
+      currentPage: 2,
+      totalPages: 3,
+      visibleStudentRows: 10,
+    })
+  })
+
+  it('never mistakes the accepted student run itself for a pager row, even though เลขที่ is also short numeric text', () => {
+    // The grid table's OWN header row (no inputs) has short numbers-only
+    // text nowhere, so this mainly documents the run-exclusion guard;
+    // the important behavior is asserted by the "not detected" case
+    // above already finding nothing inside a single grid-only table.
+    const tables = [studentGridTableFacts(0)]
+    const candidate = pickBestStudentGridCandidate(tables)
+    expect(detectPagination(tables, candidate)?.detected).toBe(false)
+  })
+
+  it('reports currentPage as null when more than one non-link numeric cell exists (ambiguous, never guessed)', () => {
+    const gridTable = studentGridTableFacts(0)
+    const pagerTable = { tableIndex: 1, selectorFingerprint: 'table[1]', rows: [[text('1'), text('2'), link('3')]] }
+    const tables = [gridTable, pagerTable]
+    const candidate = pickBestStudentGridCandidate(tables)
+    const result = detectPagination(tables, candidate)
+    expect(result.detected).toBe(true)
+    expect(result.currentPage).toBeNull()
+    expect(result.totalPages).toBe(3)
+  })
+
+  it('returns a null/zero-shaped result when there is no candidate at all', () => {
+    expect(detectPagination([], null)).toEqual({ detected: false, currentPage: null, totalPages: null, visibleStudentRows: 0 })
+  })
+
+  it('never changes anything — detectPagination is a pure read of already-collected facts', () => {
+    // Structural guarantee: the function takes plain data and returns
+    // plain data, with no DOM access at all (this whole file has none).
+    expect(typeof detectPagination).toBe('function')
   })
 })

@@ -115,7 +115,15 @@ describe('content-diagnostic.js: collectAllTableRowFacts — the ONLY function t
   })
 
   it('never assigns a text value for a cell that hasInput — text is always empty for those cells', () => {
-    expect(source).toContain('text: hasInput ? \'\' : textOf(cell)')
+    expect(source).toContain("text: ''")
+    expect(source).toContain('text: textOf(cell)')
+  })
+
+  it('reports input structure (count/type/disabled/readonly) instead of a value, for a cell that has an input', () => {
+    expect(source).toContain('inputMeta:')
+    expect(source).toContain('disabled: inputEl.disabled === true')
+    expect(source).toContain('readonly: inputEl.readOnly === true')
+    expect(source).not.toMatch(/inputEl\.value/)
   })
 
   it('never invents a score-input selector — walks every real table via querySelectorAll, uses each table\'s own .rows', () => {
@@ -263,12 +271,35 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(source).toContain('fillBtn.disabled = !gridMeetsFillRequirements(currentGridCandidate)')
   })
 
-  it('gridMeetsFillRequirements requires number/code/name AND at least one score column', () => {
-    const fn = source.slice(source.indexOf('function gridMeetsFillRequirements'), source.indexOf('async function runRealColumnInspection'))
+  it('gridMeetsFillRequirements requires number/code/name AND at least one WRITABLE score column — never just "a score column"', () => {
+    const fn = source.slice(source.indexOf('function gridMeetsFillRequirements'), source.indexOf('function isConfirmedColumnWritable'))
     expect(fn).toContain('numberColumnIndex !== null')
     expect(fn).toContain('codeColumnIndex !== null')
     expect(fn).toContain('nameColumnIndex !== null')
-    expect(fn).toContain('candidate.scoreColumns.length > 0')
+    expect(fn).toContain('candidate.writableScoreColumns.length > 0')
+    expect(fn).not.toMatch(/candidate\.scoreColumns\b/)
+  })
+
+  it('isConfirmedColumnWritable checks the column is actually IN writableScoreColumns, never trusting a derived column that was merely displayed', () => {
+    const fn = source.slice(source.indexOf('function isConfirmedColumnWritable'), source.indexOf('async function runRealColumnInspection'))
+    expect(fn).toContain('candidate.writableScoreColumns.some((c) => c.key === column.key)')
+  })
+
+  it('item 5: both runColumnPreview and runFillSelectedColumn re-check isConfirmedColumnWritable before doing anything real', () => {
+    const previewFn = source.slice(source.indexOf('async function runColumnPreview'), source.indexOf('function renderRealFillPreview'))
+    const fillFn = source.slice(source.indexOf('async function runFillSelectedColumn'), source.indexOf('fileInput.addEventListener'))
+    expect(previewFn).toContain('isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn)')
+    expect(fillFn).toContain('isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn)')
+  })
+
+  it('renderRealColumnPicker only ever offers writableScoreColumns as radio options — derivedColumns are listed read-only, never selectable', () => {
+    const fn = source.slice(source.indexOf('function renderRealColumnPicker'), source.indexOf('async function runColumnPreview'))
+    expect(fn).toContain('gridCandidate.writableScoreColumns.map(')
+    expect(fn).toContain('gridCandidate.derivedColumns.map(')
+    // The derived-columns list must never attach a radio input or a change handler.
+    const derivedBlock = fn.slice(fn.indexOf('realDerivedColumnsEl.replaceChildren'))
+    expect(derivedBlock).not.toContain("input.type = 'radio'")
+    expect(derivedBlock).not.toContain('confirmedRealColumn = ')
   })
 
   it('never invents a student grid — always derives it via pickBestStudentGridCandidate over collectAllTableRowFacts\'s real output', () => {

@@ -125,13 +125,22 @@ export function collectRawSgsFacts() {
 }
 
 /**
- * Primary diagnostic — reads RAW structural facts only (cell counts,
- * which cells contain an input, and the TEXT of non-input cells) for
- * EVERY row of EVERY table on the page, with no interpretation at all:
- * finding "the" student grid among these ~200 tables is
- * sgs-table-extraction.js's job (pickBestStudentGridCandidate), run
- * afterward in the extension/popup context on the plain data this
- * returns.
+ * Primary diagnostic — reads RAW structural facts only for EVERY row of
+ * EVERY table on the page, with no interpretation at all: finding "the"
+ * student grid among these ~200 tables, and deciding which of its
+ * columns are genuinely WRITABLE score inputs versus calculated/
+ * read-only columns (รวมตลอดภาค, %, ปกติ, ...), is
+ * sgs-table-extraction.js's job, run afterward in the extension/popup
+ * context on the plain data this returns.
+ *
+ * For a cell WITHOUT an input: only its trimmed, length-capped text.
+ * For a cell WITH an input: never its text, but structural metadata
+ * about the input(s) inside it — count, the first one's type, and
+ * whether any of them is disabled/readonly — which is exactly what's
+ * needed to tell a real editable score box apart from a calculated
+ * total rendered as a locked input. Also records whether a cell
+ * contains a link (`<a>`), used only for pagination-row detection
+ * (see detectPagination) — never for score-column classification.
  *
  * Deliberately never reads an input's `.value` (a score's current
  * value is only ever read later, for the ONE column/table/row-range the
@@ -174,8 +183,26 @@ export function collectAllTableRowFacts() {
           Array.from(row.cells)
             .slice(0, MAX_CELLS_PER_ROW)
             .map((cell) => {
-              const hasInput = cell.querySelector('input,select') !== null
-              return { hasInput, text: hasInput ? '' : textOf(cell) }
+              const inputEl = cell.querySelector('input,select,textarea')
+              const hasInput = inputEl !== null
+              const hasLink = cell.querySelector('a') !== null
+              if (!hasInput) {
+                return { hasInput: false, hasLink, text: textOf(cell), inputMeta: null }
+              }
+              const allInputs = cell.querySelectorAll('input,select,textarea')
+              const tag = inputEl.tagName.toLowerCase()
+              const type = tag === 'input' ? inputEl.getAttribute('type') || 'text' : tag
+              return {
+                hasInput: true,
+                hasLink,
+                text: '',
+                inputMeta: {
+                  count: allInputs.length,
+                  type,
+                  disabled: inputEl.disabled === true,
+                  readonly: inputEl.readOnly === true,
+                },
+              }
             }),
         ),
     }))

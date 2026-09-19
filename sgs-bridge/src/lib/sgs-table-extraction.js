@@ -25,6 +25,17 @@
 
 const THAI_CHAR_PATTERN = /[฀-๿]/
 
+/**
+ * v2 cell shape (from content-diagnostic.js's collectAllTableRowFacts):
+ * `{ hasInput, hasLink, text, inputMeta }`, where `inputMeta` is null
+ * for a non-input cell and `{ count, type, disabled, readonly }` for
+ * one that has an input. Every function below that only needs
+ * `hasInput`/`text` (row-shape fingerprinting, identifier
+ * classification) still works unchanged against this shape — the extra
+ * fields are simply ignored there. `inputMeta` only matters to
+ * analyzeColumnEditability, and `hasLink` only to detectPagination.
+ */
+
 // ==================================================
 // Row fingerprinting — "does this row have the same SHAPE as that one,"
 // never "does it contain the same values."
@@ -193,31 +204,208 @@ export function buildColumnKey(headerText, columnIndex) {
 }
 
 /**
- * Every input column from the accepted run that ISN'T an identifier
- * column is a score column. `headerRowCells` is the row immediately
- * above the run (or null if the run starts at row 0, i.e. no header
- * row exists above it) — its cell at the SAME column index is read as
- * that column's header text, "tracing vertically" as the spec puts it.
+ * Real SGS pages spread a score column's header across MORE than one
+ * row above the data (e.g. an assignment number "10" right above the
+ * run, with its max score shown in a separate row further up) — see
+ * deriveScoreColumnHeader below for how that's combined. Traces up to
+ * `maxRowsUp` rows immediately above the run for ONE column, collecting
+ * every non-empty (non-input) cell's text found, ordered
+ * furthest-from-data first, closest-to-data last.
  */
-export function deriveScoreColumns(inputColumnIndexes, headerRowCells, identifierColumns) {
+export function traceColumnHeaderTexts(tableFacts, columnIndex, runStartIndex, maxRowsUp = 6) {
+  const texts = []
+  for (let distance = maxRowsUp; distance >= 1; distance--) {
+    const rowIndex = runStartIndex - distance
+    if (rowIndex < 0) continue
+    const cell = tableFacts.rows[rowIndex]?.[columnIndex]
+    const text = cell && !cell.hasInput ? (cell.text ?? '').trim() : ''
+    if (text) texts.push(text)
+  }
+  return texts
+}
+
+/**
+ * `label` is the text CLOSEST to the data row (the last one traced) —
+ * matching the visible SGS UI's own column headers ("10", "11", ...,
+ * "กลางภาค"). `maxScore` is looked for among the OTHER traced texts
+ * FIRST (a separate row/cell showing the max score, "shown under/near
+ * the header" per the spec) so a bare numeric label like "10" is never
+ * ALSO reported as that column's max score; only if no other traced
+ * text yields a plausible number does it fall back to parsing the
+ * label text itself (still supports an already-combined header like
+ * "กลางภาค (10)").
+ */
+export function deriveScoreColumnHeader(headerTexts) {
+  if (headerTexts.length === 0) return { label: null, maxScore: null }
+  const label = headerTexts[headerTexts.length - 1]
+  const otherTexts = headerTexts.slice(0, -1)
+  for (const text of otherTexts) {
+    const maxScore = parseMaxScoreFromHeader(text)
+    if (maxScore !== null) return { label, maxScore }
+  }
+  // A bare numeric label ("10") is just an assignment identifier, never
+  // also that column's max score — only fall back to parsing the label
+  // text itself when it's a NAMED header that might already combine a
+  // number, e.g. an already-combined "กลางภาค (10)".
+  if (/^\d+$/.test(label.trim())) return { label, maxScore: null }
+  return { label, maxScore: parseMaxScoreFromHeader(label) }
+}
+
+/**
+ * Column headers/labels that mean "this is a calculated or status
+ * column," never a place a teacher directly types a score into — a
+ * running total, a percentage, an attendance/behavior status, a grade
+ * letter, a GPA. Checked in ADDITION to actual input-editability
+ * (analyzeColumnEditability below); a column is only ever offered as a
+ * fill target when BOTH agree it's safe.
+ */
+const DERIVED_COLUMN_LABEL_KEYWORDS = /รวม|ตลอดภาค|เฉลี่ย|เกรด|ผลการเรียน|สถานะ|ปกติ|^%$|เปอร์เซ็นต์|ร้อยละ|GPA/i
+
+export function isDerivedColumnLabel(label) {
+  return typeof label === 'string' && DERIVED_COLUMN_LABEL_KEYWORDS.test(label)
+}
+
+/**
+ * Determines whether EVERY row in the run has exactly one genuinely
+ * editable input in this column — the ONLY thing that makes a column a
+ * safe fill target (item 5 of the spec: "each row has exactly one
+ * writable input for that target column"). A column where some rows
+ * have no input at all, or more than one, or the input is
+ * disabled/readonly, or isn't a text/number field (e.g. a hidden field,
+ * a checkbox, a calculated field rendered as a locked control), is
+ * never writable — whatever its header says.
+ */
+export function analyzeColumnEditability(columnIndex, rowsInRun) {
+  const cells = rowsInRun.map((row) => row[columnIndex]).filter(Boolean)
+  const inputCells = cells.filter((c) => c.hasInput)
+  const allRowsHaveInput = cells.length > 0 && inputCells.length === cells.length
+  const metas = inputCells.map((c) => c.inputMeta).filter(Boolean)
+
+  const inputCount = metas.reduce((sum, m) => sum + m.count, 0)
+  const inputType = metas.length > 0 ? metas[0].type : null
+  const disabled = metas.some((m) => m.disabled)
+  const readonly = metas.some((m) => m.readonly)
+  const allSingleInput = metas.length > 0 && metas.every((m) => m.count === 1)
+  const allEditableType = metas.length > 0 && metas.every((m) => m.type === 'text' || m.type === 'number')
+
+  return {
+    hasEditableInput: allRowsHaveInput && allSingleInput && allEditableType && !disabled && !readonly,
+    inputCount,
+    inputType,
+    disabled,
+    readonly,
+  }
+}
+
+/**
+ * Splits every input column from the accepted run (excluding identifier
+ * columns) into `writableScoreColumns` (a real, editable, per-row-
+ * unique text/number input, with a header that doesn't look like a
+ * calculated/status field) and `derivedColumns` (everything else —
+ * รวมตลอดภาค, %, ปกติ, a disabled/readonly box, or any column this
+ * can't confidently call safe), each tagged with WHY it was excluded.
+ * `derivedColumns` is reporting only — see popup.js's
+ * gridMeetsFillRequirements for the actual write-time gate.
+ */
+export function classifyScoreColumns(tableFacts, run, identifierColumns) {
+  const rowsInRun = tableFacts.rows.slice(run.startIndex, run.startIndex + run.length)
+  const fingerprint = buildRowFingerprint(rowsInRun[0] ?? [])
   const identifierSet = new Set(
     [identifierColumns.numberColumnIndex, identifierColumns.codeColumnIndex, identifierColumns.nameColumnIndex].filter(
       (i) => i !== null,
     ),
   )
-  return inputColumnIndexes
-    .filter((index) => !identifierSet.has(index))
-    .map((index) => {
-      const headerText = headerRowCells?.[index]?.text ?? ''
-      if (isRejectedHeaderText(headerText)) return null
-      return {
-        columnIndex: index,
-        key: buildColumnKey(headerText || `col-${index}`, index),
-        label: headerText.trim() || `คอลัมน์ ${index + 1}`,
-        maxScore: parseMaxScoreFromHeader(headerText),
+  const candidateIndexes = fingerprint.inputCellIndexes.filter((index) => !identifierSet.has(index))
+
+  const writableScoreColumns = []
+  const derivedColumns = []
+
+  for (const columnIndex of candidateIndexes) {
+    const headerTexts = traceColumnHeaderTexts(tableFacts, columnIndex, run.startIndex)
+    const { label, maxScore } = deriveScoreColumnHeader(headerTexts)
+    if (isRejectedHeaderText(label ?? '')) continue // an academic year/menu/login label — not a real column at all
+
+    const resolvedLabel = label ?? `คอลัมน์ ${columnIndex + 1}`
+    const editability = analyzeColumnEditability(columnIndex, rowsInRun)
+    const derivedByLabel = isDerivedColumnLabel(label)
+
+    if (editability.hasEditableInput && !derivedByLabel) {
+      writableScoreColumns.push({
+        columnIndex,
+        key: buildColumnKey(resolvedLabel, columnIndex),
+        label: resolvedLabel,
+        maxScore,
+        inputPattern: editability.inputType ?? 'text',
+        inputCount: editability.inputCount,
+      })
+    } else {
+      const reason = derivedByLabel
+        ? 'label_indicates_calculated_or_status'
+        : editability.disabled
+          ? 'disabled_input'
+          : editability.readonly
+            ? 'readonly_input'
+            : editability.inputCount === 0
+              ? 'no_input'
+              : 'not_uniformly_editable'
+      derivedColumns.push({ columnIndex, label: resolvedLabel, reason })
+    }
+  }
+
+  return { writableScoreColumns, derivedColumns }
+}
+
+// ==================================================
+// Pagination — best-effort, never blocking. Looks for a "pager row"
+// elsewhere on the page (never inside the accepted student run itself):
+// a row with no inputs where every non-empty cell is a short page-
+// number-looking string. Reports what it found rather than guessing —
+// `detected: false` is an honest answer when no such row exists, not a
+// claim that the page never paginates.
+// ==================================================
+
+const PAGE_NUMBER_PATTERN = /^\d{1,3}$/
+
+export function detectPagination(tablesFacts, candidate) {
+  if (!candidate) {
+    return { detected: false, currentPage: null, totalPages: null, visibleStudentRows: 0 }
+  }
+
+  let pagerCells = null
+  for (const tableFacts of tablesFacts) {
+    const isGridTable = tableFacts.tableIndex === candidate.tableIndex
+    for (let rowIndex = 0; rowIndex < tableFacts.rows.length; rowIndex++) {
+      if (isGridTable && rowIndex >= candidate.run.startIndex && rowIndex < candidate.run.startIndex + candidate.run.length) {
+        continue // never mistake a student data row for a pager row
       }
-    })
-    .filter((c) => c !== null)
+      const cells = tableFacts.rows[rowIndex]
+      if (cells.some((c) => c.hasInput)) continue
+      const nonEmpty = cells.filter((c) => (c.text ?? '').trim() !== '')
+      if (nonEmpty.length < 2) continue
+      const numeric = nonEmpty.filter((c) => PAGE_NUMBER_PATTERN.test(c.text.trim()))
+      // Every non-empty cell in the row must look like a page number —
+      // a row mixing page numbers with unrelated labels isn't a pager.
+      if (numeric.length !== nonEmpty.length) continue
+      pagerCells = numeric
+      break
+    }
+    if (pagerCells) break
+  }
+
+  if (!pagerCells) {
+    return { detected: false, currentPage: null, totalPages: null, visibleStudentRows: candidate.studentRowCount }
+  }
+
+  const numbers = pagerCells.map((c) => Number(c.text.trim()))
+  const totalPages = numbers.length > 0 ? Math.max(...numbers) : null
+  // ASP.NET GridView pagers conventionally render every OTHER page as a
+  // link and the current page as plain text — so exactly one non-link
+  // numeric cell is a strong signal for which page is current; more or
+  // fewer than one is ambiguous and never guessed.
+  const nonLinkCells = pagerCells.filter((c) => !c.hasLink)
+  const currentPage = nonLinkCells.length === 1 ? Number(nonLinkCells[0].text.trim()) : null
+
+  return { detected: true, currentPage, totalPages, visibleStudentRows: candidate.studentRowCount }
 }
 
 // ==================================================
@@ -236,24 +424,22 @@ export function evaluateStudentGridCandidate(tableFacts, options = {}) {
 
   const rowsInRun = tableFacts.rows.slice(run.startIndex, run.startIndex + run.length)
   const identifierColumns = classifyIdentifierColumns(rowsInRun)
-  const inputColumnIndexes = fingerprints[run.startIndex].inputCellIndexes
-  const headerRowIndex = run.startIndex > 0 ? run.startIndex - 1 : null
-  const headerRowCells = headerRowIndex !== null ? tableFacts.rows[headerRowIndex] : null
-  const scoreColumns = deriveScoreColumns(inputColumnIndexes, headerRowCells, identifierColumns)
+  const { writableScoreColumns, derivedColumns } = classifyScoreColumns(tableFacts, run, identifierColumns)
 
   const score =
     run.length * 10 +
     (identifierColumns.nameColumnIndex !== null ? 20 : 0) +
     (identifierColumns.numberColumnIndex !== null ? 10 : 0) +
     (identifierColumns.codeColumnIndex !== null ? 5 : 0) +
-    scoreColumns.length * 3
+    writableScoreColumns.length * 3
 
   return {
     tableIndex: tableFacts.tableIndex,
     selectorFingerprint: tableFacts.selectorFingerprint,
     run,
     identifierColumns,
-    scoreColumns,
+    writableScoreColumns,
+    derivedColumns,
     studentRowCount: run.length,
     score,
   }
@@ -272,10 +458,10 @@ export function pickBestStudentGridCandidate(tablesFacts, options = {}) {
 
 export function computeGridConfidence(candidate) {
   if (!candidate) return 'none'
-  const { identifierColumns, scoreColumns, studentRowCount } = candidate
+  const { identifierColumns, writableScoreColumns, studentRowCount } = candidate
   const hasCoreIdentifiers = identifierColumns.numberColumnIndex !== null && identifierColumns.nameColumnIndex !== null
-  if (hasCoreIdentifiers && scoreColumns.length > 0 && studentRowCount >= 5) return 'high'
-  if (hasCoreIdentifiers && scoreColumns.length > 0) return 'medium'
+  if (hasCoreIdentifiers && writableScoreColumns.length > 0 && studentRowCount >= 5) return 'high'
+  if (hasCoreIdentifiers && writableScoreColumns.length > 0) return 'medium'
   return 'low'
 }
 
@@ -285,8 +471,14 @@ export function buildGridWarnings(candidate) {
   if (candidate.identifierColumns.numberColumnIndex === null) warnings.push('ไม่พบคอลัมน์เลขที่')
   if (candidate.identifierColumns.codeColumnIndex === null) warnings.push('ไม่พบคอลัมน์รหัสนักเรียน')
   if (candidate.identifierColumns.nameColumnIndex === null) warnings.push('ไม่พบคอลัมน์ชื่อ-นามสกุล')
-  if (candidate.scoreColumns.length === 0) warnings.push('ไม่พบคอลัมน์คะแนน')
-  const missingMax = candidate.scoreColumns.filter((c) => c.maxScore === null)
+  if (candidate.writableScoreColumns.length === 0) {
+    warnings.push(
+      candidate.derivedColumns.length > 0
+        ? 'พบคอลัมน์คะแนนแต่ทั้งหมดเป็นคอลัมน์คำนวณ/อ่านอย่างเดียว (เช่น รวมตลอดภาค, %, ปกติ) ไม่มีช่องที่กรอกได้จริง'
+        : 'ไม่พบคอลัมน์คะแนนที่กรอกได้จริง',
+    )
+  }
+  const missingMax = candidate.writableScoreColumns.filter((c) => c.maxScore === null)
   if (missingMax.length > 0) {
     warnings.push(`ไม่พบคะแนนเต็มในหัวคอลัมน์: ${missingMax.map((c) => c.label).join(', ')}`)
   }

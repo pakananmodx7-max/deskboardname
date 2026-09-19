@@ -2,6 +2,7 @@ import {
   buildAnonymizedRowDiagnostics,
   buildGridWarnings,
   computeGridConfidence,
+  detectPagination,
   pickBestStudentGridCandidate,
 } from './sgs-table-extraction.js'
 
@@ -33,9 +34,12 @@ export function buildDiagnosticReport(facts) {
  * The PRIMARY diagnostic — built from collectAllTableRowFacts's rich
  * per-row data (content-diagnostic.js), this is what actually finds the
  * real student grid among the page's ~200 tables
- * (pickBestStudentGridCandidate) and reports it in the compact shape
- * the spec asks for. Never includes a student's actual name/code/number
- * — only column indexes, counts, and derived labels/keys.
+ * (pickBestStudentGridCandidate), splits its score columns into
+ * genuinely WRITABLE ones versus calculated/read-only ones
+ * (classifyScoreColumns, run inside evaluateStudentGridCandidate), and
+ * reports pagination as a best-effort, separate signal. Never includes
+ * a student's actual name/code/number — only column indexes, counts,
+ * and derived labels/keys.
  */
 export function buildCompactStudentGridReport(facts) {
   const candidate = pickBestStudentGridCandidate(facts.tables)
@@ -53,8 +57,10 @@ export function buildCompactStudentGridReport(facts) {
       numberColumnIndex: candidate?.identifierColumns.numberColumnIndex ?? null,
       codeColumnIndex: candidate?.identifierColumns.codeColumnIndex ?? null,
       nameColumnIndex: candidate?.identifierColumns.nameColumnIndex ?? null,
-      scoreColumns: candidate?.scoreColumns ?? [],
+      writableScoreColumns: candidate?.writableScoreColumns ?? [],
+      derivedColumns: candidate?.derivedColumns ?? [],
     },
+    pagination: detectPagination(facts.tables, candidate),
     confidence: computeGridConfidence(candidate),
     warnings: buildGridWarnings(candidate),
   }
