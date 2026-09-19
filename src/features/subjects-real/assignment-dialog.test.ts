@@ -40,7 +40,12 @@ describe('AssignmentDialog — "ห้องที่ใช้" only appears for
   const source = readSource()
 
   it('the picker is gated on !isEditing (via showClassroomPicker) — editing an existing assignment never shows it', () => {
-    expect(source).toContain('const showClassroomPicker = !isEditing && Boolean(subjectName) && otherClassroomTargets.length > 0')
+    expect(source).toContain('const showClassroomPicker = !isEditing && Boolean(subjectName)')
+  })
+
+  it('REGRESSION — the picker is NEVER hidden just because there are zero other classrooms — visibility never depends on otherClassroomTargets.length', () => {
+    const showLine = source.slice(source.indexOf('const showClassroomPicker ='), source.indexOf('\n', source.indexOf('const showClassroomPicker =')))
+    expect(showLine).not.toContain('otherClassroomTargets.length')
   })
 
   it('classroom targets/subject name are only fetched when NOT editing (assignment is absent)', () => {
@@ -53,7 +58,10 @@ describe('AssignmentDialog — "ห้องที่ใช้" only appears for
 
 describe('AssignmentDialog — the picker: current classroom locked-checked by default, others start unchecked', () => {
   const source = readSource()
-  const pickerBlock = source.slice(source.indexOf('{showClassroomPicker'), source.indexOf('{isCreateFlowFinishStep && selectedExtraClassroomIds.size'))
+  const pickerBlock = source.slice(
+    source.indexOf('{showClassroomPicker'),
+    source.indexOf('{isCreateFlowFinishStep && useOtherClassrooms && selectedExtraClassroomIds.size'),
+  )
 
   it('the current classroom row is always checked and disabled — it is always where step one creates the assignment, never optional', () => {
     const currentRow = pickerBlock.slice(pickerBlock.indexOf('ห้องปัจจุบัน') - 200, pickerBlock.indexOf('ห้องปัจจุบัน') + 50)
@@ -61,9 +69,23 @@ describe('AssignmentDialog — the picker: current classroom locked-checked by d
     expect(currentRow).toContain('ห้องปัจจุบัน')
   })
 
-  it('starts with NO extra classroom selected — selectedExtraClassroomIds always initializes to an empty Set', () => {
+  it('REGRESSION — with zero other classrooms, shows an explicit empty state instead of hiding the whole feature', () => {
+    expect(pickerBlock).toContain('otherClassroomTargets.length === 0')
+    expect(pickerBlock).toContain('ไม่มีห้องอื่นในรายวิชานี้')
+  })
+
+  it('the extra-classroom list is gated behind an explicit opt-in toggle ("เพิ่มงานนี้ไปยังห้องอื่นด้วย"), never shown unconditionally', () => {
+    expect(pickerBlock).toContain('เพิ่มงานนี้ไปยังห้องอื่นด้วย')
+    expect(pickerBlock).toContain('checked={useOtherClassrooms}')
+    expect(pickerBlock).toContain('onChange={(e) => setUseOtherClassrooms(e.target.checked)}')
+    expect(pickerBlock).toContain('{useOtherClassrooms && (')
+  })
+
+  it('starts with the toggle OFF and NO extra classroom selected every time the dialog (re)opens for a create', () => {
+    expect(source).toContain('useState(false)')
     expect(source).toContain('useState<Set<string>>(new Set())')
     const effectBody = source.slice(source.indexOf('useEffect(() => {'), source.indexOf('function toggleExtraClassroom'))
+    expect(effectBody).toContain('setUseOtherClassrooms(false)')
     expect(effectBody).toContain('setSelectedExtraClassroomIds(new Set())')
   })
 
@@ -94,6 +116,10 @@ describe('AssignmentDialog — copying to extra classrooms happens on the explic
 
   it('does nothing when no extra classroom was selected — the picker never forces a copy', () => {
     expect(fn).toContain('selectedExtraClassroomIds.size > 0')
+  })
+
+  it('does nothing unless the teacher explicitly opted in via useOtherClassrooms — a lingering selection from a toggled-off state is never copied', () => {
+    expect(fn).toContain('useOtherClassrooms && selectedExtraClassroomIds.size > 0')
   })
 
   it('passes the full just-created assignment record as the copy source — never source.id alone, never a raw fetch', () => {

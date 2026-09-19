@@ -72,15 +72,19 @@ export function LessonDialog({ open, onOpenChange, subjectId, classroomId, nextS
   // menu, a fully separate, explicit action).
   const [subjectName, setSubjectName] = useState<string | null>(null)
   const [classroomTargets, setClassroomTargets] = useState<SubjectClassroom[]>([])
+  const [useOtherClassrooms, setUseOtherClassrooms] = useState(false)
   const [selectedExtraClassroomIds, setSelectedExtraClassroomIds] = useState<Set<string>>(new Set())
   const otherClassroomTargets = classroomTargets.filter((c) => c.classroomId !== classroomId)
-  const showClassroomPicker = !isEditing && Boolean(subjectName) && otherClassroomTargets.length > 0
+  // Shown for the WHOLE create flow, even with zero other classrooms —
+  // see the "ไม่มีห้องอื่นในรายวิชานี้" empty state below.
+  const showClassroomPicker = !isEditing && Boolean(subjectName)
 
   useEffect(() => {
     if (!open) return
     setForm(lesson ? { title: lesson.title, description: lesson.description ?? '' } : emptyForm())
     setCurrentLessonId(lesson?.id ?? null)
     setCreatedLesson(null)
+    setUseOtherClassrooms(false)
     setSelectedExtraClassroomIds(new Set())
     setError(null)
 
@@ -130,7 +134,7 @@ export function LessonDialog({ open, onOpenChange, subjectId, classroomId, nextS
    * "คัดลอกไปห้องอื่น" action uses.
    */
   async function copyToExtraClassroomsThenClose() {
-    if (createdLesson && selectedExtraClassroomIds.size > 0 && subjectName) {
+    if (createdLesson && useOtherClassrooms && selectedExtraClassroomIds.size > 0 && subjectName) {
       const targets: LessonCopyTarget[] = otherClassroomTargets
         .filter((c) => selectedExtraClassroomIds.has(c.classroomId))
         .map((c) => ({
@@ -233,43 +237,70 @@ export function LessonDialog({ open, onOpenChange, subjectId, classroomId, nextS
             />
           </div>
 
+          {/* "เผยแพร่ไปยังห้อง" — ALWAYS shown for the create flow (never
+              editing), even with zero other classrooms, so a teacher can
+              tell "feature exists but no eligible classroom" apart from
+              "feature is missing." Current classroom is always locked
+              checked, and every other same-subject classroom only copies
+              in once the teacher explicitly opts in via
+              "ใช้บทเรียนนี้กับห้องอื่นด้วย". */}
           {showClassroomPicker && !isCreateFlowFinishStep && (
             <div className="space-y-1.5 rounded-lg border border-border p-3">
-              <div className="flex items-center justify-between">
-                <Label>เผยแพร่ไปยังห้อง</Label>
-                <Button type="button" variant="ghost" size="sm" onClick={selectAllExtraClassrooms} disabled={submitting}>
-                  เลือกทั้งหมด
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                ใช้บทเรียนนี้กับห้องอื่นในรายวิชา "{subjectName}" ด้วย — แต่ละห้องจะได้บทเรียนที่เป็นอิสระต่อกัน (เผยแพร่แยกกัน)
-              </p>
-              <div className="max-h-40 space-y-1 overflow-y-auto">
-                <label className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-sm opacity-70">
-                  <input type="checkbox" checked disabled className="size-4 rounded border-input" />
-                  ห้องปัจจุบัน{' '}
-                  {classroomTargets.find((c) => c.classroomId === classroomId)?.classroomName ?? ''}
-                </label>
-                {otherClassroomTargets.map((c) => (
-                  <label
-                    key={c.classroomId}
-                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                  >
+              <Label>เผยแพร่ไปยังห้อง</Label>
+              <label className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-sm opacity-70">
+                <input type="checkbox" checked disabled className="size-4 rounded border-input" />
+                ห้องปัจจุบัน{' '}
+                {classroomTargets.find((c) => c.classroomId === classroomId)?.classroomName ?? ''}
+              </label>
+
+              {otherClassroomTargets.length === 0 ? (
+                <p className="px-2 text-xs text-muted-foreground">ไม่มีห้องอื่นในรายวิชานี้</p>
+              ) : (
+                <>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent">
                     <input
                       type="checkbox"
-                      checked={selectedExtraClassroomIds.has(c.classroomId)}
-                      onChange={() => toggleExtraClassroom(c.classroomId)}
+                      checked={useOtherClassrooms}
+                      onChange={(e) => setUseOtherClassrooms(e.target.checked)}
                       disabled={submitting}
                       className="size-4 rounded border-input"
                     />
-                    {c.classroomName}
+                    ใช้บทเรียนนี้กับห้องอื่นด้วย
                   </label>
-                ))}
-              </div>
+
+                  {useOtherClassrooms && (
+                    <div className="ml-2 space-y-1 border-l border-border pl-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-muted-foreground">ในรายวิชา "{subjectName}"</p>
+                        <Button type="button" variant="ghost" size="sm" onClick={selectAllExtraClassrooms} disabled={submitting}>
+                          เลือกทั้งหมด
+                        </Button>
+                      </div>
+                      <div className="max-h-40 space-y-1 overflow-y-auto">
+                        {otherClassroomTargets.map((c) => (
+                          <label
+                            key={c.classroomId}
+                            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedExtraClassroomIds.has(c.classroomId)}
+                              onChange={() => toggleExtraClassroom(c.classroomId)}
+                              disabled={submitting}
+                              className="size-4 rounded border-input"
+                            />
+                            {c.classroomName}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
-          {isCreateFlowFinishStep && selectedExtraClassroomIds.size > 0 && (
+          {isCreateFlowFinishStep && useOtherClassrooms && selectedExtraClassroomIds.size > 0 && (
             <p className="text-xs text-muted-foreground">
               กด "เสร็จสิ้น" เพื่อเพิ่มบทเรียนนี้ไปยังอีก {selectedExtraClassroomIds.size} ห้องที่เลือกไว้ด้วย
             </p>
