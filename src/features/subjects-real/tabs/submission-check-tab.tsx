@@ -12,6 +12,7 @@ import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
 import { AssignmentDialog } from '@/features/subjects-real/assignment-dialog'
+import { CopyAssignmentDialog } from '@/features/subjects-real/copy-assignment-dialog'
 import { buildAssignmentDetailPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
@@ -45,7 +46,7 @@ import {
 import { bulkSetAssignmentScores, buildBulkScoreUpdates } from '@/services/score-bulk-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { bulkMarkSubmissionStatus, buildBulkSubmissionStatusUpdates } from '@/services/submission-bulk-service'
-import type { Assignment, AssignmentSubmission, SubmissionStatus } from '@/types/assignment'
+import type { Assignment, AssignmentCopyOutcome, AssignmentSubmission, SubmissionStatus } from '@/types/assignment'
 import type { Subject } from '@/types/subject'
 import type { ClassroomStudent } from '@/types/student'
 
@@ -171,6 +172,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
 
   const [createOpen, setCreateOpen] = useState(false)
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null)
+  const [copyingAssignment, setCopyingAssignment] = useState<Assignment | null>(null)
   const [archivingAssignment, setArchivingAssignment] = useState<Assignment | null>(null)
   const [checkingDeleteId, setCheckingDeleteId] = useState<string | null>(null)
   const [deletingAssignment, setDeletingAssignment] = useState<{ assignment: Assignment; hasSubmissions: boolean } | null>(null)
@@ -593,6 +595,22 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
     }
   }
 
+  /** "คัดลอกไปห้องอื่น" — reuses the exact same copyAssignmentToClassrooms
+   * path (via CopyAssignmentDialog) as the งาน tab's own card menu; this
+   * matrix never re-implements the copy itself. */
+  function handleCopied(outcomes: AssignmentCopyOutcome[]) {
+    const succeeded = outcomes.filter((o) => o.ok).length
+    const failed = outcomes.length - succeeded
+    if (succeeded > 0 && failed === 0) {
+      toast(`คัดลอกงานไป ${succeeded} ห้องแล้ว`)
+    } else if (succeeded > 0 && failed > 0) {
+      toast(`คัดลอกงานไป ${succeeded} ห้องสำเร็จ, ${failed} ห้องไม่สำเร็จ`)
+    } else {
+      toast('ไม่สามารถคัดลอกงานไปห้องที่เลือกได้')
+    }
+    refresh()
+  }
+
   async function handleArchiveAssignment() {
     if (!archivingAssignment) return
     try {
@@ -980,6 +998,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                             <RowActionsMenu
                               actions={[
                                 { key: 'edit', label: 'แก้ไขงาน', onSelect: () => setEditingAssignment(assignment) },
+                                { key: 'copy', label: 'คัดลอกไปห้องอื่น', onSelect: () => setCopyingAssignment(assignment) },
                                 {
                                   key: 'view-detail',
                                   label: 'ดูรายละเอียด',
@@ -1138,6 +1157,15 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
             setEditingAssignment(null)
             refresh()
           }}
+        />
+      )}
+
+      {copyingAssignment && (
+        <CopyAssignmentDialog
+          open={Boolean(copyingAssignment)}
+          onOpenChange={(open) => !open && setCopyingAssignment(null)}
+          assignment={copyingAssignment}
+          onCopied={handleCopied}
         />
       )}
 

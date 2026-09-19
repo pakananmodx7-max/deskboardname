@@ -333,9 +333,10 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
     expect(headerBlock).toContain('<RowActionsMenu')
   })
 
-  it('the menu offers แก้ไขงาน, ดูรายละเอียด, เลือกทั้งคอลัมน์, ส่งแล้วทั้งห้อง, ขาดส่งทั้งห้อง, then เก็บถาวรงาน/ลบงาน separated and destructive-marked — no invented destructive action', () => {
+  it('the menu offers แก้ไขงาน, คัดลอกไปห้องอื่น, ดูรายละเอียด, เลือกทั้งคอลัมน์, ส่งแล้วทั้งห้อง, ขาดส่งทั้งห้อง, then เก็บถาวรงาน/ลบงาน separated and destructive-marked — no invented destructive action', () => {
     const menuBlock = headerBlock.slice(headerBlock.indexOf('actions={['), headerBlock.indexOf(']}\n                            />'))
     const editIdx = menuBlock.indexOf("label: 'แก้ไขงาน'")
+    const copyIdx = menuBlock.indexOf("label: 'คัดลอกไปห้องอื่น'")
     const viewDetailIdx = menuBlock.indexOf("label: 'ดูรายละเอียด'")
     const selectColIdx = menuBlock.indexOf("label: 'เลือกทั้งคอลัมน์'")
     const submittedIdx = menuBlock.indexOf("label: 'ส่งแล้วทั้งห้อง'")
@@ -343,7 +344,8 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
     const archiveIdx = menuBlock.indexOf("label: 'เก็บถาวรงาน'")
     const deleteIdx = menuBlock.indexOf("label: 'ลบงาน'")
     expect(editIdx).toBeGreaterThan(-1)
-    expect(viewDetailIdx).toBeGreaterThan(editIdx)
+    expect(copyIdx).toBeGreaterThan(editIdx)
+    expect(viewDetailIdx).toBeGreaterThan(copyIdx)
     expect(selectColIdx).toBeGreaterThan(viewDetailIdx)
     expect(submittedIdx).toBeGreaterThan(selectColIdx)
     expect(missingIdx).toBeGreaterThan(submittedIdx)
@@ -367,6 +369,32 @@ describe('SubmissionCheckTab — assignment column header: title, max score, due
     expect(source).toContain('await archiveAssignment(archivingAssignment.id)')
     expect(source).toContain('const hasSubmissions = await hasAssignmentSubmissions(assignment.id)')
     expect(source).toContain('await deleteAssignmentPermanently(assignment.id)')
+  })
+})
+
+describe('SubmissionCheckTab — REGRESSION: "คัดลอกไปห้องอื่น" is restored in this matrix\'s own menu, reusing the exact same CopyAssignmentDialog/copyAssignmentToClassrooms as the งาน tab', () => {
+  const source = readSource()
+
+  it('imports the EXACT same CopyAssignmentDialog component the งาน tab (assignments-tab.tsx) already uses — never a re-implemented copy dialog', () => {
+    expect(source).toContain("from '@/features/subjects-real/copy-assignment-dialog'")
+    expect(source).toContain('CopyAssignmentDialog')
+  })
+
+  it('the menu item opens the copy dialog for that exact column\'s assignment', () => {
+    expect(source).toContain("{ key: 'copy', label: 'คัดลอกไปห้องอื่น', onSelect: () => setCopyingAssignment(assignment) }")
+  })
+
+  it('renders CopyAssignmentDialog only when an assignment is being copied, wired to the same assignment prop/onCopied pattern as the งาน tab', () => {
+    const dialogBlock = source.slice(source.indexOf('{copyingAssignment && ('), source.indexOf('{archivingAssignment && ('))
+    expect(dialogBlock).toContain('<CopyAssignmentDialog')
+    expect(dialogBlock).toContain('assignment={copyingAssignment}')
+    expect(dialogBlock).toContain('onCopied={handleCopied}')
+  })
+
+  it('handleCopied reports a concise, honest outcome summary via toast and refreshes the matrix — never a silent no-op', () => {
+    const fn = source.slice(source.indexOf('function handleCopied'), source.indexOf('async function handleArchiveAssignment'))
+    expect(fn).toContain('outcomes.filter((o) => o.ok).length')
+    expect(fn).toContain('refresh()')
   })
 })
 

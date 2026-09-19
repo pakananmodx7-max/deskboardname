@@ -15,8 +15,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
 import { AssignmentResourcesSection } from '@/features/subjects-real/assignment-resources-section'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { createAssignment, updateAssignment } from '@/services/assignment-service'
-import type { Assignment } from '@/types/assignment'
+import { copyAssignmentToClassrooms, createAssignment, updateAssignment } from '@/services/assignment-service'
+import { getSubjectById, getSubjectClassrooms } from '@/services/subject-service'
+import type { Assignment, AssignmentCopyTarget } from '@/types/assignment'
+import type { SubjectClassroom } from '@/types/subject'
 
 interface AssignmentDialogProps {
   open: boolean
@@ -85,10 +87,28 @@ export function AssignmentDialog({
   // there is no way to let a teacher attach a file/link before the
   // assignment itself is persisted).
   const [currentAssignmentId, setCurrentAssignmentId] = useState<string | null>(null)
+  // The full just-created record — needed (not just its id) to pass as
+  // `source` to copyAssignmentToClassrooms on the finish step below.
+  const [createdAssignment, setCreatedAssignment] = useState<Assignment | null>(null)
   // True once a brand-new assignment has been created but the dialog
   // hasn't been explicitly finished yet — the top fields lock (already
   // saved) and the primary button becomes "เสร็จสิ้น".
   const isCreateFlowFinishStep = !isEditing && Boolean(currentAssignmentId)
+
+  // "ห้องที่ใช้" — every OTHER classroom this same subject is linked to,
+  // fetched via the exact same getSubjectClassrooms already used by
+  // getAssignmentCopyTargets (assignment-service.ts) — never a second,
+  // differently-scoped classroom query. subjectName is fetched here too
+  // (via the existing getSubjectById) purely to label targets — deliberately
+  // NOT a new required prop, so every existing call site's exact JSX stays
+  // untouched. Only ever loaded for the CREATE flow (never editing — an
+  // already-created assignment's own copy is "คัดลอกไปห้องอื่น" on its row
+  // menu, a fully separate, explicit action).
+  const [subjectName, setSubjectName] = useState<string | null>(null)
+  const [classroomTargets, setClassroomTargets] = useState<SubjectClassroom[]>([])
+  const [selectedExtraClassroomIds, setSelectedExtraClassroomIds] = useState<Set<string>>(new Set())
+  const otherClassroomTargets = classroomTargets.filter((c) => c.classroomId !== classroomId)
+  const showClassroomPicker = !isEditing && Boolean(subjectName) && otherClassroomTargets.length > 0
 
   useEffect(() => {
     if (!open) return
@@ -103,8 +123,35 @@ export function AssignmentDialog({
         : emptyForm(),
     )
     setCurrentAssignmentId(assignment?.id ?? null)
+    setCreatedAssignment(null)
+    setSelectedExtraClassroomIds(new Set())
     setError(null)
-  }, [open, assignment])
+
+    if (!assignment) {
+      getSubjectById(subjectId)
+        .then((subject) => setSubjectName(subject?.name ?? null))
+        .catch(() => setSubjectName(null))
+      getSubjectClassrooms(subjectId)
+        .then(setClassroomTargets)
+        .catch(() => setClassroomTargets([]))
+    } else {
+      setSubjectName(null)
+      setClassroomTargets([])
+    }
+  }, [open, assignment, subjectId])
+
+  function toggleExtraClassroom(classroomIdToToggle: string) {
+    setSelectedExtraClassroomIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(classroomIdToToggle)) next.delete(classroomIdToToggle)
+      else next.add(classroomIdToToggle)
+      return next
+    })
+  }
+
+  function selectAllExtraClassrooms() {
+    setSelectedExtraClassroomIds(new Set(otherClassroomTargets.map((c) => c.classroomId)))
+  }
 
   /**
    * Closing the dialog at all (the "เสร็จสิ้น" button, the X button,
@@ -122,11 +169,45 @@ export function AssignmentDialog({
     onOpenChange(next)
   }
 
+  /**
+   * Runs on the explicit "เสร็จสิ้น" click only (not on Escape/backdrop-
+   * close) — by then the teacher has had the chance to attach resources
+   * to the source assignment first, so copyAssignmentToClassrooms (via
+   * getAssignmentResources at call time) carries those resources over to
+   * every selected extra classroom too, exactly matching "คัดลอกไปห้อง
+   * อื่น"'s own existing behavior. Never a new copy implementation — the
+   * exact same production function, just invoked from this dialog too.
+   */
+  async function copyToExtraClassroomsThenClose() {
+    if (createdAssignment && selectedExtraClassroomIds.size > 0 && subjectName) {
+      const targets: AssignmentCopyTarget[] = otherClassroomTargets
+        .filter((c) => selectedExtraClassroomIds.has(c.classroomId))
+        .map((c) => ({
+          subjectId,
+          subjectName,
+          classroomId: c.classroomId,
+          classroomName: c.classroomName ?? '',
+        }))
+      setSubmitting(true)
+      try {
+        const outcomes = await copyAssignmentToClassrooms(createdAssignment, targets)
+        const failed = outcomes.filter((o) => !o.ok).length
+        if (failed === 0) toast(`เพิ่มงานไปยังอีก ${outcomes.length} ห้องแล้ว`)
+        else toast(`เพิ่มงานสำเร็จ ${outcomes.length - failed}/${outcomes.length} ห้อง — ไม่สำเร็จ ${failed} ห้อง`)
+      } catch (err) {
+        toast(toFriendlyErrorMessage(err, 'ไม่สามารถเพิ่มงานไปยังห้องอื่นได้'))
+      } finally {
+        setSubmitting(false)
+      }
+    }
+    handleOpenChange(false)
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
 
     if (isCreateFlowFinishStep) {
-      handleOpenChange(false)
+      await copyToExtraClassroomsThenClose()
       return
     }
 
@@ -169,6 +250,7 @@ export function AssignmentDialog({
         })
         toast('เพิ่มงานใหม่แล้ว — เพิ่มสื่อและใบงานได้เลย')
         setCurrentAssignmentId(created.id)
+        setCreatedAssignment(created)
       }
     } catch (err) {
       setError(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกงานได้'))
@@ -240,6 +322,48 @@ export function AssignmentDialog({
               disabled={isCreateFlowFinishStep}
             />
           </div>
+
+          {showClassroomPicker && !isCreateFlowFinishStep && (
+            <div className="space-y-1.5 rounded-lg border border-border p-3">
+              <div className="flex items-center justify-between">
+                <Label>ห้องที่ใช้</Label>
+                <Button type="button" variant="ghost" size="sm" onClick={selectAllExtraClassrooms} disabled={submitting}>
+                  เลือกทั้งหมด
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                เพิ่มงานนี้ไปยังห้องอื่นในรายวิชา "{subjectName}" ด้วย — แต่ละห้องจะได้งานที่เป็นอิสระต่อกัน (ไม่ใช้คะแนน/สถานะการส่งงานร่วมกัน)
+              </p>
+              <div className="max-h-40 space-y-1 overflow-y-auto">
+                <label className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-sm opacity-70">
+                  <input type="checkbox" checked disabled className="size-4 rounded border-input" />
+                  ห้องปัจจุบัน{' '}
+                  {classroomTargets.find((c) => c.classroomId === classroomId)?.classroomName ?? ''}
+                </label>
+                {otherClassroomTargets.map((c) => (
+                  <label
+                    key={c.classroomId}
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedExtraClassroomIds.has(c.classroomId)}
+                      onChange={() => toggleExtraClassroom(c.classroomId)}
+                      disabled={submitting}
+                      className="size-4 rounded border-input"
+                    />
+                    {c.classroomName}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {isCreateFlowFinishStep && selectedExtraClassroomIds.size > 0 && (
+            <p className="text-xs text-muted-foreground">
+              กด "เสร็จสิ้น" เพื่อเพิ่มงานนี้ไปยังอีก {selectedExtraClassroomIds.size} ห้องที่เลือกไว้ด้วย
+            </p>
+          )}
 
           {currentAssignmentId && !hideResourcesSection && (
             <AssignmentResourcesSection

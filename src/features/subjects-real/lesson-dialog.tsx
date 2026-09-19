@@ -15,8 +15,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/components/ui/toast'
 import { LessonResourcesSection } from '@/features/subjects-real/lesson-resources-section'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { createLesson, updateLesson } from '@/services/lesson-service'
-import type { Lesson } from '@/types/lesson'
+import { copyLessonToClassrooms, createLesson, updateLesson } from '@/services/lesson-service'
+import { getSubjectById, getSubjectClassrooms } from '@/services/subject-service'
+import type { Lesson, LessonCopyTarget } from '@/types/lesson'
+import type { SubjectClassroom } from '@/types/subject'
 
 interface LessonDialogProps {
   open: boolean
@@ -54,14 +56,59 @@ export function LessonDialog({ open, onOpenChange, subjectId, classroomId, nextS
   // below ("create then continue": a lesson_resources row has a NOT NULL
   // FK to lessons.id).
   const [currentLessonId, setCurrentLessonId] = useState<string | null>(null)
+  // The full just-created record — needed (not just its id) to pass as
+  // `source` to copyLessonToClassrooms on the finish step below.
+  const [createdLesson, setCreatedLesson] = useState<Lesson | null>(null)
   const isCreateFlowFinishStep = !isEditing && Boolean(currentLessonId)
+
+  // "เผยแพร่ไปยังห้อง" — every OTHER classroom this same subject is linked
+  // to, fetched via the exact same getSubjectClassrooms already used by
+  // getLessonCopyTargets (lesson-service.ts) — never a second,
+  // differently-scoped classroom query. subjectName is fetched here too
+  // (via the existing getSubjectById) purely to label targets — deliberately
+  // NOT a required prop, so every existing call site's exact JSX stays
+  // untouched. Only ever loaded for the CREATE flow (never editing — an
+  // already-created lesson's own copy is "คัดลอกไปห้องอื่น" on its row
+  // menu, a fully separate, explicit action).
+  const [subjectName, setSubjectName] = useState<string | null>(null)
+  const [classroomTargets, setClassroomTargets] = useState<SubjectClassroom[]>([])
+  const [selectedExtraClassroomIds, setSelectedExtraClassroomIds] = useState<Set<string>>(new Set())
+  const otherClassroomTargets = classroomTargets.filter((c) => c.classroomId !== classroomId)
+  const showClassroomPicker = !isEditing && Boolean(subjectName) && otherClassroomTargets.length > 0
 
   useEffect(() => {
     if (!open) return
     setForm(lesson ? { title: lesson.title, description: lesson.description ?? '' } : emptyForm())
     setCurrentLessonId(lesson?.id ?? null)
+    setCreatedLesson(null)
+    setSelectedExtraClassroomIds(new Set())
     setError(null)
-  }, [open, lesson])
+
+    if (!lesson) {
+      getSubjectById(subjectId)
+        .then((subject) => setSubjectName(subject?.name ?? null))
+        .catch(() => setSubjectName(null))
+      getSubjectClassrooms(subjectId)
+        .then(setClassroomTargets)
+        .catch(() => setClassroomTargets([]))
+    } else {
+      setSubjectName(null)
+      setClassroomTargets([])
+    }
+  }, [open, lesson, subjectId])
+
+  function toggleExtraClassroom(classroomIdToToggle: string) {
+    setSelectedExtraClassroomIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(classroomIdToToggle)) next.delete(classroomIdToToggle)
+      else next.add(classroomIdToToggle)
+      return next
+    })
+  }
+
+  function selectAllExtraClassrooms() {
+    setSelectedExtraClassroomIds(new Set(otherClassroomTargets.map((c) => c.classroomId)))
+  }
 
   /** Same "closing at all must refresh the caller's list once a NEW
    * lesson was actually created" reasoning as AssignmentDialog's
@@ -73,11 +120,45 @@ export function LessonDialog({ open, onOpenChange, subjectId, classroomId, nextS
     onOpenChange(next)
   }
 
+  /**
+   * Runs on the explicit "เสร็จสิ้น" click only (not on Escape/backdrop-
+   * close) — by then the teacher has had the chance to attach materials
+   * to the source lesson first, so copyLessonToClassrooms (via
+   * getLessonResources at call time) carries those materials over to
+   * every selected extra classroom too. Never a new copy implementation —
+   * the exact same production function this dialog's own row-menu
+   * "คัดลอกไปห้องอื่น" action uses.
+   */
+  async function copyToExtraClassroomsThenClose() {
+    if (createdLesson && selectedExtraClassroomIds.size > 0 && subjectName) {
+      const targets: LessonCopyTarget[] = otherClassroomTargets
+        .filter((c) => selectedExtraClassroomIds.has(c.classroomId))
+        .map((c) => ({
+          subjectId,
+          subjectName,
+          classroomId: c.classroomId,
+          classroomName: c.classroomName ?? '',
+        }))
+      setSubmitting(true)
+      try {
+        const outcomes = await copyLessonToClassrooms(createdLesson, targets)
+        const failed = outcomes.filter((o) => !o.ok).length
+        if (failed === 0) toast(`เพิ่มบทเรียนไปยังอีก ${outcomes.length} ห้องแล้ว`)
+        else toast(`เพิ่มบทเรียนสำเร็จ ${outcomes.length - failed}/${outcomes.length} ห้อง — ไม่สำเร็จ ${failed} ห้อง`)
+      } catch (err) {
+        toast(toFriendlyErrorMessage(err, 'ไม่สามารถเพิ่มบทเรียนไปยังห้องอื่นได้'))
+      } finally {
+        setSubmitting(false)
+      }
+    }
+    handleOpenChange(false)
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
 
     if (isCreateFlowFinishStep) {
-      handleOpenChange(false)
+      await copyToExtraClassroomsThenClose()
       return
     }
 
@@ -104,6 +185,7 @@ export function LessonDialog({ open, onOpenChange, subjectId, classroomId, nextS
         )
         toast('เพิ่มบทเรียนใหม่แล้ว — เพิ่มสื่อการสอนได้เลย')
         setCurrentLessonId(created.id)
+        setCreatedLesson(created)
       }
     } catch (err) {
       setError(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกบทเรียนได้'))
@@ -150,6 +232,48 @@ export function LessonDialog({ open, onOpenChange, subjectId, classroomId, nextS
               disabled={isCreateFlowFinishStep}
             />
           </div>
+
+          {showClassroomPicker && !isCreateFlowFinishStep && (
+            <div className="space-y-1.5 rounded-lg border border-border p-3">
+              <div className="flex items-center justify-between">
+                <Label>เผยแพร่ไปยังห้อง</Label>
+                <Button type="button" variant="ghost" size="sm" onClick={selectAllExtraClassrooms} disabled={submitting}>
+                  เลือกทั้งหมด
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                ใช้บทเรียนนี้กับห้องอื่นในรายวิชา "{subjectName}" ด้วย — แต่ละห้องจะได้บทเรียนที่เป็นอิสระต่อกัน (เผยแพร่แยกกัน)
+              </p>
+              <div className="max-h-40 space-y-1 overflow-y-auto">
+                <label className="flex cursor-not-allowed items-center gap-2 rounded-md px-2 py-1.5 text-sm opacity-70">
+                  <input type="checkbox" checked disabled className="size-4 rounded border-input" />
+                  ห้องปัจจุบัน{' '}
+                  {classroomTargets.find((c) => c.classroomId === classroomId)?.classroomName ?? ''}
+                </label>
+                {otherClassroomTargets.map((c) => (
+                  <label
+                    key={c.classroomId}
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedExtraClassroomIds.has(c.classroomId)}
+                      onChange={() => toggleExtraClassroom(c.classroomId)}
+                      disabled={submitting}
+                      className="size-4 rounded border-input"
+                    />
+                    {c.classroomName}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {isCreateFlowFinishStep && selectedExtraClassroomIds.size > 0 && (
+            <p className="text-xs text-muted-foreground">
+              กด "เสร็จสิ้น" เพื่อเพิ่มบทเรียนนี้ไปยังอีก {selectedExtraClassroomIds.size} ห้องที่เลือกไว้ด้วย
+            </p>
+          )}
 
           {currentLessonId && <LessonResourcesSection lessonId={currentLessonId} subjectId={subjectId} classroomId={classroomId} />}
 
