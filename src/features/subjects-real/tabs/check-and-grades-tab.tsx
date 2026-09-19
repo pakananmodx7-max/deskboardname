@@ -63,15 +63,15 @@ export function CheckAndGradesTab({ subject, classroomId, classroomName }: Check
   }
 
   return (
-    <div className="space-y-4">
-      <div className="inline-flex gap-1 rounded-lg border border-border bg-muted/40 p-1">
+    <div className="space-y-3">
+      <div className="inline-flex gap-0.5 rounded-lg border border-border bg-muted/40 p-1">
         {SUB_TABS.map((tab) => (
           <button
             key={tab.key}
             type="button"
             onClick={() => handleSubTabClick(tab.key)}
             className={cn(
-              'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+              'rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors',
               subTab === tab.key
                 ? 'bg-card text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',

@@ -226,11 +226,13 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   const rosterIds = roster.map((s) => s.id)
   const modeItemCount =
     mode === 'all' ? 0 : computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, mode)
-  const modeSubmittedCount =
-    mode === 'all' ? computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'submitted') : 0
-  const modeMissingCount =
-    mode === 'all' ? computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'missing') : 0
-  const modeExpectedCount = mode === 'all' ? computeExpectedItemCount(rosterIds, visibleAssignmentIds) : 0
+  // Computed unconditionally (not just while ทั้งหมด is active) so the
+  // segmented mode switcher below can show a real, honest count on
+  // EVERY mode pill at once — never a fabricated number, always this
+  // same pure computeModeItemCount/computeExpectedItemCount math.
+  const modeSubmittedCount = computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'submitted')
+  const modeMissingCount = computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'missing')
+  const modeExpectedCount = computeExpectedItemCount(rosterIds, visibleAssignmentIds)
   const filteredRoster = filterStudentsByCheckMode(roster, visibleAssignmentIds, submissionsByAssignment, mode)
 
   const rosterKey = roster.map((s) => s.id).join(',')
@@ -629,9 +631,9 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm font-medium text-foreground">
           {loading ? 'กำลังโหลด...' : `${roster.length} นักเรียน · ${assignments.length} งาน`}
         </p>
         <Button onClick={() => setCreateOpen(true)}>
@@ -670,22 +672,33 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
           )}
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex flex-wrap gap-1 overflow-x-auto">
-              {SUBMISSION_CHECK_MODES.map((m) => (
-                <button
-                  key={m.key}
-                  type="button"
-                  onClick={() => setMode(m.key)}
-                  className={cn(
-                    'shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                    mode === m.key
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                  )}
-                >
-                  {m.label}
-                </button>
-              ))}
+            {/* Segmented control, not plain text tabs — active mode gets
+                strong solid-blue emphasis, inactive stays neutral, and
+                each pill carries its own real (never fabricated) item
+                count from the same modeSubmittedCount/modeMissingCount/
+                modeExpectedCount math the summary banner above uses. */}
+            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/50 p-1">
+              {SUBMISSION_CHECK_MODES.map((m) => {
+                const count = m.key === 'all' ? modeExpectedCount : m.key === 'submitted' ? modeSubmittedCount : modeMissingCount
+                return (
+                  <button
+                    key={m.key}
+                    type="button"
+                    onClick={() => setMode(m.key)}
+                    className={cn(
+                      'shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                      mode === m.key
+                        ? 'bg-primary text-primary-foreground shadow-sm'
+                        : 'text-muted-foreground hover:bg-background hover:text-foreground',
+                    )}
+                  >
+                    {m.label}
+                    <span className={cn('ml-1.5 tabular-nums', mode === m.key ? 'text-primary-foreground/80' : 'text-muted-foreground/70')}>
+                      {count}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
             <Button type="button" variant="ghost" size="sm" onClick={handleSelectEntireClassroom} disabled={roster.length === 0}>
               <Users className="size-3.5" />
@@ -704,11 +717,19 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
             )}
           </div>
 
+          {/* Prominent, elevated bar — only ever rendered once a
+              selection exists, never taking up space otherwise. Not
+              page-sticky: the workspace's own header above already
+              occupies `sticky top-0`, and its height varies (badge,
+              wrapping tabs), so stacking a second sticky bar under it
+              without a hardcoded offset would risk overlapping it. */}
           {(selectedStudentIds.size > 0 || selectedAssignmentIds.size > 0) && (
-            <div className="flex flex-col gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <div className="flex flex-col gap-2.5 rounded-lg border border-primary/40 bg-card px-3.5 py-3 text-sm shadow-md">
               <div className="flex flex-wrap items-center gap-2">
-                <Users className="size-4 shrink-0 text-primary" />
-                <span className="font-medium">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                  <Users className="size-4" />
+                </span>
+                <span className="font-semibold text-foreground">
                   {selectedStudentIds.size} นักเรียน × {selectedAssignmentIds.size} งาน = {selectionCellCount} รายการ
                 </span>
                 <div className="ml-auto flex flex-wrap items-center gap-1.5">
@@ -718,7 +739,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                   {(mode === 'submitted' || mode === 'missing') && (
                     <Button
                       type="button"
-                      variant="outline"
+                      variant={mode === 'submitted' ? 'success' : 'outline-destructive'}
                       size="sm"
                       disabled={bulkBusy || selectionCellCount === 0}
                       onClick={() => handleSelectionBulkAction(MODE_BULK_STATUS_ACTION[mode].status)}
@@ -744,15 +765,17 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                   `status`, never a score; marking "ขาดส่ง" never creates
                   or forces a score of 0 — see runBulkStatusUpdate. */}
               {mode === 'all' && selectionCellCount > 0 && (
-                <div className="flex flex-wrap items-center gap-2 border-t border-primary/20 pt-2">
-                  <span className="shrink-0 text-xs font-semibold text-muted-foreground">สถานะงาน:</span>
-                  <Button type="button" size="sm" disabled={bulkBusy} onClick={() => handleSelectionBulkAction('submitted')}>
+                <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2.5">
+                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-semibold tracking-wide text-muted-foreground">
+                    สถานะงาน:
+                  </span>
+                  <Button type="button" variant="success" size="sm" disabled={bulkBusy} onClick={() => handleSelectionBulkAction('submitted')}>
                     <CheckCircle2 className="size-3.5" />
                     ส่งแล้ว
                   </Button>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="outline-destructive"
                     size="sm"
                     disabled={bulkBusy}
                     onClick={() => handleSelectionBulkAction('missing')}
@@ -773,9 +796,11 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                   assignments selected, only the "สถานะงาน" group above
                   applies. */}
               {mode === 'all' && singleSelectedAssignment && selectedStudentIds.size > 0 && (
-                <div className="flex flex-wrap items-center gap-2 border-t border-primary/20 pt-2">
-                  <span className="shrink-0 text-xs font-semibold text-muted-foreground">คะแนน:</span>
-                  <span>
+                <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2.5">
+                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-semibold tracking-wide text-muted-foreground">
+                    คะแนน:
+                  </span>
+                  <span className="text-muted-foreground">
                     เลือกแล้ว {selectedStudentIds.size} คน · งาน: {singleSelectedAssignment.title} /{singleSelectedAssignment.maxScore} ·
                     ส่งแล้ว {selectionSubmittedMissingSplit.submittedCount} · ขาดส่ง {selectionSubmittedMissingSplit.missingCount}
                   </span>
@@ -834,10 +859,10 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
               at the start of every runBulkStatusUpdate call, so a stale
               result from a previous action never lingers on screen. */}
           {bulkStatusResult && (
-            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <div className="rounded-lg border border-border border-l-4 border-l-success bg-card px-3.5 py-2.5 text-sm shadow-sm">
               <div className="flex items-start justify-between gap-2">
                 <div className="space-y-0.5">
-                  <p className="font-medium text-success">บันทึกสถานะสำเร็จ {bulkStatusResult.changedCount} รายการ</p>
+                  <p className="font-semibold text-success">บันทึกสถานะสำเร็จ {bulkStatusResult.changedCount} รายการ</p>
                   <p className="text-muted-foreground">ไม่เปลี่ยนแปลง {bulkStatusResult.unchangedCount}</p>
                   <p className={bulkStatusResult.failedCount > 0 ? 'font-medium text-destructive' : 'text-muted-foreground'}>
                     ไม่สำเร็จ {bulkStatusResult.failedCount}
@@ -874,10 +899,10 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
               runBulkScoreUpdate call, so a stale result from a previous
               action never lingers on screen. */}
           {bulkScoreResult && (
-            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <div className="rounded-lg border border-border border-l-4 border-l-success bg-card px-3.5 py-2.5 text-sm shadow-sm">
               <div className="flex items-start justify-between gap-2">
                 <div className="space-y-0.5">
-                  <p className="font-medium text-success">ให้คะแนนสำเร็จ {bulkScoreResult.changedCount} คน</p>
+                  <p className="font-semibold text-success">ให้คะแนนสำเร็จ {bulkScoreResult.changedCount} คน</p>
                   <p className="text-muted-foreground">ไม่เปลี่ยนแปลง {bulkScoreResult.unchangedCount}</p>
                   <p className={bulkScoreResult.failedCount > 0 ? 'font-medium text-destructive' : 'text-muted-foreground'}>
                     ไม่สำเร็จ {bulkScoreResult.failedCount}
@@ -904,35 +929,41 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
             </div>
           )}
 
-          <Card>
+          <Card className="overflow-hidden">
             <CardContent className="p-0">
-              <div className="max-h-[70vh] overflow-auto rounded-md">
-                <table className="w-full text-left text-sm">
+              <div className="max-h-[70vh] overflow-auto rounded-xl">
+                <table className="w-full border-separate border-spacing-0 text-left text-sm">
                   <thead>
-                    <tr className="border-b border-border text-xs text-muted-foreground">
-                      <th className="sticky left-0 top-0 z-20 bg-card px-3 py-3 font-medium">
+                    <tr className="text-xs text-muted-foreground">
+                      <th className="sticky left-0 top-0 z-20 bg-card px-3 py-2.5 font-semibold border-b border-border">
                         <div className="flex items-center gap-2">
                           <input
                             type="checkbox"
                             checked={allVisibleSelected}
                             onChange={toggleSelectAllVisible}
-                            className="size-4 rounded border-input"
+                            className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-ring/50"
                             aria-label="เลือกนักเรียนทั้งหมด"
                           />
                           ชื่อ-นามสกุล
                         </div>
                       </th>
                       {visibleAssignments.map((assignment) => (
-                        <th key={assignment.id} className="sticky top-0 z-10 min-w-28 bg-card px-2 py-2 text-center font-medium">
+                        <th
+                          key={assignment.id}
+                          className={cn(
+                            'sticky top-0 z-10 min-w-28 border-b border-border bg-card px-2 py-2 text-center font-semibold transition-colors',
+                            selectedAssignmentIds.has(assignment.id) && 'bg-primary/10',
+                          )}
+                        >
                           <div className="flex items-center justify-center gap-1">
                             <input
                               type="checkbox"
                               checked={selectedAssignmentIds.has(assignment.id)}
                               onChange={() => toggleAssignmentSelected(assignment.id)}
-                              className="size-4 shrink-0 rounded border-input"
+                              className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-ring/50"
                               aria-label={`เลือกคอลัมน์ ${assignment.title}`}
                             />
-                            <span className="truncate" title={assignment.title}>
+                            <span className="truncate text-foreground" title={assignment.title}>
                               {assignment.title}
                             </span>
                             <RowActionsMenu
@@ -1011,8 +1042,8 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                               ]}
                             />
                           </div>
-                          <div className="font-normal">/{assignment.maxScore}</div>
-                          {assignment.dueDate && <div className="text-[10px] font-normal">{assignment.dueDate}</div>}
+                          <div className="font-normal text-muted-foreground">/{assignment.maxScore}</div>
+                          {assignment.dueDate && <div className="text-[10px] font-normal text-muted-foreground/80">{assignment.dueDate}</div>}
                         </th>
                       ))}
                     </tr>
@@ -1031,15 +1062,26 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                         </td>
                       </tr>
                     ) : (
-                      filteredRoster.map((student) => (
-                        <tr key={student.id} className="border-b border-border last:border-0">
-                          <td className="sticky left-0 z-10 whitespace-nowrap bg-card px-3 py-2 font-medium">
+                      filteredRoster.map((student, rowIndex) => (
+                        <tr
+                          key={student.id}
+                          className={cn(
+                            'border-b border-border last:border-0 transition-colors hover:bg-muted/40',
+                            selectedStudentIds.has(student.id) ? 'bg-primary/5' : rowIndex % 2 === 1 && 'bg-muted/20',
+                          )}
+                        >
+                          <td
+                            className={cn(
+                              'sticky left-0 z-10 whitespace-nowrap bg-card px-3 py-2 font-medium text-foreground',
+                              selectedStudentIds.has(student.id) && 'bg-primary/5',
+                            )}
+                          >
                             <div className="flex items-center gap-2">
                               <input
                                 type="checkbox"
                                 checked={selectedStudentIds.has(student.id)}
                                 onChange={() => toggleStudentSelected(student.id)}
-                                className="size-4 shrink-0 rounded border-input"
+                                className="size-4 shrink-0 cursor-pointer rounded border-input accent-primary focus-visible:ring-2 focus-visible:ring-ring/50"
                                 aria-label={`เลือก ${studentDisplayName(student)}`}
                               />
                               {studentDisplayName(student)}
@@ -1054,7 +1096,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                                   type="button"
                                   onClick={() => openTargetDialog(assignment, student)}
                                   title={cellTitle(display)}
-                                  className="inline-flex h-8 min-w-14 items-center justify-center gap-1 rounded-md px-2 text-sm transition-colors hover:bg-accent"
+                                  className="inline-flex h-8 min-w-14 items-center justify-center gap-1 rounded-md px-2 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                                 >
                                   <CellVisual display={display} maxScore={assignment.maxScore} />
                                 </button>
@@ -1214,15 +1256,12 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
  * expected-total label instead, since it has no single count of its own.
  */
 function SummaryStat({ label, tone }: { label: string; tone: 'warning' | 'success' }) {
-  const toneClass = { warning: 'text-destructive', success: 'text-success' }[tone]
+  const toneClass = {
+    warning: 'border-destructive/25 bg-destructive/5 text-destructive',
+    success: 'border-success/25 bg-success/5 text-success',
+  }[tone]
 
-  return (
-    <Card>
-      <CardContent className="pt-5">
-        <p className={cn('text-xl font-semibold tracking-tight', toneClass)}>{label}</p>
-      </CardContent>
-    </Card>
-  )
+  return <div className={cn('rounded-lg border px-3.5 py-2 text-sm font-semibold tracking-tight', toneClass)}>{label}</div>
 }
 
 /**
@@ -1254,16 +1293,29 @@ function cellTitle(display: CellDisplay): string {
  */
 function CellVisual({ display, maxScore }: { display: CellDisplay; maxScore: number }) {
   if (display.kind === 'missing') {
-    return <span className="text-xs font-medium text-destructive">ขาดส่ง</span>
+    return (
+      <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive">
+        ขาดส่ง
+      </span>
+    )
   }
   if (display.kind === 'submitted-plain') {
-    return <CheckCircle2 className="size-4 shrink-0 text-success" />
+    return (
+      <span className="inline-flex size-6 items-center justify-center rounded-full bg-success/10">
+        <CheckCircle2 className="size-4 shrink-0 text-success" />
+      </span>
+    )
   }
   if (display.kind === 'submitted') {
     return (
       <span className="inline-flex items-center gap-1.5">
         <CheckCircle2 className="size-4 shrink-0 text-success" />
-        <span className={cn('text-xs font-medium', display.score === null ? 'text-muted-foreground' : 'text-success')}>
+        <span
+          className={cn(
+            'rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums',
+            display.score === null ? 'text-muted-foreground' : 'bg-success/10 text-success',
+          )}
+        >
           {display.score === null ? '—' : `${display.score}/${maxScore}`}
         </span>
       </span>
