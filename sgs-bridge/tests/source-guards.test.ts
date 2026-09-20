@@ -36,16 +36,48 @@ function sliceFunction(source: string, name: string, nextNames: string[]): strin
   return source.slice(start, end)
 }
 
-describe('manifest.json — minimal permissions, no host_permissions, no remote code', () => {
+describe('manifest.json — minimal permissions, ONE SGS-only host permission, no remote code', () => {
   const manifest = JSON.parse(read('../manifest.json'))
 
-  it('requests only activeTab/scripting/storage — never a broad host permission or "tabs"/"cookies"', () => {
+  it('requests only activeTab/scripting/storage — never "tabs"/"cookies" or any other broad API permission', () => {
     expect(manifest.permissions.sort()).toEqual(['activeTab', 'scripting', 'storage'])
-    expect(manifest.host_permissions).toBeUndefined()
+  })
+
+  it('TRUE unattended auto-run: the ONLY host permission is the real SGS domain, scoped to its /sgs/ path — never <all_urls>, never a bare origin, never a second host', () => {
+    expect(manifest.host_permissions).toEqual(['https://sgs.bopp-obec.info/sgs/*'])
   })
 
   it('is Manifest V3', () => {
     expect(manifest.manifest_version).toBe(3)
+  })
+
+  it('TRUE unattended auto-run: a background service worker exists, as an ES module (so it can import run-orchestrator.js)', () => {
+    expect(manifest.background).toEqual({ service_worker: 'src/background.js', type: 'module' })
+  })
+
+  it('TRUE unattended auto-run: exactly one content script, registered ONLY for the same SGS host pattern the host permission grants — never a broader match', () => {
+    expect(manifest.content_scripts).toHaveLength(1)
+    const [entry] = manifest.content_scripts
+    expect(entry.matches).toEqual(['https://sgs.bopp-obec.info/sgs/*'])
+    expect(entry.js).toEqual(['src/content-script.js'])
+  })
+
+  it('TRUE unattended auto-run: web_accessible_resources (needed for content-script.js\'s dynamic import of the pure lib modules) are scoped to the SAME SGS host only — never exposed to any other site', () => {
+    expect(manifest.web_accessible_resources).toHaveLength(1)
+    const [entry] = manifest.web_accessible_resources
+    expect(entry.matches).toEqual(['https://sgs.bopp-obec.info/sgs/*'])
+    expect(entry.resources).toEqual(
+      expect.arrayContaining([
+        'src/content-diagnostic.js',
+        'src/lib/auto-run.js',
+        'src/lib/pagination-control.js',
+        'src/lib/whole-column-write.js',
+        'src/lib/subject-classroom-match.js',
+        'src/lib/mapping.js',
+        'src/lib/sgs-table-extraction.js',
+        'src/lib/roster.js',
+      ]),
+    )
   })
 })
 
@@ -416,10 +448,10 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toMatch(/if \(!plan\.valid\)[\s\S]{0,300}disarmSingleCellTestWrite\(\)/)
   })
 
-  it('NEXT PHASE: fillSgsColumnValues is called exactly three times — the single-cell path, the whole-column (semi-automatic) path, and the auto-run per-cell loop — and STILL never via the old ad hoc bulk instruction builders (buildSgsRealWriteInstructions/summarizeSgsRealFillPlan from sgs-real-fill.js remain unused; every whole-column-shaped path uses ONLY the structurally single-column buildWholeColumnWriteInstructions or a single-offset writesByOffset built inline in the auto-run loop)', () => {
+  it('TRUE unattended auto-run: fillSgsColumnValues is called exactly twice in popup.js — the single-cell path and the whole-column (semi-automatic) path; the auto-run per-cell loop now lives in content-script.js instead, calling the SAME function directly (no executeScript) — and STILL never via the old ad hoc bulk instruction builders (buildSgsRealWriteInstructions/summarizeSgsRealFillPlan from sgs-real-fill.js remain unused; every whole-column-shaped path uses ONLY the structurally single-column buildWholeColumnWriteInstructions or a single-offset writesByOffset)', () => {
     expect(source).toContain('fillSgsColumnValues')
     const fillCalls = [...source.matchAll(/func:\s*fillSgsColumnValues,/g)]
-    expect(fillCalls.length).toBe(3)
+    expect(fillCalls.length).toBe(2)
     expect(source).not.toMatch(/buildSgsRealWriteInstructions/)
     expect(source).not.toMatch(/summarizeSgsRealFillPlan/)
     expect(source).not.toContain('runFillSelectedColumn')
@@ -527,115 +559,66 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toMatch(/computeWholeColumnPlan\(krunameStudents, mappingResults, existingScoresBySgsRowKey, overwriteMode, column\.maxScore\)/)
   })
 
-  it('NEXT PHASE (auto-run): runAutoRun checks evaluateAutoRunStopCondition before every write batch, and stops the ENTIRE run (never a partial continue) the moment it fails', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toContain('evaluateAutoRunStopCondition(')
-    expect(fn).toMatch(/if \(stop\.shouldStop\) \{\s*\n\s*abortAutoRun\(stop\.reason\)\s*\n\s*return\s*\n\s*\}/)
+  it('TRUE unattended auto-run: popup.js never runs the loop itself any more — no chrome.scripting.executeScript call anywhere near auto-run, and no local runAutoRun/pollForConfirmedPageAdvance/persistActiveAutoRunState function exists', () => {
+    expect(source).not.toMatch(/\basync function runAutoRun\(/)
+    expect(source).not.toMatch(/\bpollForConfirmedPageAdvance\b/)
+    expect(source).not.toMatch(/\bpersistActiveAutoRunState\b/)
+    expect(source).not.toMatch(/\bAUTO_RUN_STORAGE_KEY\b/)
   })
 
-  it('NEXT PHASE (auto-run): every page is revalidated against the SAME first-page snapshot (arConfirmedRunContext), never the previous page\'s own values — a slow drift across pages is caught the same way a sudden one is', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toContain('if (!arConfirmedRunContext && scan.ok) arConfirmedRunContext = freshSnapshot')
-    expect(fn).toContain('revalidateWholeColumnContext(arConfirmedRunContext, freshSnapshot)')
+  it('TRUE unattended auto-run (item 3): "เริ่มส่งครบทั้งห้อง" sends exactly one AR_START message carrying the teacher\'s approval (subject/classroom/targetColumn/payload/overwriteMode/tabId) to background.js — the run itself is never started any other way', () => {
+    const fn = source.slice(source.indexOf("arRunBtn.addEventListener"), source.indexOf("arManualContinueBtn.addEventListener"))
+    expect(fn).toContain('type: AR_MESSAGE.START')
+    expect(fn).toContain('tabId: tab.id')
+    expect(fn).toContain('subject: loadedPayload.subjectName')
+    expect(fn).toContain('classroom: loadedPayload.classroomName')
+    expect(fn).toContain('payload: loadedPayload')
+    const startCalls = [...fn.matchAll(/chrome\.runtime\s*\n?\s*\.sendMessage\(/g)]
+    expect(startCalls.length).toBe(1)
   })
 
-  it('NEXT PHASE (auto-run): writes exactly one cell at a time (item 7) — a single-entry writesByOffset built fresh per row, never a batch of multiple offsets in one call', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toMatch(/const writesByOffset = \{ \[baseRow\.sgsRowOffset\]: baseRow\.krunameScore \}/)
-    // Only ONE fillSgsColumnValues call site exists inside this loop.
-    const fillCallsInLoop = [...fn.matchAll(/func:\s*fillSgsColumnValues,/g)]
-    expect(fillCallsInLoop.length).toBe(1)
+  it('TRUE unattended auto-run (item 6): "หยุด" only ever sends AR_STOP to background.js — it never sets a local flag or touches any write in flight itself', () => {
+    const fn = source.slice(source.indexOf("arStopBtn.addEventListener"), source.indexOf("arCopyReportBtn.addEventListener"))
+    expect(fn).toContain('type: AR_MESSAGE.STOP')
+    expect(fn).not.toMatch(/arStopRequested/)
   })
 
-  it('NEXT PHASE (auto-run): every write instruction inside the loop carries the SAME confirmed column.columnIndex — structurally, no second column can ever be targeted', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    const fillArgs = [...fn.matchAll(/func:\s*fillSgsColumnValues,\s*\n\s*args:\s*\[([^\]]*)\]/g)].map((m) => m[1])
-    expect(fillArgs.length).toBe(1)
-    expect(fillArgs[0]).toContain('column.columnIndex')
-    expect(fillArgs[0]).not.toMatch(/columnIndex\s*\+|columnIndex\s*-|column\.columnIndex\s*,\s*.*column\.columnIndex/)
+  it('TRUE unattended auto-run (item 6): "ดำเนินการต่อ" only ever sends AR_MANUAL_CONTINUE to background.js — it never re-drives any scan/write loop itself', () => {
+    const fn = source.slice(source.indexOf("arManualContinueBtn.addEventListener"), source.indexOf("arStopBtn.addEventListener"))
+    expect(fn).toContain('type: AR_MESSAGE.MANUAL_CONTINUE')
   })
 
-  it('NEXT PHASE (auto-run): each write is followed by a read-back (readSingleColumnCellValue) before the outcome is ever recorded as WRITTEN — never trusting the write call alone', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    const writeIndex = fn.indexOf('func: fillSgsColumnValues,')
-    const readIndex = fn.indexOf('func: readSingleColumnCellValue,')
-    expect(writeIndex).toBeGreaterThan(-1)
-    expect(readIndex).toBeGreaterThan(writeIndex)
-    expect(fn).toMatch(/const outcome = !missing && actualValue === baseRow\.krunameScore \? 'WRITTEN' : 'FAILED'/)
+  it('TRUE unattended auto-run (item 3): popup.js renders run state from a SINGLE function (renderAutoRunFromState), fed by both an AR_GET_STATE reply and an AR_STATE_CHANGED broadcast — never two different rendering paths that could show conflicting progress', () => {
+    expect(source).toContain('function renderAutoRunFromState(state)')
+    const getStateFn = source.slice(source.indexOf('async function restoreAutoRunStateFromBackground'), source.length)
+    expect(getStateFn).toContain('renderAutoRunFromState(response?.state ?? null)')
+    const listenerFn = source.slice(
+      source.indexOf('chrome.runtime.onMessage.addListener((message) => {'),
+      source.indexOf('chrome.runtime.onMessage.addListener((message) => {') + 400,
+    )
+    expect(listenerFn).toContain('AR_MESSAGE.STATE_CHANGED')
+    expect(listenerFn).toContain('renderAutoRunFromState(message.state)')
   })
 
-  it('NEXT PHASE (auto-run): "หยุด" only sets a flag the loop checks between rows — never calls anything that could abort a write already in flight, and the loop never starts a NEW write once the flag is set', () => {
-    expect(source).toMatch(/arStopBtn\.addEventListener\('click', \(\) => \{\s*\n\s*arStopRequested = true/)
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toMatch(/if \(arStopRequested\) \{[\s\S]{0,400}continue\s*\n\s*\}/)
-  })
-
-  it('BUG FIX (item 2): a page-advance is only ever ATTEMPTED at high/medium confidence (isConfidentEnoughToAutoClick) — a low-confidence or absent finding pauses for manual continue instead of clicking anything', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toContain('findSgsNextPageControl(inspection.candidates)')
-    expect(fn).toMatch(/if \(!nextControlResult\.control \|\| !isConfidentEnoughToAutoClick\(nextControlResult\.confidence\)\) \{[\s\S]{0,300}pauseForManualContinue\(/)
-  })
-
-  it('BUG FIX (item 3): a click\'s success is NEVER trusted alone — the run polls a FRESH scan (pollForConfirmedPageAdvance/verifyPageAdvance) for the page number, grid fingerprint, and subject/classroom before treating an advance as confirmed', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toContain('await pollForConfirmedPageAdvance({ tab, expectedNextPage, beforeFingerprint })')
-    expect(fn).toContain('const beforeFingerprint = await readFreshGridFingerprint(tab, candidate)')
-  })
-
-  it('BUG FIX (item 4): before clicking, run state is persisted (survives a real ASP.NET full-page postback), and the click itself never calls preventDefault or simulates the postback — clickPaginationControl\'s own plain .click() is the only DOM action taken', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    const clickIndex = fn.indexOf('func: clickPaginationControl,')
-    const persistIndex = fn.indexOf('await persistActiveAutoRunState(expectedNextPage)')
-    expect(persistIndex).toBeGreaterThan(-1)
-    expect(clickIndex).toBeGreaterThan(persistIndex)
-    expect(fn).toMatch(/try \{\s*\n\s*await chrome\.scripting\.executeScript\(\{\s*\n\s*target: \{ tabId: tab\.id \},\s*\n\s*func: clickPaginationControl,/)
-  })
-
-  it('BUG FIX (item 6): every page-advance failure mode (no confirmed control, unconfirmed advance) falls back to the SAME manual-continue prompt with the exact required message — only a CONFIRMED context mismatch aborts the run', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toContain("pauseForManualContinue(pagination.currentPage, expectedNextPage, 'ไม่สามารถเปลี่ยนหน้าอัตโนมัติได้ กรุณาเปิดหน้าถัดไปแล้วกดดำเนินการต่อ')")
-    expect(fn).toMatch(/if \(advanceVerification\.kind === 'context_mismatch'\) \{[\s\S]{0,200}abortAutoRun\(advanceVerification\.reason\)/)
-  })
-
-  it('NEXT PHASE (auto-run): a per-page write-failure rate above the safe threshold aborts the run — never silently absorbed into the summary alone', () => {
-    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toContain('pageFailureExceedsThreshold(')
-    expect(fn).toMatch(/if \(pageThresholdExceeded\) \{\s*\n\s*abortAutoRun\(/)
-  })
-
-  it('NEXT PHASE (auto-run): only "เริ่มส่งครบทั้งห้อง" (a brand new run) resets the cumulative summary/report state — "ดำเนินการต่อ" (resuming the SAME run after a manual-continue pause) never does', () => {
-    const runBtnFn = source.slice(source.indexOf("arRunBtn.addEventListener"), source.indexOf("arManualContinueBtn.addEventListener"))
-    expect(runBtnFn).toContain('arCumulativeSummary = emptyAutoRunSummary()')
-    expect(runBtnFn).toContain('arConfirmedRunContext = null')
-    const continueBtnFn = source.slice(source.indexOf("arManualContinueBtn.addEventListener"), source.indexOf("arStopBtn.addEventListener"))
-    expect(continueBtnFn).not.toContain('arCumulativeSummary = emptyAutoRunSummary()')
-    expect(continueBtnFn).not.toContain('arConfirmedRunContext = null')
-  })
-
-  it('NEXT PHASE (auto-run): the run report never includes a credential/session/cookie/studentId — buildAutoRunReport\'s own shape is trusted, this only checks popup.js never adds extra fields on top', () => {
-    const fn = source.slice(source.indexOf('function renderAutoRunFinalSummary'), source.indexOf('function abortAutoRun'))
+  it('TRUE unattended auto-run (item 7): the final summary/report is built entirely from background.js\'s own reported state (state.summary/state.pagesProcessed/state.allStudentResults) — never a local module-level accumulator', () => {
+    const fn = source.slice(source.indexOf('function renderAutoRunFinalSummary('), source.indexOf('function renderAutoRunFromState'))
     expect(fn).toContain('buildAutoRunReport(')
+    expect(fn).toContain('state.summary')
+    expect(fn).toContain('state.pagesProcessed')
+    expect(fn).toContain('state.allStudentResults')
     expect(fn).not.toMatch(/studentId/)
     expect(fn).not.toMatch(/password|token|cookie|secret|credential/i)
   })
 
-  it('BUG FIX (item 4/5): popup closing never itself cancels an active run — nothing in this file clears AUTO_RUN_STORAGE_KEY from an unload/visibilitychange/blur handler; only an explicit reset (a fresh step-4 rescan) or a CONFIRMED successful page advance ever clears it', () => {
-    expect(source).not.toMatch(/addEventListener\('(unload|beforeunload|visibilitychange|blur)'/)
-    const clearCalls = [...source.matchAll(/chrome\.storage\.session\.remove\(AUTO_RUN_STORAGE_KEY\)/g)]
-    // resetAutoRunState (explicit reset) + the confirmed-advance success
-    // path (clearPersistedAutoRunState's own body) — exactly two writers,
-    // never a third triggered by the popup simply losing focus/closing.
-    expect(clearCalls.length).toBe(2)
+  it('TRUE unattended auto-run (item 3/4): on every popup open, background.js reports its own current state for the active tab, which is fetched and rendered — never anything reconstructed from a previous popup session\'s own local state', () => {
+    expect(source).toMatch(/void restoreSessionPayload\(\)\.then\(\(\) => restoreAutoRunStateFromBackground\(\)\)/)
+    const fn = source.slice(source.indexOf('async function restoreAutoRunStateFromBackground'), source.length)
+    expect(fn).toContain('type: AR_MESSAGE.GET_STATE')
   })
 
-  it('BUG FIX (item 4/5): on every popup open, an active run is detected and offered for resumption BEFORE the teacher can take any other action — restoreActiveAutoRunIfAny runs immediately after restoreSessionPayload, at the bottom of the file', () => {
-    expect(source).toMatch(/void restoreSessionPayload\(\)\.then\(\(\) => restoreActiveAutoRunIfAny\(\)\)/)
-  })
-
-  it('BUG FIX (item 4/5): resuming an active run never guesses — evaluateRunResumption\'s own verdict (matched column key AND matched expected page) decides, and a non-resumable stored run is surfaced once, then cleared, never retried forever', () => {
-    const fn = source.slice(source.indexOf('async function restoreActiveAutoRunIfAny'), source.indexOf('void refreshStatus()'))
-    expect(fn).toContain('evaluateRunResumption(state,')
-    expect(fn).toMatch(/if \(!resumption\.shouldResume\) \{[\s\S]{0,600}clearPersistedAutoRunState\(\)/)
+  it('TRUE unattended auto-run: a fresh step-4 rescan (resetAutoRunState) tells background.js to stop any active run for this tab, rather than only clearing local state popup.js no longer keeps', () => {
+    const fn = source.slice(source.indexOf('function resetAutoRunState'), source.indexOf('/**\n * Item 5, kept hidden'))
+    expect(fn).toContain('type: AR_MESSAGE.STOP')
   })
 
   it('SGS Score Workspace payload: loading and restoring a payload both dispatch by `kind` via validateAnySgsBridgePayload, never the single-kind validator', () => {
@@ -824,5 +807,171 @@ describe('options.js — only ever writes the non-sensitive keyword setting', ()
     for (const match of matches) {
       expect(match[1]).toContain('sgsKeyword')
     }
+  })
+})
+
+describe('TRUE unattended auto-run — background.js: the ONE place run state lives, never the DOM/cookies/tabs content itself', () => {
+  const source = read('../src/background.js')
+
+  it('never reads document/window/cookies — it is a service worker with no DOM, and this file never pretends otherwise', () => {
+    expect(source).not.toMatch(/\bdocument\./)
+    expect(source).not.toMatch(/\bwindow\./)
+    expect(source).not.toMatch(/document\.cookie/)
+    expect(source).not.toMatch(/\.password\b|\.authToken\b|\.secret\b|\.credential\b/i)
+  })
+
+  it('never performs a network request — no fetch/XHR, this stays a purely local message router', () => {
+    expect(source).not.toMatch(/\bfetch\(/)
+    expect(source).not.toMatch(/XMLHttpRequest/)
+  })
+
+  it('persists run state only under chrome.storage.session — never chrome.storage.sync (leaves the machine) or chrome.storage.local (survives a browser restart, which a same-session run must never do)', () => {
+    expect(source).toContain('chrome.storage.session.get')
+    expect(source).toContain('chrome.storage.session.set')
+    expect(source).not.toMatch(/chrome\.storage\.sync\.(get|set)\(/)
+    expect(source).not.toMatch(/chrome\.storage\.local\.(get|set)\(/)
+  })
+
+  it('every state transition is a pure call into run-orchestrator.js — this file never mutates a stored state object by hand', () => {
+    expect(source).toContain("from './lib/run-orchestrator.js'")
+    for (const fn of ['createInitialRunState', 'applyStopRequested', 'applyResume', 'applyPageProgress', 'applyPageComplete', 'applyManualPause', 'applyAbort', 'applyStopped', 'applyCompleted']) {
+      expect(source).toContain(fn)
+    }
+  })
+
+  it('item 3: AR_START stores runId/tabId/subject/classroom/targetColumn/payload/overwriteMode/currentPage/totalPages/summary/approved (via createInitialRunState) and immediately kicks off content-script.js in that SAME tab — never a different tab', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleStop'))
+    expect(fn).toContain('createInitialRunState(')
+    expect(fn).toMatch(/sendToTab\(tabId, \{ type: AR_MESSAGE\.KICKOFF/)
+  })
+
+  it('item 6: AR_STOP only ever sets a flag (applyStopRequested) — it never itself aborts/completes a run, and a popup on an unrelated tab can neither see nor stop this tab\'s run (stateForTab)', () => {
+    const fn = source.slice(source.indexOf('async function handleStop'), source.indexOf('async function handleManualContinue'))
+    expect(fn).toContain('stateForTab(')
+    expect(fn).toContain('applyStopRequested(')
+    expect(fn).not.toMatch(/applyAbort|applyCompleted|applyStopped/)
+  })
+
+  it('item 6: a run only ever resumes via an explicit AR_MANUAL_CONTINUE from the popup — never automatically on its own, and never for a different tab than the one asking', () => {
+    const fn = source.slice(source.indexOf('async function handleManualContinue'), source.indexOf('async function handleCheckActive'))
+    expect(fn).toContain('stateForTab(')
+    expect(fn).toContain('applyResume(')
+  })
+
+  it('item 4: content-script.js\'s AR_CHECK_ACTIVE is answered using the SENDER\'s own tab id only — never a tab id supplied in the message body, which a compromised/unrelated page could forge', () => {
+    expect(source).toMatch(/const senderTabId = sender\.tab \? sender\.tab\.id : null/)
+    expect(source).toMatch(/handleCheckActive\(senderTabId\)/)
+  })
+
+  it('AR_STATE_CHANGED is broadcast on every state-changing write (setState) — a closed popup\'s failed delivery is always swallowed, never thrown', () => {
+    const fn = source.slice(source.indexOf('function broadcastStateChanged'), source.indexOf('function sendToTab'))
+    expect(fn).toContain('.catch(()')
+    expect(source).toMatch(/async function setState\(state\) \{[\s\S]{0,200}broadcastStateChanged\(state\)/)
+  })
+})
+
+describe('TRUE unattended auto-run — content-script.js: registered only for the SGS host, never collects credentials, never clicks Save/another column/a header checkbox', () => {
+  const source = read('../src/content-script.js')
+
+  it('never reads document.cookie/localStorage/sessionStorage, and never touches a password/authToken/credential value — checked against the CODE only, past this file\'s own header comment describing that same guarantee in prose', () => {
+    const code = source.slice(source.indexOf(';(function () {'))
+    expect(code).not.toMatch(/document\.cookie/)
+    expect(code).not.toMatch(/\blocalStorage\b/)
+    expect(code).not.toMatch(/\bsessionStorage\b/)
+    expect(code).not.toMatch(/\.password\b|\.authToken\b|\.credential\b/i)
+  })
+
+  it('is a classic script — no static ES `import`/`export` syntax (manifest content_scripts entries have no "type": "module" field); every pure/DOM module is loaded via a dynamic import() of the extension\'s own bundled file instead', () => {
+    expect(source).not.toMatch(/^import /m)
+    expect(source).not.toMatch(/^export /m)
+    expect(source).toMatch(/import\(chrome\.runtime\.getURL\('src\/content-diagnostic\.js'\)\)/)
+    expect(source).toMatch(/import\(chrome\.runtime\.getURL\('src\/lib\/auto-run\.js'\)\)/)
+    expect(source).toMatch(/import\(chrome\.runtime\.getURL\('src\/lib\/pagination-control\.js'\)\)/)
+    expect(source).toMatch(/import\(chrome\.runtime\.getURL\('src\/lib\/whole-column-write\.js'\)\)/)
+    expect(source).toMatch(/import\(chrome\.runtime\.getURL\('src\/lib\/roster\.js'\)\)/)
+  })
+
+  it('never clicks anything except the confirmed pagination Next control (clickPaginationControl) — no other .click() call exists anywhere in this file, so Save/another column/a header checkbox can never be clicked', () => {
+    const clickCalls = [...source.matchAll(/\.click\(\)/g)]
+    expect(clickCalls.length).toBe(0)
+    expect(source).toContain('libs.diagnostic.clickPaginationControl(nextControlResult.control)')
+  })
+
+  it('every write instruction carries exactly one columnIndex (scan.column.columnIndex) — structurally, no code path here can target a second column', () => {
+    const writeCalls = [...source.matchAll(/fillSgsColumnValues\(([^)]*)\)/g)]
+    expect(writeCalls.length).toBeGreaterThan(0)
+    for (const call of writeCalls) {
+      expect(call[1]).toContain('scan.column.columnIndex')
+    }
+  })
+
+  it('writes exactly one cell at a time (a single-entry writesByOffset built fresh per row) — never a batch of multiple offsets in one call', () => {
+    expect(source).toMatch(/const writesByOffset = \{ \[baseRow\.sgsRowOffset\]: baseRow\.krunameScore \}/)
+    const fillCalls = [...source.matchAll(/fillSgsColumnValues\(/g)]
+    expect(fillCalls.length).toBe(1)
+  })
+
+  it('every write is followed by a read-back (readSingleColumnCellValue) before the outcome is ever recorded as WRITTEN — never trusting the write call alone', () => {
+    const writeIndex = source.indexOf('libs.diagnostic.fillSgsColumnValues(')
+    const readIndex = source.indexOf('libs.diagnostic.readSingleColumnCellValue(')
+    expect(writeIndex).toBeGreaterThan(-1)
+    expect(readIndex).toBeGreaterThan(writeIndex)
+    expect(source).toMatch(/const outcome = !missing && actualValue === baseRow\.krunameScore \? 'WRITTEN' : 'FAILED'/)
+  })
+
+  it('item 5: evaluates a REAL subject/classroom match against the KrunameClass payload itself (evaluateSubjectClassroomMatch) before every page\'s write — never only a page-to-page drift check', () => {
+    const fn = source.slice(source.indexOf('function evaluatePageGate'), source.indexOf('async function processCurrentPage'))
+    expect(fn).toContain('libs.subjectClassroom.evaluateSubjectClassroomMatch(')
+    expect(fn).toContain('krunameSubjectName: runState.subject')
+    expect(fn).toContain('krunameClassroomName: runState.classroom')
+  })
+
+  it('item 5: "abort immediately on mismatch" — the FIRST failing gate stops the whole page/run via AR_ABORT, never a partial continue', () => {
+    const fn = source.slice(source.indexOf('async function processCurrentPage'), source.indexOf('async function attemptAdvance'))
+    expect(fn).toMatch(/if \(stop\.shouldStop\) \{\s*\n\s*await sendMessage\(\{ type: AR_MESSAGE\.ABORT, reason: stop\.reason \}\)/)
+  })
+
+  it('item 6: "หยุด" is only ever checked as a flag reported by background.js (AR_GET_STATE\'s stopRequested) — this file never calls anything to abort a write already in flight, and starts no new write once the flag is set', () => {
+    const fn = source.slice(source.indexOf('async function processCurrentPage'), source.indexOf('async function attemptAdvance'))
+    expect(fn).toContain('stateCheck?.state?.stopRequested')
+    expect(fn).toMatch(/if \(stoppedMidPage\) \{[\s\S]{0,400}continue\s*\n\s*\}/)
+  })
+
+  it('item 4: a page-advance is only ever ATTEMPTED at high/medium confidence (isConfidentEnoughToAutoClick) — a low-confidence or absent finding sends AR_MANUAL_PAUSE instead of clicking anything', () => {
+    const fn = source.slice(source.indexOf('async function attemptAdvance'), source.indexOf('async function verifyPendingAdvance'))
+    expect(fn).toContain('findSgsNextPageControl(inspection.candidates)')
+    expect(fn).toMatch(/if \(!nextControlResult\.control \|\| !libs\.pagination\.isConfidentEnoughToAutoClick\(nextControlResult\.confidence\)\) \{[\s\S]{0,300}AR_MESSAGE\.MANUAL_PAUSE/)
+  })
+
+  it('item 4/5: pending-advance state is reported to background.js BEFORE the click — the click itself never calls preventDefault, since a real ASP.NET postback may destroy this script\'s own execution context the instant it fires', () => {
+    const fn = source.slice(source.indexOf('async function attemptAdvance'), source.indexOf('async function verifyPendingAdvance'))
+    const pendingIndex = fn.indexOf('AR_MESSAGE.PENDING_ADVANCE')
+    const clickIndex = fn.indexOf('libs.diagnostic.clickPaginationControl(nextControlResult.control)')
+    expect(pendingIndex).toBeGreaterThan(-1)
+    expect(clickIndex).toBeGreaterThan(pendingIndex)
+    expect(fn).not.toMatch(/preventDefault/)
+  })
+
+  it('item 4: a click\'s success is NEVER trusted alone — verifyPendingAdvance checks pagination-control.js\'s own verifyPageAdvance for the page number, grid fingerprint, and subject/classroom before treating an advance as confirmed', () => {
+    const fn = source.slice(source.indexOf('async function verifyPendingAdvance'), source.indexOf('async function main'))
+    expect(fn).toContain('libs.pagination.verifyPageAdvance(')
+    expect(fn).toContain('AR_MESSAGE.ADVANCE_CONFIRMED')
+  })
+
+  it('item 6: every page-advance failure mode falls back to the SAME manual-continue message this codebase has always used — only a CONFIRMED context mismatch aborts the run', () => {
+    const fn = source.slice(source.indexOf('async function verifyPendingAdvance'), source.indexOf('async function main'))
+    expect(fn).toContain("reason: 'ไม่สามารถเปลี่ยนหน้าอัตโนมัติได้ กรุณาเปิดหน้าถัดไปแล้วกดดำเนินการต่อ'")
+    expect(fn).toMatch(/if \(result\.kind === 'context_mismatch'\) \{[\s\S]{0,200}AR_MESSAGE\.ABORT/)
+  })
+
+  it('a per-page write-failure rate above the safe threshold aborts the run — never silently absorbed into the summary alone', () => {
+    const fn = source.slice(source.indexOf('async function processCurrentPage'), source.indexOf('async function attemptAdvance'))
+    expect(fn).toContain('pageFailureExceedsThreshold(')
+    expect(fn).toMatch(/if \(pageThresholdExceeded\) \{\s*\n\s*await sendMessage\(\{\s*\n\s*type: AR_MESSAGE\.ABORT,/)
+  })
+
+  it('item 4: on every fresh page load, main() asks background.js whether an approved run is active for THIS tab (AR_CHECK_ACTIVE) — the teacher never needs to reopen the popup for page 2/3/4 to proceed', () => {
+    expect(source).toMatch(/async function main\(\) \{[\s\S]{0,200}AR_MESSAGE\.CHECK_ACTIVE/)
+    expect(source).toMatch(/void main\(\)\s*\n\s*\}\)\(\)/)
   })
 })

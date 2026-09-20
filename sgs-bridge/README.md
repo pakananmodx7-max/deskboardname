@@ -89,10 +89,72 @@ without much narrower, explicitly-confirmed control. Two changes follow:
 - Does not send anything over the network — every chrome.storage write
   is local to the browser (`storage.session`/`storage.local`, never
   `storage.sync`).
-- Does not request broad host permissions. It only ever touches the
-  currently active tab, and only after the teacher explicitly clicks
-  the extension's toolbar icon or one of its buttons (`activeTab` +
-  `scripting`, no `<all_urls>`, no `host_permissions` at all).
+- Does not request broad host permissions. Manual sections (payload
+  loading, diagnostics, mapping, single-cell test, semi-automatic
+  whole-column write) only ever touch the currently active tab, and only
+  after the teacher explicitly clicks the extension's toolbar icon or
+  one of its buttons (`activeTab` + `scripting`). The ONE addition, for
+  TRUE unattended auto-run (below), is a single host permission scoped
+  to the real SGS domain's own path — `https://sgs.bopp-obec.info/sgs/*`
+  — never `<all_urls>`, never a second host.
+
+## TRUE unattended auto-run (background service worker + content script)
+
+"เริ่มส่งครบทั้งห้องอัตโนมัติ" now processes every SGS page — 1, 2, 3, 4,
+... — through to a final summary in ONE click, without the teacher
+reopening this popup between pages:
+
+- A background service worker (`src/background.js`) is the single place
+  a run's state lives once the teacher explicitly starts it (subject,
+  classroom, target column, roster, overwrite mode, current/total page,
+  running summary, approval flag) — persisted only in
+  `chrome.storage.session` (never `chrome.storage.sync`/`.local`, so a
+  run never survives a full browser restart). Every state transition is
+  a pure call into `src/lib/run-orchestrator.js` (unit-tested in
+  `tests/run-orchestrator.test.ts`), never a hand-mutated object.
+- A content script (`src/content-script.js`), registered ONLY for
+  `https://sgs.bopp-obec.info/sgs/*`, does the actual in-page work: on
+  every fresh SGS page load (including after a real ASP.NET postback) it
+  asks background whether an approved run is active for its own tab and,
+  if so, re-scans the page, revalidates subject/classroom/expected page/
+  column before touching anything, writes one cell at a time with an
+  immediate read-back, reports progress, and only then attempts the next
+  page's Next control — never Save, never another column, never a
+  header checkbox. It is a classic script (content scripts have no
+  `"type": "module"` field), so it loads this codebase's existing pure
+  modules (`content-diagnostic.js`, `auto-run.js`, `pagination-control.js`,
+  `whole-column-write.js`, `subject-classroom-match.js`, `mapping.js`,
+  `sgs-table-extraction.js`, `roster.js`) via a dynamic `import()` of the
+  extension's own bundled files instead of a static `import` — those
+  files are listed under `manifest.json`'s `web_accessible_resources`,
+  scoped to the SAME SGS host.
+- popup.js's own role shrinks to exactly item 3 of the spec that
+  introduced this: preview the pre-run counts, gate two explicit consent
+  checkboxes, send ONE `AR_START` message to background when the teacher
+  clicks the button, render whatever state background reports (on open,
+  and live via an `AR_STATE_CHANGED` broadcast), and forward a Stop/
+  "ดำเนินการต่อ" click as `AR_STOP`/`AR_MANUAL_CONTINUE`. It never runs
+  the loop itself any more, so closing the popup never stops a run.
+- A page-advance that can't be confidently found or confirmed (the same
+  honest fallback this codebase has always used) pauses for the
+  teacher's own manual "ดำเนินการต่อ" click rather than guessing at a
+  selector; only a CONFIRMED subject/classroom mismatch aborts the run
+  outright.
+- Manual sections (single-cell test, current-page mode, the
+  semi-automatic "ส่งคอลัมน์นี้ทั้งห้อง" + "ดำเนินการต่อ" flow) are
+  untouched — auto-run is purely additive.
+
+**Honesty note on what could actually be verified here**: the pure
+reducer logic (`run-orchestrator.js`) and every source-level invariant
+(message types, single-column/single-cell-write guarantees, no click
+beyond the confirmed pagination control, no cookie/password/token
+collection, the manifest's exact permission set) are unit-tested. The
+live three-context message-passing behavior itself — background service
+worker, content script, and popup actually coordinating across a real
+SGS page's ASP.NET postbacks — has not been (and cannot be, from this
+sandboxed environment) exercised in an actual Chrome browser against the
+real SGS site; that still needs a hands-on check before relying on it
+for a real classroom run.
 
 ## How KrunameClass hands data to this extension
 

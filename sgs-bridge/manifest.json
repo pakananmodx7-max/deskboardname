@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "KrunameClass SGS Bridge (Prototype — Dry Run)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local dry-run bridge between KrunameClass and the teacher's already-open SGS tab. Never stores SGS credentials or cookies, never connects to any database, never auto-submits to SGS.",
   "action": {
     "default_popup": "src/popup.html",
@@ -9,5 +9,32 @@
   },
   "options_page": "src/options.html",
   "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://sgs.bopp-obec.info/sgs/*"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://sgs.bopp-obec.info/sgs/*"],
+      "js": ["src/content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/content-diagnostic.js",
+        "src/lib/auto-run.js",
+        "src/lib/pagination-control.js",
+        "src/lib/whole-column-write.js",
+        "src/lib/subject-classroom-match.js",
+        "src/lib/mapping.js",
+        "src/lib/sgs-table-extraction.js",
+        "src/lib/roster.js"
+      ],
+      "matches": ["https://sgs.bopp-obec.info/sgs/*"]
+    }
+  ],
   "minimum_chrome_version": "116"
 }
