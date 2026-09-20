@@ -127,7 +127,12 @@ reopening this popup between pages:
   `sgs-table-extraction.js`, `roster.js`) via a dynamic `import()` of the
   extension's own bundled files instead of a static `import` — those
   files are listed under `manifest.json`'s `web_accessible_resources`,
-  scoped to the SAME SGS host.
+  scoped to the SAME SGS host (`https://sgs.bopp-obec.info/*` — Chrome
+  requires a `web_accessible_resources` match pattern's path to be
+  exactly `/*`, so this one entry is intentionally broader than the
+  `/sgs/*` path the host permission and content script use, while
+  staying on the same domain — never a different site, never
+  `<all_urls>`).
 - popup.js's own role shrinks to exactly item 3 of the spec that
   introduced this: preview the pre-run counts, gate two explicit consent
   checkboxes, send ONE `AR_START` message to background when the teacher

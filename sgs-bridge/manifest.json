@@ -33,7 +33,7 @@
         "src/lib/sgs-table-extraction.js",
         "src/lib/roster.js"
       ],
-      "matches": ["https://sgs.bopp-obec.info/sgs/*"]
+      "matches": ["https://sgs.bopp-obec.info/*"]
     }
   ],
   "minimum_chrome_version": "116"

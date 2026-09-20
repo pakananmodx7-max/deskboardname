@@ -62,10 +62,10 @@ describe('manifest.json — minimal permissions, ONE SGS-only host permission, n
     expect(entry.js).toEqual(['src/content-script.js'])
   })
 
-  it('TRUE unattended auto-run: web_accessible_resources (needed for content-script.js\'s dynamic import of the pure lib modules) are scoped to the SAME SGS host only — never exposed to any other site', () => {
+  it('TRUE unattended auto-run: web_accessible_resources (needed for content-script.js\'s dynamic import of the pure lib modules) are scoped to the SAME SGS host only — never exposed to any other site. Chrome requires a web_accessible_resources match pattern\'s path to be exactly /* (it rejects the narrower /sgs/* the host permission and content script use), so this one match is intentionally broader than those two, while staying on the SAME host — never a different domain, never <all_urls>', () => {
     expect(manifest.web_accessible_resources).toHaveLength(1)
     const [entry] = manifest.web_accessible_resources
-    expect(entry.matches).toEqual(['https://sgs.bopp-obec.info/sgs/*'])
+    expect(entry.matches).toEqual(['https://sgs.bopp-obec.info/*'])
     expect(entry.resources).toEqual(
       expect.arrayContaining([
         'src/content-diagnostic.js',
