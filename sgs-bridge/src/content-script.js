@@ -70,6 +70,7 @@
     COMPLETE: 'AR_COMPLETE',
     DEBUG_EVENT: 'AR_DEBUG_EVENT',
     PING: 'AR_PING',
+    CONTENT_READY: 'AR_SGS_CONTENT_READY',
     KICKOFF: 'AR_KICKOFF',
     RESUME: 'AR_RESUME',
   }
@@ -541,7 +542,7 @@
     // this as its ONLY proof a content script is actually listening in a
     // tab, before it will ever create a run for that tab.
     if (message?.type === AR_MESSAGE.PING) {
-      sendResponse({ ok: true, ready: true })
+      sendResponse({ ok: true, pageUrl: location.href, ready: true })
       return false
     }
     if (message?.type === AR_MESSAGE.KICKOFF) {
@@ -568,6 +569,14 @@
     }
     return false
   })
+
+  // FINAL SGS AUTO-RUN FIX (item 2/5) — announced once per instance, the
+  // moment this script starts (a fresh load, a reload, OR an ASP.NET
+  // postback) — never only in reply to a PING background happened to
+  // send. Fire-and-forget, same as debugEvent above: this notification
+  // is never itself allowed to slow down or block main()'s own (already
+  // independent) CHECK_ACTIVE-driven startup below.
+  void sendMessage({ type: AR_MESSAGE.CONTENT_READY, pageUrl: location.href })
 
   void main()
 })()

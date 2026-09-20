@@ -76,11 +76,25 @@ export const AR_MESSAGE = {
   // handshake, sent BEFORE a run is ever created (item 2) — a content
   // script answers it immediately, without waiting for loadLibs().
   PING: 'AR_PING',
+  // content-script -> background: FINAL SGS AUTO-RUN FIX (item 2/5) — a
+  // content script announces itself the moment it starts (fresh page
+  // load, reload, OR an ASP.NET postback) — never only in reply to a
+  // PING background happened to send. This is what lets background
+  // notice a tab has RECONNECTED after a postback and re-dispatch
+  // AR_KICKOFF without the teacher ever reopening the popup.
+  CONTENT_READY: 'AR_SGS_CONTENT_READY',
   // background -> content-script
   KICKOFF: 'AR_KICKOFF',
   RESUME: 'AR_RESUME',
   // background -> popup (broadcast)
   STATE_CHANGED: 'AR_STATE_CHANGED',
+  // background -> popup (broadcast): FINAL SGS AUTO-RUN FIX (item 6) —
+  // the connection-handshake trace (SGS_TAB_FOUND/PING_SENT/PING_OK or
+  // PING_FAILED/SCRIPT_INJECTED/PING_RETRY_OK/PROCESS_CURRENT_PAGE_SENT/
+  // CONTENT_SCRIPT_RECEIVED). Broadcast-only, never persisted to run
+  // state, because every one of these steps happens BEFORE a run exists
+  // to persist it on.
+  STARTUP_TRACE: 'AR_STARTUP_TRACE',
 }
 
 /**

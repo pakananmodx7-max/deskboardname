@@ -62,6 +62,11 @@ describe('manifest.json — minimal permissions, ONE SGS-only host permission, n
     expect(entry.js).toEqual(['src/content-script.js'])
   })
 
+  it('FINAL SGS AUTO-RUN FIX (item 1 — "verify static content script registration"): loads automatically at document_idle on every matching page load/reload/postback — this is what re-populates a fresh, working content script after an ASP.NET postback, never something this extension must trigger itself', () => {
+    const [entry] = manifest.content_scripts
+    expect(entry.run_at).toBe('document_idle')
+  })
+
   it('TRUE unattended auto-run: web_accessible_resources (needed for content-script.js\'s dynamic import of the pure lib modules) are scoped to the SAME SGS host only — never exposed to any other site. Chrome requires a web_accessible_resources match pattern\'s path to be exactly /* (it rejects the narrower /sgs/* the host permission and content script use), so this one match is intentionally broader than those two, while staying on the SAME host — never a different domain, never <all_urls>', () => {
     expect(manifest.web_accessible_resources).toHaveLength(1)
     const [entry] = manifest.web_accessible_resources
@@ -685,6 +690,29 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(listenerFn).toContain('renderAutoRunFromState(message.state)')
   })
 
+  it('FINAL SGS AUTO-RUN FIX (item 6): the SAME onMessage listener also renders AR_STARTUP_TRACE broadcasts (renderStartupTrace) — the connection-handshake trace shows up live in Section 7 exactly like run-state progress does, without needing a separate listener', () => {
+    const listenerFn = source.slice(
+      source.indexOf('chrome.runtime.onMessage.addListener((message) => {'),
+      source.indexOf('chrome.runtime.onMessage.addListener((message) => {') + 500,
+    )
+    expect(listenerFn).toContain('AR_MESSAGE.STARTUP_TRACE')
+    expect(listenerFn).toContain('renderStartupTrace(message.step, message.detail)')
+  })
+
+  it('FINAL SGS AUTO-RUN FIX (item 6): renderStartupTrace shows the step and visually flags PING_FAILED (or any step whose own detail says failed) — "if it aborts, show exactly which step failed"', () => {
+    const fn = source.slice(source.indexOf('function renderStartupTrace('), source.indexOf('function renderStartupTrace(') + 500)
+    expect(fn).toContain("step === 'PING_FAILED'")
+    expect(fn).toContain('arStartupTraceEl.textContent')
+    expect(fn).toContain('arStartupTraceEl.hidden = false')
+  })
+
+  it('FINAL SGS AUTO-RUN FIX: "เริ่มส่งครบทั้งห้อง" clears/hides the previous attempt\'s startup trace before taking a fresh pagination reading, and hides it again once a run actually starts successfully', () => {
+    const fn = source.slice(source.indexOf('arRunBtn.addEventListener'), source.indexOf('arManualContinueBtn.addEventListener'))
+    expect(fn).toContain('arStartupTraceEl.hidden = true')
+    const hideOccurrences = [...fn.matchAll(/arStartupTraceEl\.hidden = true/g)]
+    expect(hideOccurrences.length).toBe(2)
+  })
+
   it('TRUE unattended auto-run (item 7): the final summary/report is built entirely from background.js\'s own reported state (state.summary/state.pagesProcessed/state.allStudentResults) — never a local module-level accumulator', () => {
     const fn = source.slice(source.indexOf('function renderAutoRunFinalSummary('), source.indexOf('function renderAutoRunFromState'))
     expect(fn).toContain('buildAutoRunReport(')
@@ -972,19 +1000,36 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     expect(kickoffIndex).toBeGreaterThan(setStateIndex)
   })
 
-  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 2): ensureContentScriptReady pings first, and ONLY on a failed ping tries exactly one (re-)injection via chrome.scripting.executeScript before pinging again — never injecting unconditionally on every start (which would risk a double pipeline in a tab that already has a working content script)', () => {
+  it('FINAL SGS AUTO-RUN FIX (item 3): ensureContentScriptReady pings first, and ONLY on a failed ping tries exactly one (re-)injection via chrome.scripting.executeScript before pinging again — never injecting unconditionally on every start (which would risk a double pipeline in a tab that already has a working content script)', () => {
     const fn = source.slice(source.indexOf('async function ensureContentScriptReady'), source.indexOf('async function handleStart'))
-    expect(fn).toMatch(/if \(await pingContentScript\(tabId\)\) return true/)
+    expect(fn).toMatch(/if \(await pingContentScript\(tabId\)\) \{\s*\n\s*broadcastStartupTrace\('PING_OK'/)
     expect(fn).toContain("chrome.scripting.executeScript({ target: { tabId }, files: ['src/content-script.js'] })")
-    const pingCalls = [...fn.matchAll(/pingContentScript\(tabId\)/g)]
-    expect(pingCalls.length).toBe(2)
+    const injectCalls = [...fn.matchAll(/chrome\.scripting\.executeScript\(/g)]
+    expect(injectCalls.length).toBe(1)
   })
 
-  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 3 — service worker lifecycle): the watchdog is scheduled via chrome.alarms, which keeps firing even after this service worker is suspended — NEVER via setTimeout/setInterval, which do not survive suspension and would silently never fire', () => {
+  it('FINAL SGS AUTO-RUN FIX (item 3): "only abort if retry still fails" — a THIRD tier (chrome.tabs.reload, then one more ping) is tried before ever giving up, since re-injecting more code cannot heal an ORPHANED content script (its own already-loaded guard blocks a second registration) — only a real navigation can', () => {
+    const fn = source.slice(source.indexOf('async function ensureContentScriptReady'), source.indexOf('async function handleStart'))
+    const injectIndex = fn.indexOf('chrome.scripting.executeScript(')
+    const reloadIndex = fn.indexOf('chrome.tabs.reload(tabId)')
+    const finalReturnFalse = fn.lastIndexOf('return false')
+    expect(reloadIndex).toBeGreaterThan(injectIndex)
+    expect(finalReturnFalse).toBeGreaterThan(reloadIndex)
+    const pingCalls = [...fn.matchAll(/pingContentScript\(tabId\)/g)]
+    expect(pingCalls.length).toBe(3)
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 3 — service worker lifecycle): the watchdog itself is scheduled via chrome.alarms, which keeps firing even after this service worker is suspended — never setInterval, which does not survive suspension and would silently never fire. (waitForTabLoadComplete\'s own bounded setTimeout is a different, short-lived wait entirely WITHIN one already-in-flight AR_START response — see its own doc comment — never a substitute for the alarm)', () => {
     expect(source).toContain('chrome.alarms.create(watchdogAlarmName(state.runId)')
     expect(source).toContain('chrome.alarms.onAlarm.addListener(')
     expect(source).not.toMatch(/\bsetInterval\(/)
-    expect(source).not.toMatch(/\bsetTimeout\(/)
+  })
+
+  it('the one setTimeout in this file exists ONLY inside waitForTabLoadComplete\'s own bounded reload-wait — never used to schedule the watchdog itself', () => {
+    const setTimeoutCalls = [...source.matchAll(/\bsetTimeout\(/g)]
+    expect(setTimeoutCalls.length).toBe(1)
+    const fn = source.slice(source.indexOf('function waitForTabLoadComplete'), source.indexOf('const RELOAD_WAIT_TIMEOUT_MS'))
+    expect(fn).toContain('setTimeout(finish, timeoutMs)')
   })
 
   it('FINAL AUTO-RUN EXECUTION BUG FIX (item 6 — "never leave a dead run"): handleWatchdogAlarm re-reads the PERSISTED state fresh (never a module-level variable this worker could have lost across a suspension) and applies the pure shouldAbortForMissingProcessing/applyAbort pair, never inlining its own ad hoc condition', () => {
@@ -1007,6 +1052,20 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     expect(fn).toContain('appendDebugEvent(state, { event, detail })')
   })
 
+  it('FINAL SGS AUTO-RUN FIX (item 5 — "active run resumes after reload, no popup reopen required"): AR_SGS_CONTENT_READY is routed to handleContentReady, which dispatches AR_KICKOFF ONLY when shouldContentScriptProcess says this run is still approved+active+running for THIS exact tab — never for an unrelated/finished run, and never requiring popup to be open at all (this handler is driven purely by the content script\'s own message, with no popup involved anywhere in its call chain)', () => {
+    expect(source).toMatch(/case AR_MESSAGE\.CONTENT_READY:\s*\n\s*void handleContentReady\(senderTabId, message\)\.then\(sendResponse\)/)
+    const fn = source.slice(source.indexOf('async function handleContentReady'), source.indexOf('async function handlePendingAdvance'))
+    expect(fn).toContain('shouldContentScriptProcess(state, tabId)')
+    expect(fn).toMatch(/if \(!shouldContentScriptProcess\(state, tabId\)\) return \{ ok: true \}/)
+    expect(fn).toContain('sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })')
+  })
+
+  it('FINAL SGS AUTO-RUN FIX (item 6): handleContentReady broadcasts CONTENT_SCRIPT_RECEIVED and (only on an actual dispatch) PROCESS_CURRENT_PAGE_SENT — the SAME startup-trace vocabulary handleStart\'s own first run uses, so a page-2/3/4 reconnect is exactly as visible in Section 7 as the initial start', () => {
+    const fn = source.slice(source.indexOf('async function handleContentReady'), source.indexOf('async function handlePendingAdvance'))
+    expect(fn).toContain("broadcastStartupTrace('CONTENT_SCRIPT_RECEIVED'")
+    expect(fn).toContain("broadcastStartupTrace('PROCESS_CURRENT_PAGE_SENT'")
+  })
+
   it('item 6: AR_STOP only ever sets a flag (applyStopRequested) — it never itself aborts/completes a run, and a popup on an unrelated tab can neither see nor stop this tab\'s run (stateForTab)', () => {
     const fn = source.slice(source.indexOf('async function handleStop'), source.indexOf('async function handleManualContinue'))
     expect(fn).toContain('stateForTab(')
@@ -1025,6 +1084,15 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     expect(source).toMatch(/handleCheckActive\(senderTabId\)/)
   })
 
+  it('FINAL SGS AUTO-RUN FIX (item 4 — "use the real tab... all later messages must use that stored tabId"): the tabId captured at AR_START (createInitialRunState\'s own tabId param) is the ONE value every later content-script-originated handler compares its sender against (`state.tabId !== tabId` / shouldContentScriptProcess) — never re-reading getActiveTab() or any other tab reference after the run is created', () => {
+    for (const fnName of ['handleCheckActive', 'handlePendingAdvance', 'handleAdvanceConfirmed', 'handlePageProgress', 'handleDebugEvent', 'handlePageComplete', 'handleManualPause', 'handleAbort', 'handleStopped', 'handleComplete', 'handleContentReady']) {
+      const start = source.indexOf(`async function ${fnName}`)
+      expect(start).toBeGreaterThan(-1)
+      const fn = source.slice(start, start + 350)
+      expect(fn).toMatch(/state\.tabId (!==|===) tabId|shouldContentScriptProcess\(state, tabId\)/)
+    }
+  })
+
   it('AR_STATE_CHANGED is broadcast on every state-changing write (setState) — a closed popup\'s failed delivery is always swallowed, never thrown', () => {
     const fn = source.slice(source.indexOf('function broadcastStateChanged'), source.indexOf('function sendToTab'))
     expect(fn).toContain('.catch(()')
@@ -1041,6 +1109,16 @@ describe('TRUE unattended auto-run — content-script.js: registered only for th
     expect(code).not.toMatch(/\blocalStorage\b/)
     expect(code).not.toMatch(/\bsessionStorage\b/)
     expect(code).not.toMatch(/\.password\b|\.authToken\b|\.credential\b/i)
+  })
+
+  it('FINAL SGS AUTO-RUN FIX (item 3 — "do not create duplicate listeners if the content script is already loaded"): the top-of-file already-loaded guard returns BEFORE registering chrome.runtime.onMessage.addListener or sending AR_SGS_CONTENT_READY — re-injecting this same file into a tab that already has a WORKING instance is a safe no-op, never a second overlapping listener/pipeline', () => {
+    const guardIndex = source.indexOf('if (window.__sgsBridgeAutoRunLoaded) return')
+    const listenerIndex = source.indexOf('chrome.runtime.onMessage.addListener(')
+    const contentReadyIndex = source.indexOf('AR_MESSAGE.CONTENT_READY, pageUrl: location.href')
+    expect(guardIndex).toBeGreaterThan(-1)
+    expect(listenerIndex).toBeGreaterThan(guardIndex)
+    expect(contentReadyIndex).toBeGreaterThan(guardIndex)
+    expect(source).toContain('window.__sgsBridgeAutoRunLoaded = true')
   })
 
   it('is a classic script — no static ES `import`/`export` syntax (manifest content_scripts entries have no "type": "module" field); every pure/DOM module is loaded via a dynamic import() of the extension\'s own bundled file instead', () => {
@@ -1144,8 +1222,18 @@ describe('TRUE unattended auto-run — content-script.js: registered only for th
     expect(pingIndex).toBeGreaterThan(-1)
     expect(pingIndex).toBeLessThan(kickoffIndex)
     const pingBranch = listenerBody.slice(pingIndex - 40, kickoffIndex)
-    expect(pingBranch).toContain('sendResponse({ ok: true, ready: true })')
+    expect(pingBranch).toContain('sendResponse({ ok: true, pageUrl: location.href, ready: true })')
     expect(pingBranch).not.toContain('loadLibs()')
+  })
+
+  it('FINAL SGS AUTO-RUN FIX (item 2): the PING response includes pageUrl (location.href) alongside ok/ready — background\'s ensureContentScriptReady/isSgsTab check the TAB\'s own URL via chrome.tabs.get, but this gives a second, content-script-reported confirmation of which page actually answered', () => {
+    expect(source).toContain('sendResponse({ ok: true, pageUrl: location.href, ready: true })')
+  })
+
+  it('FINAL SGS AUTO-RUN FIX (item 2/5): a content script announces AR_SGS_CONTENT_READY (with pageUrl) the moment it starts — a fresh load, a reload, OR an ASP.NET postback — never only in reply to a PING background happened to send; sent fire-and-forget, never blocking or delaying main()\'s own independent CHECK_ACTIVE-driven startup', () => {
+    const bootSection = source.slice(source.lastIndexOf('void sendMessage({ type: AR_MESSAGE.CONTENT_READY') - 10, source.indexOf('void main()') + 20)
+    expect(bootSection).toContain("void sendMessage({ type: AR_MESSAGE.CONTENT_READY, pageUrl: location.href })")
+    expect(bootSection).not.toContain('await sendMessage({ type: AR_MESSAGE.CONTENT_READY')
   })
 
   it('FINAL AUTO-RUN EXECUTION BUG FIX (item 4 — "message trace"): every one of PAGE_SCAN_OK/PAGE_PLAN_READY/CELL_WRITE_START/PAGE_DONE/NEXT_PAGE_REQUESTED is sent via the shared fire-and-forget debugEvent helper, in that same pipeline order, and debugEvent itself never awaits/blocks on background.js\'s reply', () => {

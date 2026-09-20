@@ -230,6 +230,7 @@ const arProgressNotFoundEl = document.getElementById('ar-progress-not-found')
 const arProgressAmbiguousEl = document.getElementById('ar-progress-ambiguous')
 const arProgressFailedEl = document.getElementById('ar-progress-failed')
 const arProgressDebugEl = document.getElementById('ar-progress-debug')
+const arStartupTraceEl = document.getElementById('ar-startup-trace')
 const arStopBtn = document.getElementById('ar-stop-btn')
 const arManualContinueWrap = document.getElementById('ar-manual-continue')
 const arManualContinueMessageEl = document.getElementById('ar-manual-continue-message')
@@ -2103,6 +2104,8 @@ arRunBtn.addEventListener('click', () => {
     if (!loadedPayload || !confirmedRealColumn) return
     arPrerunEl.hidden = true
     arAbortReasonEl.hidden = true
+    arStartupTraceEl.hidden = true
+    arStartupTraceEl.textContent = ''
 
     const tab = await getActiveTab()
     const [paginationInjection] = await chrome.scripting.executeScript({
@@ -2141,9 +2144,29 @@ arRunBtn.addEventListener('click', () => {
       arAbortReasonEl.hidden = false
       return
     }
+    // FINAL SGS AUTO-RUN FIX (item 6) — a successful start moves the UI
+    // on to ar-progress; the connection trace has done its job by then.
+    arStartupTraceEl.hidden = true
     renderAutoRunFromState(response.state)
   })()
 })
+
+/**
+ * FINAL SGS AUTO-RUN FIX (item 6) — "show these steps in Section 7... if
+ * it aborts, show exactly which step failed." Renders the MOST RECENT
+ * AR_STARTUP_TRACE broadcast (SGS_TAB_FOUND/PING_SENT/PING_OK or
+ * PING_FAILED/SCRIPT_INJECTED/PING_RETRY_OK/PROCESS_CURRENT_PAGE_SENT/
+ * CONTENT_SCRIPT_RECEIVED — see background.js's ensureContentScriptReady/
+ * handleStart). Every one of these steps happens BEFORE a run exists, so
+ * this is a live broadcast-only element, never anything read from
+ * state.debugLog (which only starts once a run is actually created).
+ */
+function renderStartupTrace(step, detail) {
+  const failed = step === 'PING_FAILED' || Boolean(detail?.failed)
+  arStartupTraceEl.textContent = `[connect] ${step}`
+  arStartupTraceEl.hidden = false
+  arStartupTraceEl.classList.toggle('debug-line-failed', failed)
+}
 
 /** item 6: the teacher's own click after a manual-pause fallback — tells
  * background.js to resume, which forwards the resume to whichever
@@ -2184,6 +2207,9 @@ arCopyReportBtn.addEventListener('click', async () => {
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === AR_MESSAGE.STATE_CHANGED) {
     renderAutoRunFromState(message.state)
+  }
+  if (message?.type === AR_MESSAGE.STARTUP_TRACE) {
+    renderStartupTrace(message.step, message.detail)
   }
 })
 

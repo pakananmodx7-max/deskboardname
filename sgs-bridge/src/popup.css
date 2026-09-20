@@ -53,6 +53,10 @@ section:last-child {
   font-family: monospace;
 }
 
+.debug-line-failed {
+  color: #b3261e;
+}
+
 .error {
   color: #b3261e;
   font-size: 12px;

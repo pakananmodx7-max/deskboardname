@@ -414,4 +414,10 @@ describe('AR_MESSAGE — every sender/receiver pair in this codebase shares the 
     expect(AR_MESSAGE.RESUME).toBe('AR_RESUME')
     expect(AR_MESSAGE.STATE_CHANGED).toBe('AR_STATE_CHANGED')
   })
+
+  it('FINAL SGS AUTO-RUN FIX: PING/CONTENT_READY/STARTUP_TRACE — the content-script connection handshake vocabulary', () => {
+    expect(AR_MESSAGE.PING).toBe('AR_PING')
+    expect(AR_MESSAGE.CONTENT_READY).toBe('AR_SGS_CONTENT_READY')
+    expect(AR_MESSAGE.STARTUP_TRACE).toBe('AR_STARTUP_TRACE')
+  })
 })

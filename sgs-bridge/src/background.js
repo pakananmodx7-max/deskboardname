@@ -48,6 +48,31 @@ import {
   withPendingAdvance,
 } from './lib/run-orchestrator.js'
 
+/** FINAL SGS AUTO-RUN FIX (item 4) — "do not assume the currently active
+ * Chrome tab is always the SGS tab." Reading `.url` for a tab this
+ * pattern matches needs no permission beyond the host_permissions this
+ * manifest already declares for it. */
+const SGS_TAB_URL_PATTERN = /^https:\/\/sgs\.bopp-obec\.info\/sgs\//
+
+async function isSgsTab(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId)
+    return SGS_TAB_URL_PATTERN.test(tab.url ?? '')
+  } catch {
+    return false
+  }
+}
+
+/** FINAL SGS AUTO-RUN FIX (item 6) — broadcast-only, never persisted:
+ * every one of these connection-handshake steps happens BEFORE a run
+ * exists to persist it on (see AR_MESSAGE.STARTUP_TRACE's own doc
+ * comment). A closed popup has no listener, same as broadcastStateChanged
+ * below — never itself an error. */
+function broadcastStartupTrace(step, detail) {
+  debugLog(step, detail)
+  chrome.runtime.sendMessage({ type: AR_MESSAGE.STARTUP_TRACE, step, detail: detail ?? null }).catch(() => {})
+}
+
 /** FINAL AUTO-RUN EXECUTION BUG FIX (item 6) — the practical floor for a
  * one-shot chrome.alarms delay (chrome.alarms, unlike setTimeout/
  * setInterval, keeps firing even if this service worker was suspended in
@@ -112,25 +137,98 @@ async function pingContentScript(tabId) {
   }
 }
 
+/** FINAL SGS AUTO-RUN FIX (item 3) — waits for a tab's own navigation to
+ * finish loading, or `timeoutMs`, whichever comes first. Used ONLY after
+ * chrome.tabs.reload below — never as a substitute for the PING handshake
+ * itself, since "the page finished loading" is not proof its content
+ * script's message listener is registered yet. */
+function waitForTabLoadComplete(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      chrome.tabs.onUpdated.removeListener(listener)
+      clearTimeout(timer)
+      resolve()
+    }
+    const listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish()
+    }
+    chrome.tabs.onUpdated.addListener(listener)
+    const timer = setTimeout(finish, timeoutMs)
+  })
+}
+
+const RELOAD_WAIT_TIMEOUT_MS = 4000
+
 /**
- * FINAL AUTO-RUN EXECUTION BUG FIX (item 2) — "verify content script is
+ * FINAL SGS AUTO-RUN FIX (item 3) — "verify content script is
  * available... inject/reload content script safely if architecture
- * permits." A failed first ping tries exactly ONE (re-)injection (covers
- * the common case: the SGS tab was already open before this extension's
- * content script ever got a chance to auto-inject into it) and pings
- * again. content-script.js's own top-of-file already-loaded guard makes
- * re-injecting into a tab that already has a WORKING content script a
- * safe no-op — this never risks a second overlapping pipeline in the
- * same tab.
+ * permits... retry PING... only abort if retry still fails." Three tiers,
+ * each only attempted if the previous one failed:
+ *
+ * 1. PING as-is — the common healthy case (manifest already auto-injected
+ *    a working content script) costs nothing beyond this one round trip.
+ * 2. Inject src/content-script.js via chrome.scripting.executeScript,
+ *    then PING again — covers the tab having been opened BEFORE this
+ *    extension's content script ever got a chance to auto-inject into
+ *    it. content-script.js's own top-of-file already-loaded guard makes
+ *    this a safe no-op if a WORKING content script is already there
+ *    (never risks a second overlapping pipeline in the same tab) — but
+ *    that SAME guard also means this tier is a no-op for tier 3's own
+ *    failure mode below.
+ * 3. Reload the tab, then PING again — the only fix for an ORPHANED
+ *    content script (this extension was reloaded/updated during
+ *    development while the SGS tab stayed open): its isolated world's
+ *    messaging is permanently invalidated, and re-injecting more code
+ *    into that SAME isolated world is blocked by its own already-loaded
+ *    guard (tier 2, above) — only a real navigation tears down that
+ *    isolated world and lets the manifest's own content_scripts entry
+ *    populate a fresh, working one from scratch.
+ *
+ * Every step broadcasts AR_STARTUP_TRACE (item 6) so a stuck run's exact
+ * failure point is visible in Section 7, not just in this worker's own
+ * console.
  */
 async function ensureContentScriptReady(tabId) {
-  if (await pingContentScript(tabId)) return true
+  broadcastStartupTrace('SGS_TAB_FOUND', { tabId })
+  if (!(await isSgsTab(tabId))) {
+    broadcastStartupTrace('PING_FAILED', { tabId, reason: 'tab is not an SGS page' })
+    return false
+  }
+
+  broadcastStartupTrace('PING_SENT', { tabId })
+  if (await pingContentScript(tabId)) {
+    broadcastStartupTrace('PING_OK', { tabId })
+    return true
+  }
+  broadcastStartupTrace('PING_FAILED', { tabId })
+
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content-script.js'] })
+    broadcastStartupTrace('SCRIPT_INJECTED', { tabId })
+  } catch (err) {
+    broadcastStartupTrace('SCRIPT_INJECTED', { tabId, failed: true, message: String(err) })
+  }
+  if (await pingContentScript(tabId)) {
+    broadcastStartupTrace('PING_RETRY_OK', { tabId })
+    return true
+  }
+  broadcastStartupTrace('PING_FAILED', { tabId, afterInjection: true })
+
+  try {
+    await chrome.tabs.reload(tabId)
   } catch {
     return false
   }
-  return pingContentScript(tabId)
+  await waitForTabLoadComplete(tabId, RELOAD_WAIT_TIMEOUT_MS)
+  if (await pingContentScript(tabId)) {
+    broadcastStartupTrace('PING_RETRY_OK', { tabId, afterReload: true })
+    return true
+  }
+  broadcastStartupTrace('PING_FAILED', { tabId, afterReload: true })
+  return false
 }
 
 /**
@@ -164,7 +262,7 @@ async function handleStart(message) {
     debugLog('content script unavailable — refusing to start a run', { tabId })
     return { ok: false, state: null, reason: CONTENT_SCRIPT_UNAVAILABLE_MESSAGE }
   }
-  debugLog('CONTENT_SCRIPT_RECEIVED', { tabId })
+  broadcastStartupTrace('CONTENT_SCRIPT_RECEIVED', { tabId })
 
   const state = createInitialRunState({
     runId: crypto.randomUUID(),
@@ -183,6 +281,7 @@ async function handleStart(message) {
   debugLog('RUN_CREATED', { runId: state.runId })
 
   sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
+  broadcastStartupTrace('PROCESS_CURRENT_PAGE_SENT', { runId: state.runId })
   debugLog('PROCESS_CURRENT_PAGE sent', { runId: state.runId })
 
   await chrome.alarms.create(watchdogAlarmName(state.runId), { delayInMinutes: WATCHDOG_DELAY_MINUTES })
@@ -254,6 +353,29 @@ async function handleCheckActive(tabId) {
     return { shouldProcess: false, state, pendingAdvance: state.pendingAdvance }
   }
   return { shouldProcess: shouldContentScriptProcess(state, tabId), state, pendingAdvance: null }
+}
+
+/**
+ * FINAL SGS AUTO-RUN FIX (item 2/5) — a content script announces itself
+ * the moment it starts, including after an ASP.NET postback/reload —
+ * this is the explicit, named counterpart to content-script.js's own
+ * main() (which already asks AR_CHECK_ACTIVE and processes on its own
+ * whenever shouldProcess is true): main()'s own direct call and this
+ * handler's own AR_KICKOFF both funnel into the SAME processCurrentPage,
+ * which is idempotent per instance (its own `processing` re-entrancy
+ * guard — see content-script.js), so having both paths is a deliberate
+ * belt-and-suspenders, never a double-write risk. "No popup reopen
+ * required" (item 5) falls out of this for free: background reacts to
+ * the tab reconnecting on its own, without popup needing to be open at
+ * all.
+ */
+async function handleContentReady(tabId, { pageUrl }) {
+  broadcastStartupTrace('CONTENT_SCRIPT_RECEIVED', { tabId, pageUrl })
+  const state = await getState()
+  if (!shouldContentScriptProcess(state, tabId)) return { ok: true }
+  sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
+  broadcastStartupTrace('PROCESS_CURRENT_PAGE_SENT', { runId: state.runId, viaReload: true })
+  return { ok: true }
 }
 
 async function handlePendingAdvance(tabId, pendingAdvance) {
@@ -351,6 +473,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true
     case AR_MESSAGE.CHECK_ACTIVE:
       void handleCheckActive(senderTabId).then(sendResponse)
+      return true
+    case AR_MESSAGE.CONTENT_READY:
+      void handleContentReady(senderTabId, message).then(sendResponse)
       return true
     case AR_MESSAGE.PENDING_ADVANCE:
       void handlePendingAdvance(senderTabId, message.pendingAdvance).then(sendResponse)
