@@ -159,7 +159,8 @@ export function evaluateSingleCellTestPreconditions({
   // classroom NAME and SGS's own dropdown text are two different
   // systems' own labels and are never guaranteed to be byte-identical
   // even when they genuinely refer to the same subject/classroom (see
-  // popup.js's computeSubjectClassroomOk).
+  // popup.js's evaluateCurrentSubjectClassroomMatch, via
+  // subject-classroom-match.js).
   if (!subjectClassroomOk) {
     return { ok: false, reason: 'รายวิชา/ห้องเรียนในหน้า SGS ไม่ตรงกับ Bridge Payload ที่โหลดไว้ กรุณาตรวจสอบ' }
   }

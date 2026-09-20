@@ -45,6 +45,7 @@ import {
   pickBestStudentGridCandidate,
   sgsRowIndexFromKey,
 } from './lib/sgs-table-extraction.js'
+import { describeMatchVerdict, evaluateSubjectClassroomMatch } from './lib/subject-classroom-match.js'
 
 const DEFAULT_SGS_KEYWORD = 'sgs'
 const SESSION_PAYLOAD_KEY = 'sgsBridgeLoadedPayload'
@@ -115,6 +116,13 @@ const sctStudentCodeEl = document.getElementById('sct-student-code')
 const sctColumnLabelEl = document.getElementById('sct-column-label')
 const sctCurrentValueEl = document.getElementById('sct-current-value')
 const sctNewValueEl = document.getElementById('sct-new-value')
+const sctSubjectClassroomCheckEl = document.getElementById('sct-subject-classroom-check')
+const sctCheckSubjectKrunameEl = document.getElementById('sct-check-subject-kruname')
+const sctCheckSubjectSgsEl = document.getElementById('sct-check-subject-sgs')
+const sctCheckSubjectResultEl = document.getElementById('sct-check-subject-result')
+const sctCheckClassroomKrunameEl = document.getElementById('sct-check-classroom-kruname')
+const sctCheckClassroomSgsEl = document.getElementById('sct-check-classroom-sgs')
+const sctCheckClassroomResultEl = document.getElementById('sct-check-classroom-result')
 const sctGateReasonEl = document.getElementById('sct-gate-reason')
 const sctWriteWarningEl = document.getElementById('sct-write-warning')
 const sctConfirmCheckbox = document.getElementById('sct-confirm')
@@ -342,6 +350,7 @@ function resetSingleCellTestState() {
   sctStudentSelect.replaceChildren()
   sctColumnSelect.replaceChildren()
   sctPreviewEl.hidden = true
+  sctSubjectClassroomCheckEl.hidden = true
   sctGateReasonEl.hidden = true
   sctWriteWarningEl.hidden = true
   sctResultEl.hidden = true
@@ -856,6 +865,7 @@ function populateSingleCellTestPickers(plan, candidate) {
     }),
   )
   sctPreviewEl.hidden = true
+  sctSubjectClassroomCheckEl.hidden = true
   sctGateReasonEl.hidden = true
   sctWriteWarningEl.hidden = true
   sctResultEl.hidden = true
@@ -867,25 +877,51 @@ function populateSingleCellTestPickers(plan, candidate) {
 }
 
 /**
- * LIVE DISCOVERY (item 5): blocks the single-cell test only on a
- * CONFIRMED subject/classroom mismatch between the loaded payload and
- * SGS's own currently-selected filters — never when either side is
- * unknown/blank, since the two systems' own subject/classroom NAMES are
- * never guaranteed to be byte-identical even for the same actual
- * subject/classroom (different naming conventions between KrunameClass
- * and SGS). This is a defensive extra check, not the primary safety
- * mechanism — revalidateSingleCellTestContext still re-checks the exact
- * same filter text hasn't drifted between preview and write time.
+ * BUG FIX — LIVE DISCOVERY: this used to compare KrunameClass's own
+ * subjectName/classroomName against SGS's raw filter text with a plain
+ * `===`, which ALWAYS failed even for the correct subject/classroom —
+ * e.g. KrunameClass "สังคมศึกษา3" / "2/1" vs SGS's own filter text
+ * "ส22101 สังคมศึกษา3 ม.2" / "1" describe the SAME class (ม.2/1) but are
+ * never byte-identical. Real semantic matching now lives in
+ * subject-classroom-match.js (course code / normalized name for subject,
+ * parsed grade+section for classroom) — see its own doc comment for the
+ * full rationale, including which SGS elements are treated as
+ * authoritative. Still never blocks on missing/unknown data on either
+ * side — only a CONFIRMED mismatch blocks the single-cell test. This is
+ * a defensive extra check, not the primary safety mechanism —
+ * revalidateSingleCellTestContext still re-checks the exact same filter
+ * text hasn't drifted between preview and write time.
  */
-function computeSubjectClassroomOk() {
-  if (!loadedPayload || !currentGridFacts) return true
-  const payloadSubject = (loadedPayload.subjectName ?? '').trim()
-  const payloadClassroom = (loadedPayload.classroomName ?? '').trim()
-  const sgsSubject = (currentGridFacts.subjectFilter?.selectedText ?? '').trim()
-  const sgsClassroom = (currentGridFacts.classroomFilter?.selectedText ?? '').trim()
-  const subjectOk = !payloadSubject || !sgsSubject || payloadSubject === sgsSubject
-  const classroomOk = !payloadClassroom || !sgsClassroom || payloadClassroom === sgsClassroom
-  return subjectOk && classroomOk
+function evaluateCurrentSubjectClassroomMatch() {
+  if (!loadedPayload || !currentGridFacts) return null
+  return evaluateSubjectClassroomMatch({
+    krunameSubjectName: loadedPayload.subjectName,
+    krunameClassroomName: loadedPayload.classroomName,
+    sgsSubjectFilterText: currentGridFacts.subjectFilter?.selectedText ?? null,
+    sgsClassroomFilterText: currentGridFacts.classroomFilter?.selectedText ?? null,
+  })
+}
+
+/**
+ * The clear preview the fix requires: "KrunameClass: ม.2/1 / SGS: ม.2
+ * กลุ่ม 1 / ผลตรวจ: ตรงกัน" — shown for BOTH subject and classroom
+ * separately so a teacher can see exactly which half (if either) is the
+ * reason the single-cell test is blocked, rather than one opaque
+ * yes/no. Hides the whole block when there's nothing to compare yet
+ * (no payload loaded / no live scan run).
+ */
+function renderSubjectClassroomCheck(result) {
+  if (!result) {
+    sctSubjectClassroomCheckEl.hidden = true
+    return
+  }
+  sctCheckSubjectKrunameEl.textContent = loadedPayload?.subjectName || '-'
+  sctCheckSubjectSgsEl.textContent = currentGridFacts?.subjectFilter?.selectedText || '-'
+  sctCheckSubjectResultEl.textContent = describeMatchVerdict(result.subject)
+  sctCheckClassroomKrunameEl.textContent = result.classroom.krunameLabel ?? (loadedPayload?.classroomName || '-')
+  sctCheckClassroomSgsEl.textContent = result.classroom.sgsLabel ?? '-'
+  sctCheckClassroomResultEl.textContent = describeMatchVerdict(result.classroom)
+  sctSubjectClassroomCheckEl.hidden = false
 }
 
 /**
@@ -937,6 +973,9 @@ async function runSingleCellTestPreview() {
   sctNewValueEl.textContent = plan.valid ? String(plan.newValue) : formatSingleCellTestSummary(plan)
   sctPreviewEl.hidden = false
 
+  const subjectClassroomMatch = evaluateCurrentSubjectClassroomMatch()
+  renderSubjectClassroomCheck(subjectClassroomMatch)
+
   if (!plan.valid) {
     sctGateReasonEl.textContent = 'ไม่สามารถสร้างแผนทดลองเขียนได้ (ค่าคะแนนไม่ถูกต้อง)'
     sctGateReasonEl.hidden = false
@@ -964,7 +1003,7 @@ async function runSingleCellTestPreview() {
     // (i.e. currently-visible-page) SGS candidates — re-checked
     // explicitly rather than only relied upon implicitly.
     studentVisibleOnCurrentPage: planRow.mappingStatus === 'MATCHED',
-    subjectClassroomOk: computeSubjectClassroomOk(),
+    subjectClassroomOk: subjectClassroomMatch === null ? true : subjectClassroomMatch.ok,
   })
 
   if (!preconditions.ok) {
@@ -1003,6 +1042,7 @@ async function runSingleCellTestPreview() {
  * state from a PREVIOUS preview can never linger while a new one is
  * still loading. */
 function resetSingleCellTestGateOnly() {
+  sctSubjectClassroomCheckEl.hidden = true
   sctGateReasonEl.hidden = true
   sctWriteWarningEl.hidden = true
   sctResultEl.hidden = true
