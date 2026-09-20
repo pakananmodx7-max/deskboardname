@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { SGS_BRIDGE_PAYLOAD_VERSION, validateSgsBridgePayload } from '../src/lib/payload-validation.js'
+import {
+  SGS_BRIDGE_PAYLOAD_VERSION,
+  SGS_SCORE_WORKSPACE_PAYLOAD_KIND,
+  SGS_SCORE_WORKSPACE_PAYLOAD_VERSION,
+  validateAnySgsBridgePayload,
+  validateSgsBridgePayload,
+  validateSgsScoreWorkspacePayload,
+} from '../src/lib/payload-validation.js'
 
 const midterm = { key: 'midterm', label: 'กลางภาค', maxScore: 10 }
 
@@ -111,5 +118,101 @@ describe('validateSgsBridgePayload — never trusts a payload carrying credentia
 
   it('accepts a payload with no credential-like keys anywhere', () => {
     expect(validateSgsBridgePayload(validPayload()).ok).toBe(true)
+  })
+})
+
+// ==================================================
+// LIVE-DISCOVERY FOLLOW-UP — the SGS Score Workspace payload family
+// (kind: 'sgs_score_workspace'), a completely separate, independent
+// payload family from the assignment-scoped one above. See
+// src/types/sgs-score-workspace.ts's own doc comment for why the two
+// are never unified.
+// ==================================================
+
+function validWorkspacePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: SGS_SCORE_WORKSPACE_PAYLOAD_KIND,
+    version: SGS_SCORE_WORKSPACE_PAYLOAD_VERSION,
+    generatedAt: new Date().toISOString(),
+    subject: { id: 'sub-1', name: 'ประวัติศาสตร์ไทย' },
+    classroom: { id: 'cls-1', name: 'ม.5/1' },
+    targetColumn: { key: 'col-10', label: 'ช่อง 10', maxScore: 15 },
+    students: [{ studentId: 's1', studentNumber: 1, studentCode: '00001', fullName: 'สมชาย ใจดี', score: 10 }],
+    skippedStudentIds: [],
+    ...overrides,
+  }
+}
+
+describe('validateSgsScoreWorkspacePayload — the independent "คะแนน SGS" workspace payload', () => {
+  it('accepts a well-formed payload, including an explicit score of 0', () => {
+    expect(validateSgsScoreWorkspacePayload(validWorkspacePayload()).ok).toBe(true)
+    const withZero = validWorkspacePayload({
+      students: [{ studentId: 's2', studentNumber: 2, studentCode: null, fullName: 'ข', score: 0 }],
+    })
+    expect(validateSgsScoreWorkspacePayload(withZero).ok).toBe(true)
+  })
+
+  it('rejects a mismatched kind or version', () => {
+    expect(validateSgsScoreWorkspacePayload(validWorkspacePayload({ kind: 'assignment' })).ok).toBe(false)
+    expect(validateSgsScoreWorkspacePayload(validWorkspacePayload({ version: 999 })).ok).toBe(false)
+  })
+
+  it('rejects a score above targetColumn.maxScore — never silently accepted', () => {
+    const payload = validWorkspacePayload({
+      students: [{ studentId: 's1', studentNumber: 1, studentCode: null, fullName: 'ก', score: 999 }],
+    })
+    const result = validateSgsScoreWorkspacePayload(payload)
+    expect(result.ok).toBe(false)
+    expect(result.errors.some((e) => e.includes('เกินคะแนนเต็มของช่อง SGS'))).toBe(true)
+  })
+
+  it('rejects a null score inside students — a skipped student must never appear there', () => {
+    const payload = validWorkspacePayload({
+      students: [{ studentId: 's1', studentNumber: 1, studentCode: null, fullName: 'ก', score: null }],
+    })
+    expect(validateSgsScoreWorkspacePayload(payload).ok).toBe(false)
+  })
+
+  it('rejects a payload missing subject/classroom', () => {
+    expect(validateSgsScoreWorkspacePayload(validWorkspacePayload({ subject: undefined })).ok).toBe(false)
+    expect(validateSgsScoreWorkspacePayload(validWorkspacePayload({ classroom: undefined })).ok).toBe(false)
+  })
+
+  it('never trusts a payload carrying a credential-like key at any depth', () => {
+    const payload = validWorkspacePayload({ classroom: { id: 'cls-1', name: 'ม.5/1', sgsCookie: 'abc' } })
+    const result = validateSgsScoreWorkspacePayload(payload)
+    expect(result.ok).toBe(false)
+    expect(result.errors.some((e) => e.includes('ต้องสงสัย'))).toBe(true)
+  })
+})
+
+describe('validateAnySgsBridgePayload — dispatches by `kind`, never guesses from shape', () => {
+  it('dispatches a workspace-kind payload to validateSgsScoreWorkspacePayload', () => {
+    const result = validateAnySgsBridgePayload(validWorkspacePayload())
+    expect(result.kind).toBe(SGS_SCORE_WORKSPACE_PAYLOAD_KIND)
+    expect(result.validation.ok).toBe(true)
+  })
+
+  it('a workspace-kind payload that fails ITS OWN rules (e.g. over-max score) is reported invalid, never silently accepted by the wrong validator', () => {
+    const payload = validWorkspacePayload({
+      students: [{ studentId: 's1', studentNumber: 1, studentCode: null, fullName: 'ก', score: 999 }],
+    })
+    const result = validateAnySgsBridgePayload(payload)
+    expect(result.kind).toBe(SGS_SCORE_WORKSPACE_PAYLOAD_KIND)
+    expect(result.validation.ok).toBe(false)
+  })
+
+  it('a payload with no `kind` field at all (the legacy v2 file shape) is treated as assignment-kind by default', () => {
+    const legacyPayload = validPayload()
+    expect('kind' in legacyPayload).toBe(false)
+    const result = validateAnySgsBridgePayload(legacyPayload)
+    expect(result.kind).toBe('assignment')
+    expect(result.validation.ok).toBe(true)
+  })
+
+  it('an assignment-kind payload is validated by validateSgsBridgePayload, unaffected by the new workspace validator', () => {
+    const result = validateAnySgsBridgePayload(validPayload({ subjectName: '' }))
+    expect(result.kind).toBe('assignment')
+    expect(result.validation.ok).toBe(false)
   })
 })

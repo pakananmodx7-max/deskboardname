@@ -1,0 +1,97 @@
+/**
+ * The "คะแนน SGS" workspace — a grade model DELIBERATELY INDEPENDENT
+ * from `assignments`/`assignment_submissions` (see
+ * src/types/assignment.ts). An `SgsScoreColumn` is never an assignment:
+ * it exists only to mirror one real SGS score-entry column (e.g. "ช่อง
+ * 10" เต็ม 15, confirmed against the live SGS page via the SGS Bridge
+ * Chrome extension's diagnostic — see sgs-bridge/README.md), and writing
+ * a score here never touches, and is never derived from, a normal
+ * assignment grade. See docs/DATABASE.md Phase 16 for the full schema
+ * rationale (supabase/migrations/0023_sgs_score_workspace.sql).
+ */
+export interface SgsScoreColumn {
+  id: string
+  subjectId: string
+  classroomId: string
+  label: string
+  maxScore: number
+  position: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateSgsScoreColumnInput {
+  subjectId: string
+  classroomId: string
+  label: string
+  maxScore: number
+}
+
+/** One roster student's current SGS scores, keyed by `SgsScoreColumn.id`
+ * — `null` means "no score entered yet," never an implicit 0. */
+export interface SgsScoreWorkspaceRow {
+  studentId: string
+  studentNumber: number | null
+  studentCode: string | null
+  fullName: string
+  scoresByColumnId: Record<string, number | null>
+}
+
+// ==================================================
+// Bridge payload — a SEPARATE payload family from src/types/sgs-bridge.ts's
+// SgsBridgePayload (the assignment-scoped one, version 2). Deliberately
+// NOT unified with it and NOT sharing its `SGS_BRIDGE_PAYLOAD_VERSION`
+// constant: the two payloads describe fundamentally different score
+// sources (one assignment's assignment_submissions.score vs. one
+// sgs_score_columns row's sgs_scores.score) and must never be mistaken
+// for each other, in either direction. The extension tells them apart by
+// the explicit `kind` field below, never by guessing from shape.
+// ==================================================
+
+export const SGS_SCORE_WORKSPACE_PAYLOAD_VERSION = 1 as const
+export const SGS_SCORE_WORKSPACE_PAYLOAD_KIND = 'sgs_score_workspace' as const
+
+export interface SgsScoreWorkspaceColumnDefinition {
+  /** The `sgs_score_columns.id` this payload's scores came from — also
+   * doubles as the opaque, stable `key` the whole bridge/extension
+   * pipeline already uses to guarantee a write never crosses into a
+   * different column (see sgs-bridge/src/lib/sgs-real-fill.js). */
+  key: string
+  label: string
+  maxScore: number
+}
+
+export interface SgsScoreWorkspaceStudentScore {
+  studentId: string
+  studentNumber: number | null
+  studentCode: string | null
+  fullName: string
+  /** Always a finite number, 0 <= score <= targetColumn.maxScore. Never
+   * null — a null score means the student isn't in this array at all
+   * (see computeSgsScoreWorkspaceSendPlan's 'skip_no_score' action). */
+  score: number
+}
+
+export type SgsScoreWorkspaceSkipReason = 'no_score' | 'over_max_score'
+
+export interface SgsScoreWorkspaceSkippedStudent {
+  studentId: string
+  studentNumber: number | null
+  studentCode: string | null
+  fullName: string
+  reason: SgsScoreWorkspaceSkipReason
+}
+
+export interface SgsScoreWorkspacePayload {
+  kind: typeof SGS_SCORE_WORKSPACE_PAYLOAD_KIND
+  version: typeof SGS_SCORE_WORKSPACE_PAYLOAD_VERSION
+  /** ISO 8601 — when this payload was generated, for the teacher's own
+   * reference inside the extension; never used for auth or ordering. */
+  generatedAt: string
+  subject: { id: string; name: string }
+  classroom: { id: string; name: string }
+  /** The ONE SGS column this payload may ever write to. */
+  targetColumn: SgsScoreWorkspaceColumnDefinition
+  students: SgsScoreWorkspaceStudentScore[]
+  skippedStudentIds: SgsScoreWorkspaceSkippedStudent[]
+}

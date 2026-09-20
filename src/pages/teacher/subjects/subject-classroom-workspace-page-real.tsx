@@ -9,6 +9,7 @@ import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
 import { CheckAndGradesTab } from '@/features/subjects-real/tabs/check-and-grades-tab'
 import { LessonsTab } from '@/features/subjects-real/tabs/lessons-tab'
 import { OverviewTab } from '@/features/subjects-real/tabs/overview-tab'
+import { SgsScoresTab } from '@/features/subjects-real/tabs/sgs-scores-tab'
 import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
 import { buildSubjectClassroomPath, isClassroomLinkedToSubject } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
@@ -16,7 +17,7 @@ import { cn } from '@/lib/utils'
 import { getSubjectById, getSubjectClassroomsWithCounts } from '@/services/subject-service'
 import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
-type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'checkAndGrades'
+type TabKey = 'overview' | 'students' | 'attendance' | 'lessons' | 'checkAndGrades' | 'sgsScores'
 
 /** Exported (rather than kept module-private) so the exact tab set — and
  * specifically that Topics is gone — is unit-testable without rendering.
@@ -57,6 +58,11 @@ export const TABS: { key: TabKey; label: string }[] = [
   { key: 'attendance', label: 'เช็กชื่อ' },
   { key: 'lessons', label: 'บทเรียน' },
   { key: 'checkAndGrades', label: 'ตรวจงานและคะแนน' },
+  // Deliberately its OWN top-level tab, never merged into ตรวจงานและ
+  // คะแนน — see sgs-scores-tab.tsx's doc comment: this is a completely
+  // independent grade model (sgs_score_columns/sgs_scores, 0023) that
+  // must never be confused with, or computed from, assignment scores.
+  { key: 'sgsScores', label: 'คะแนน SGS' },
 ]
 
 /** The tabs actually rendered as pill buttons — TABS minus นักเรียน (see
@@ -298,6 +304,14 @@ export function SubjectClassroomWorkspacePageReal() {
         {activeTab === 'lessons' && <LessonsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'checkAndGrades' && (
           <CheckAndGradesTab subject={subject} classroomId={activeClassroomId} classroomName={currentLink.classroomName ?? ''} />
+        )}
+        {activeTab === 'sgsScores' && (
+          <SgsScoresTab
+            subjectId={subject.id}
+            subjectName={subject.name}
+            classroomId={activeClassroomId}
+            classroomName={currentLink.classroomName ?? ''}
+          />
         )}
       </div>
     </div>

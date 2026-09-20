@@ -88,17 +88,29 @@ and this extension (deliberately — that would require trusting the
 KrunameClass origin from inside the extension, which this prototype
 phase doesn't need). Instead:
 
-1. In KrunameClass, on an assignment's detail page, the teacher clicks
-   **"ส่งคะแนนไป SGS"**, reviews the preview dialog, and clicks
-   **"เตรียมส่งผ่าน SGS Bridge"**. This downloads a small `.json` file
-   (the "bridge payload") to their computer — see
-   `src/types/sgs-bridge.ts` for its exact shape.
+1. In KrunameClass, the teacher downloads a small `.json` "bridge
+   payload" file from ONE of two independent places:
+   - An assignment's detail page: **"ส่งคะแนนไป SGS"** → **"เตรียมส่งผ่าน
+     SGS Bridge"** (`src/types/sgs-bridge.ts`'s `SgsBridgePayload`, no
+     `kind` field — the original, assignment-scoped format).
+   - The **"คะแนน SGS"** tab of a subject+classroom workspace (a
+     completely independent grade model, never an assignment — see
+     `docs/DATABASE.md` Phase 16): **"ส่งไป SGS"** → pick one column →
+     **"ดาวน์โหลด Bridge Payload"** (`src/types/sgs-score-workspace.ts`'s
+     `SgsScoreWorkspacePayload`, `kind: 'sgs_score_workspace'`).
 2. In this extension's popup, the teacher picks that same file with the
-   file input under "1. โหลด Bridge Payload จาก KrunameClass".
+   file input under "1. โหลด Bridge Payload จาก KrunameClass" — either
+   file works interchangeably from this point on.
 3. The extension re-validates the file from scratch
-   (`src/lib/payload-validation.js`) before trusting anything in it —
-   never assumes a file on disk is safe just because KrunameClass
-   produced it.
+   (`src/lib/payload-validation.js`'s `validateAnySgsBridgePayload`,
+   which dispatches on the file's `kind` field — a payload missing
+   `kind` entirely is treated as the legacy assignment-scoped format)
+   before trusting anything in it — never assumes a file on disk is safe
+   just because KrunameClass produced it. Both formats are then
+   normalized (`popup.js`'s `normalizeLoadedPayload`) into the same
+   internal shape, so every later step (real-page inspection, column
+   matching, mapping, preview, the single-cell test) works identically
+   regardless of which page the file came from.
 
 ## Column-specific fill
 

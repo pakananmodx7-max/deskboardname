@@ -285,6 +285,28 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(allCalls[1][1]).toMatch(/tableIndex, run\.startIndex \+ sgsRowOffset, 1, columnIndex/)
   })
 
+  it('SGS Score Workspace payload: loading and restoring a payload both dispatch by `kind` via validateAnySgsBridgePayload, never the single-kind validator', () => {
+    expect(source).toContain('validateAnySgsBridgePayload')
+    expect(source).not.toMatch(/\bvalidateSgsBridgePayload\(/)
+    const allCalls = [...source.matchAll(/validateAnySgsBridgePayload\(([^)]*)\)/g)]
+    expect(allCalls.length).toBe(2)
+  })
+
+  it('every loaded/restored payload is normalized via normalizeLoadedPayload before any other function reads it, so the rest of this file never branches on payload shape itself', () => {
+    const loadFn = source.slice(source.indexOf('async function loadPayloadFromFile'), source.indexOf('function renderMappingResult'))
+    expect(loadFn).toContain('loadedPayload = normalizeLoadedPayload(parsed)')
+    const restoreFn = source.slice(source.indexOf('async function restoreSessionPayload'))
+    expect(restoreFn).toContain('loadedPayload = normalizeLoadedPayload(payload)')
+  })
+
+  it('normalizeLoadedPayload never invents an assignment title for the workspace-kind payload, and never fabricates an overwriteMode not present in the file', () => {
+    const fn = source.slice(source.indexOf('function normalizeLoadedPayload'), source.indexOf('function renderPreview'))
+    expect(fn).toContain('assignmentTitle: null')
+    expect(fn).toContain("overwriteMode: 'skip_existing'")
+    expect(fn).toContain('raw.subject.name')
+    expect(fn).toContain('raw.classroom.name')
+  })
+
   it('the real-page mapping (matchStudentsToSgs against the ACTUAL extracted rows) only runs from within runColumnPreview, using row text already read by collectAllTableRowFacts', () => {
     const fn = source.slice(source.indexOf('async function runColumnPreview'), source.indexOf('function renderRealFillPreview'))
     expect(fn).toContain('matchStudentsToSgs(krunameStudents, sgsCandidates)')

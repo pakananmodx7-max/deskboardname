@@ -21,6 +21,14 @@
  * on `overwriteMode` and whatever the extension reads as that column's
  * current value on the live SGS page (only the extension can know that;
  * see sgs-bridge/src/lib/column-fill.js).
+ *
+ * NOTE: this is the ASSIGNMENT-scoped payload family only (one
+ * assignment's `assignment_submissions.score`). A completely separate,
+ * independent payload family exists for the "คะแนน SGS" workspace (its
+ * own `sgs_score_columns`/`sgs_scores` data, never an assignment) — see
+ * `src/types/sgs-score-workspace.ts`'s `SgsScoreWorkspacePayload` and its
+ * own version/kind constants. The two are never unified: the extension
+ * tells them apart by an explicit `kind` field, never by shape-guessing.
  */
 export const SGS_BRIDGE_PAYLOAD_VERSION = 2 as const
 

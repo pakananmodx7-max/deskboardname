@@ -29,6 +29,121 @@ function findForbiddenKey(value, path = '') {
   return null
 }
 
+/**
+ * The SGS Score Workspace payload family — mirrors
+ * src/types/sgs-score-workspace.ts's SgsScoreWorkspacePayload and
+ * src/services/sgs-score-workspace-service.ts's own
+ * validateSgsScoreWorkspacePayload EXACTLY, for the same
+ * cannot-import-TS reason as the assignment-scoped validator above.
+ * Deliberately a SEPARATE version/kind namespace from
+ * SGS_BRIDGE_PAYLOAD_VERSION — see that TS file's own doc comment for
+ * why the two payload families must never be confused with each other.
+ * Dispatched by `validateAnySgsBridgePayload`'s `kind` check below, never
+ * guessed from shape.
+ */
+export const SGS_SCORE_WORKSPACE_PAYLOAD_VERSION = 1
+export const SGS_SCORE_WORKSPACE_PAYLOAD_KIND = 'sgs_score_workspace'
+
+export function validateSgsScoreWorkspacePayload(raw) {
+  const errors = []
+
+  if (typeof raw !== 'object' || raw === null) {
+    return { ok: false, errors: ['payload ต้องเป็น object'] }
+  }
+  const payload = raw
+
+  if (payload.kind !== SGS_SCORE_WORKSPACE_PAYLOAD_KIND) {
+    errors.push(`kind ไม่ถูกต้อง (คาดหวัง ${SGS_SCORE_WORKSPACE_PAYLOAD_KIND})`)
+  }
+  if (payload.version !== SGS_SCORE_WORKSPACE_PAYLOAD_VERSION) {
+    errors.push(`version ไม่ถูกต้อง (คาดหวัง ${SGS_SCORE_WORKSPACE_PAYLOAD_VERSION})`)
+  }
+
+  function requireNonEmptyString(value, fieldName) {
+    if (typeof value !== 'string' || value.trim() === '') {
+      errors.push(`${fieldName} ต้องเป็นข้อความที่ไม่ว่าง`)
+    }
+  }
+
+  const subject = payload.subject
+  if (typeof subject !== 'object' || subject === null) {
+    errors.push('subject ต้องเป็น object')
+  } else {
+    requireNonEmptyString(subject.id, 'subject.id')
+    requireNonEmptyString(subject.name, 'subject.name')
+  }
+
+  const classroom = payload.classroom
+  if (typeof classroom !== 'object' || classroom === null) {
+    errors.push('classroom ต้องเป็น object')
+  } else {
+    requireNonEmptyString(classroom.id, 'classroom.id')
+    requireNonEmptyString(classroom.name, 'classroom.name')
+  }
+
+  let targetColumnMaxScore = null
+  const targetColumn = payload.targetColumn
+  if (typeof targetColumn !== 'object' || targetColumn === null) {
+    errors.push('targetColumn ต้องเป็น object')
+  } else {
+    requireNonEmptyString(targetColumn.key, 'targetColumn.key')
+    requireNonEmptyString(targetColumn.label, 'targetColumn.label')
+    if (typeof targetColumn.maxScore !== 'number' || !Number.isFinite(targetColumn.maxScore) || targetColumn.maxScore <= 0) {
+      errors.push('targetColumn.maxScore ต้องเป็นตัวเลขมากกว่า 0')
+    } else {
+      targetColumnMaxScore = targetColumn.maxScore
+    }
+  }
+
+  if (!Array.isArray(payload.students)) {
+    errors.push('students ต้องเป็น array')
+  } else {
+    payload.students.forEach((row, index) => {
+      if (typeof row !== 'object' || row === null) {
+        errors.push(`students[${index}] ต้องเป็น object`)
+        return
+      }
+      requireNonEmptyString(row.studentId, `students[${index}].studentId`)
+      requireNonEmptyString(row.fullName, `students[${index}].fullName`)
+      if (row.studentNumber !== null && typeof row.studentNumber !== 'number') {
+        errors.push(`students[${index}].studentNumber ต้องเป็นตัวเลขหรือ null`)
+      }
+      if (row.studentCode !== null && typeof row.studentCode !== 'string') {
+        errors.push(`students[${index}].studentCode ต้องเป็นข้อความหรือ null`)
+      }
+      if (typeof row.score !== 'number' || !Number.isFinite(row.score)) {
+        errors.push(`students[${index}].score ต้องเป็นตัวเลข (ห้ามเป็น null)`)
+      } else {
+        if (row.score < 0) errors.push(`students[${index}].score ติดลบไม่ได้`)
+        if (targetColumnMaxScore !== null && row.score > targetColumnMaxScore) {
+          errors.push(`students[${index}].score (${row.score}) เกินคะแนนเต็มของช่อง SGS ที่เลือก (${targetColumnMaxScore})`)
+        }
+      }
+    })
+  }
+
+  const forbiddenPath = findForbiddenKey(payload)
+  if (forbiddenPath) {
+    errors.push(`payload ห้ามมีข้อมูลลับ (พบ key ต้องสงสัย: ${forbiddenPath})`)
+  }
+
+  return { ok: errors.length === 0, errors }
+}
+
+/**
+ * Dispatches to the right validator by the payload's explicit `kind`
+ * field — NEVER guessed from shape. A payload with no `kind` at all is
+ * the legacy assignment-scoped format (every payload built before this
+ * field existed) — treated as `'assignment'` by default, never rejected
+ * outright, so an already-downloaded v2 file keeps working.
+ */
+export function validateAnySgsBridgePayload(raw) {
+  if (typeof raw === 'object' && raw !== null && raw.kind === SGS_SCORE_WORKSPACE_PAYLOAD_KIND) {
+    return { kind: SGS_SCORE_WORKSPACE_PAYLOAD_KIND, validation: validateSgsScoreWorkspacePayload(raw) }
+  }
+  return { kind: 'assignment', validation: validateSgsBridgePayload(raw) }
+}
+
 export function validateSgsBridgePayload(raw) {
   const errors = []
 

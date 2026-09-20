@@ -12,7 +12,7 @@ import {
   formatDiagnosticReportForCopy,
 } from './lib/diagnostic-report.js'
 import { matchStudentsToSgs } from './lib/mapping.js'
-import { validateSgsBridgePayload } from './lib/payload-validation.js'
+import { validateAnySgsBridgePayload } from './lib/payload-validation.js'
 import {
   computeSgsRealFillPlan,
   formatSgsExistingScoreDisplay as formatRealExistingScoreDisplay,
@@ -171,10 +171,54 @@ function parseIntOrNull(text) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+/**
+ * Two payload FAMILIES can reach this popup — the original
+ * assignment-scoped one (no `kind` field, implicitly 'assignment') and
+ * the newer, completely independent "คะแนน SGS" workspace payload
+ * (`kind: 'sgs_score_workspace'`, see src/types/sgs-score-workspace.ts).
+ * Normalizing both into this one internal shape right after validation
+ * is what lets every other function in this file (renderPreview,
+ * runRealColumnInspection, runColumnPreview, ...) stay completely
+ * unaware of which family a given file came from — they only ever read
+ * subjectName/classroomName/targetColumn/overwriteMode/students/
+ * skippedStudentIds, never the raw file's own field names.
+ * `assignmentTitle: null` and `overwriteMode: 'skip_existing'` are the
+ * new family's honest defaults: it has no assignment concept, and no
+ * existing-SGS-value source at payload-build time (see
+ * sgs-score-workspace-service.ts's own doc comment) — 'skip_existing'
+ * only affects the informational preview's action bucketing here, never
+ * a real write (bulk write was removed entirely — see item 4 of the
+ * live-discovery redesign).
+ */
+function normalizeLoadedPayload(raw) {
+  if (raw.kind === 'sgs_score_workspace') {
+    return {
+      kind: 'sgs_score_workspace',
+      subjectName: raw.subject.name,
+      classroomName: raw.classroom.name,
+      assignmentTitle: null,
+      targetColumn: raw.targetColumn,
+      overwriteMode: 'skip_existing',
+      students: raw.students,
+      skippedStudentIds: raw.skippedStudentIds,
+    }
+  }
+  return {
+    kind: 'assignment',
+    subjectName: raw.subjectName,
+    classroomName: raw.classroomName,
+    assignmentTitle: raw.assignmentTitle,
+    targetColumn: raw.targetColumn,
+    overwriteMode: raw.overwriteMode,
+    students: raw.students,
+    skippedStudentIds: raw.skippedStudentIds,
+  }
+}
+
 function renderPreview(payload) {
   document.getElementById('preview-subject').textContent = payload.subjectName
   document.getElementById('preview-classroom').textContent = payload.classroomName
-  document.getElementById('preview-assignment').textContent = payload.assignmentTitle
+  document.getElementById('preview-assignment').textContent = payload.assignmentTitle ?? 'ไม่มี (คะแนน SGS โดยตรง)'
   document.getElementById('preview-target-column').textContent = payload.targetColumn.label
   document.getElementById('preview-target-column-inline').textContent = payload.targetColumn.label
   document.getElementById('preview-max-score').textContent = String(payload.targetColumn.maxScore)
@@ -263,17 +307,17 @@ async function loadPayloadFromFile(file) {
     return
   }
 
-  const validation = validateSgsBridgePayload(parsed)
+  const { validation } = validateAnySgsBridgePayload(parsed)
   if (!validation.ok) {
     payloadErrorEl.textContent = `ไฟล์ไม่ผ่านการตรวจสอบ: ${validation.errors.join(', ')}`
     payloadErrorEl.hidden = false
     return
   }
 
-  loadedPayload = parsed
-  renderPreview(parsed)
+  loadedPayload = normalizeLoadedPayload(parsed)
+  renderPreview(loadedPayload)
   // Session storage only — cleared when the browser closes, never
-  // synced, never contains a credential (validateSgsBridgePayload
+  // synced, never contains a credential (validateAnySgsBridgePayload
   // above already rejects any payload that does). Purely a convenience
   // so re-opening the popup doesn't require re-picking the file.
   await chrome.storage.session.set({ [SESSION_PAYLOAD_KEY]: parsed })
@@ -762,9 +806,9 @@ sctPreviewBtn.addEventListener('click', () => {
 async function restoreSessionPayload() {
   const stored = await chrome.storage.session.get(SESSION_PAYLOAD_KEY)
   const payload = stored[SESSION_PAYLOAD_KEY]
-  if (payload && validateSgsBridgePayload(payload).ok) {
-    loadedPayload = payload
-    renderPreview(payload)
+  if (payload && validateAnySgsBridgePayload(payload).validation.ok) {
+    loadedPayload = normalizeLoadedPayload(payload)
+    renderPreview(loadedPayload)
   }
 }
 

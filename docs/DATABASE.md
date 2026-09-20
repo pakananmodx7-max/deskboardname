@@ -2118,3 +2118,91 @@ not just argued, before this migration was finalized.
 
 **Yes** — `supabase/migrations/0011_student_portal_read_access.sql`,
 **not applied automatically**. 0001–0010 are untouched.
+
+# Phase 16: SGS Score Workspace — independent of assignment grades (0023)
+
+## Scope
+
+The SGS Bridge Chrome extension prototype (`sgs-bridge/`) needed a real,
+persisted source of scores to send to the live SGS system — until now
+the only export path was `sgs-export-dialog.tsx`, which reshapes
+`assignment_submissions.score` for ONE assignment at a time. That's
+wrong for SGS: a real SGS score column (e.g. "ช่อง 10 เต็ม 15", "กลางภาค
+เต็ม 10") is not an assignment and must never be confused with one — a
+teacher enters SGS-column scores directly, completely separately from
+however they grade normal assignments.
+
+This phase adds a genuinely independent grade model, mirroring
+`assignments`/`assignment_submissions` (0006) both in shape and in RLS
+approach, but with its own two tables so an SGS-column score can never
+alias, overwrite, or be computed from an assignment score, or vice versa.
+
+## Schema
+
+- **`sgs_score_columns`** — one row per teacher-defined SGS column,
+  always tied to both `subject_id` AND `classroom_id` (same "never a
+  bare subject-wide thing" rule as `assignments`). `label` + `max_score`
+  are whatever the real SGS page's column actually is (confirmed via the
+  extension's live diagnostic, see `sgs-bridge/README.md`) — there is no
+  live connection from this app to SGS, so nothing here is
+  auto-discovered; the teacher types it in once. `unique(subject_id,
+  classroom_id, label)`.
+- **`sgs_scores`** — one row per `(column_id, student_id)`, `score`
+  nullable (no score entered yet, never conflated with an explicit 0) —
+  same shape as `assignment_submissions`. References `students.id`
+  directly (never a `classroom_students` join row), matching
+  `assignment_submissions.student_id`'s own reasoning: classroom
+  membership is ephemeral, score history must not evaporate when it
+  changes.
+
+Both tables `on delete cascade` from `subject_id`/`classroom_id`
+(matching `assignments`, not `attendance_sessions`'s `restrict`), so
+`delete_subject_permanently` (0022) needs no changes — cascade already
+handles it, the same as it already does for `assignments`/`topics`.
+
+## RLS
+
+Identical ownership derivation to `assignments`/`assignment_submissions`
+(0006): `sgs_score_columns` ownership is `classroom_id →
+classrooms.teacher_id` (checked directly, with the same four-part
+subject+classroom+link+`created_by` check on INSERT); `sgs_scores`
+ownership is derived one hop further, through `column_id →
+sgs_score_columns → classrooms.teacher_id`. The one deliberate
+difference from `assignments`: `sgs_score_columns` DOES get a DELETE
+policy (`sgs_score_columns_delete_own`) — unlike an assignment, an SGS
+column is teacher-defined *configuration* mirroring an external system's
+own structure, so removing a mistakenly-created one (wrong label/max
+score, no scores entered yet) must be possible; `sgs_scores` itself
+keeps the same no-delete stance as `assignment_submissions` (clearing a
+score is `UPDATE ... SET score = null`, never a row deletion).
+
+## Frontend
+
+- **`src/types/sgs-score-workspace.ts`** (new) — `SgsScoreColumn`,
+  `SgsScoreWorkspaceRow`, and the new payload types
+  (`SgsScoreWorkspacePayload`, versioned independently of the existing
+  assignment-scoped `SgsBridgePayload` in `src/types/sgs-bridge.ts` —
+  see that file's own doc comment for why the two are never unified).
+- **`src/services/sgs-score-workspace-service.ts`** (new) — column
+  CRUD + score upsert (real Supabase I/O), plus pure functions
+  (`computeSgsScoreWorkspaceSendPlan`, `buildSgsScoreWorkspacePayload`,
+  `validateSgsScoreWorkspacePayload`) mirroring `sgs-export-service.ts`'s
+  own null/zero/max-score rules exactly, unit-tested without a live
+  fetch.
+- **`src/features/subjects-real/tabs/sgs-scores-tab.tsx`** (new) — the
+  "คะแนน SGS" spreadsheet (เลขที่/รหัสนักเรียน/ชื่อ-นามสกุล + one column
+  per `sgs_score_columns` row) and the "[ส่งไป SGS]" → column picker →
+  preview → "[ดาวน์โหลด Bridge Payload]" flow. Added as a NEW top-level
+  tab in `subject-classroom-workspace-page-real.tsx` (real mode only —
+  this whole phase is real-Supabase-data-only by design, matching the
+  task's explicit "do not use demo students for the payload").
+- The SGS Bridge extension (`sgs-bridge/src/lib/payload-validation.js`,
+  `popup.js`, `popup.html`) now accepts this new payload alongside the
+  existing assignment-scoped one, dispatching on an explicit `kind`
+  field (`'sgs_score_workspace'` vs. the implicit legacy `'assignment'`
+  default) — never guessing which shape a loaded file is.
+
+## Is a migration required?
+
+**Yes** — `supabase/migrations/0023_sgs_score_workspace.sql`, **not
+applied automatically**. 0001–0022 are untouched.
