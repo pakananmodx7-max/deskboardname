@@ -495,85 +495,156 @@ export function readSingleColumnCellValue(tableIndex, rowIndex, columnIndex) {
 }
 
 /**
- * NEXT PHASE — the ONLY page-advance mechanism this extension ever
- * attempts, and only when it can find a clickable page-number link using
- * the EXACT SAME "row of page-number links" shape
- * sgs-table-extraction.js's detectPagination fallback path already
- * trusts — never a guessed "next"/">"/arrow-icon button selector. On the
- * real, live-confirmed SGS page (plain TEXT pagination — "32 รายการ" /
- * "10 / หน้า" / "page 1 of 4", with NO row of page-number links at all),
- * this correctly finds nothing and reports back
- * `{advanced: false, reason: 'no_confirmed_next_page_control'}` — the
- * caller (popup.js's auto-run engine) then falls back to the
- * semi-automatic "ดำเนินการต่อ" flow (item 11), exactly as it must when
- * a safe control has never been confirmed on the actual page shape.
+ * BUG FIX — auto-run's page-advance previously only ever looked for a
+ * ROW OF PLAIN-TEXT NUMERIC LINKS (the old ASP.NET GridView pager shape
+ * this replaced). The real, now-confirmed SGS pagination is a compact
+ * button cluster — "[<<] [<] [1] ของ 4 [>] [>>]" — never a row of bare
+ * number links, so that heuristic correctly found nothing and always
+ * fell back to manual continue (the SAFE outcome, but not the automatic
+ * one this phase adds).
  *
- * When a row-of-links pager IS found, clicks the link whose visible text
- * equals `expectedNextPage`, then polls (bounded by `timeoutMs`) for the
- * confirmed grid's own row content to actually change before returning —
- * a click alone is never trusted as proof the page changed (item 4:
- * "wait for old student rows to disappear/change ... re-scan the page
- * from scratch").
+ * This function only ever COLLECTS candidates — it never decides which
+ * one is "Next" (that pure classification, DOM-free and fully unit
+ * tested, lives in pagination-control.js's findSgsNextPageControl) and
+ * never clicks anything. Anchored to the FIRST text node anywhere on the
+ * page matching "<number> ของ <number>" (Thai "of") — the exact live-
+ * reported pattern — then walks up a bounded number of ancestor levels
+ * to the smallest container that also holds at least one clickable-
+ * looking element, since a real pager is always a small, compact
+ * cluster, never the whole page body. Read-only.
  */
-export async function advanceToNextSgsPage(tableIndex, runStartIndex, runLength, expectedNextPage, timeoutMs = 4000) {
-  const PAGE_NUMBER_PATTERN = /^\d{1,3}$/
+export function inspectPaginationControls() {
+  const OF_PATTERN = /(\d+)\s*ของ\s*(\d+)/
+  const CLICKABLE_SELECTOR = 'a,button,input[type="button"],input[type="submit"],input[type="image"],[onclick]'
 
-  function fingerprintGrid() {
-    const table = document.querySelectorAll('table')[tableIndex]
-    if (!table) return null
-    const rows = Array.from(table.rows).slice(runStartIndex, runStartIndex + runLength)
-    return rows
-      .map((row) =>
-        Array.from(row.cells)
-          .map((c) => (c.textContent || '').trim())
-          .join('|'),
-      )
-      .join('||')
+  function textOf(el) {
+    return el && el.textContent ? el.textContent.trim().replace(/\s+/g, ' ') : ''
   }
 
-  const beforeFingerprint = fingerprintGrid()
-  if (beforeFingerprint === null) {
-    return { advanced: false, reason: 'no_confirmed_next_page_control' }
-  }
-
-  let nextLink = null
-  const tables = Array.from(document.querySelectorAll('table'))
-  outer: for (let ti = 0; ti < tables.length; ti++) {
-    const isGridTable = ti === tableIndex
-    const rows = Array.from(tables[ti].rows)
-    for (let ri = 0; ri < rows.length; ri++) {
-      if (isGridTable && ri >= runStartIndex && ri < runStartIndex + runLength) continue // never mistake a student data row for a pager row
-      const cells = Array.from(rows[ri].cells)
-      if (cells.some((c) => c.querySelector('input,select,textarea'))) continue
-      const nonEmpty = cells.filter((c) => (c.textContent || '').trim() !== '')
-      if (nonEmpty.length < 2) continue
-      // Every non-empty cell in the row must look like a page number —
-      // a row mixing page numbers with unrelated labels isn't a pager
-      // (matches detectPagination's own fallback exactly).
-      const allNumeric = nonEmpty.every((c) => PAGE_NUMBER_PATTERN.test((c.textContent || '').trim()))
-      if (!allNumeric) continue
-      const match = nonEmpty.find((c) => (c.textContent || '').trim() === String(expectedNextPage))
-      const link = match ? match.querySelector('a') : null
-      if (link) {
-        nextLink = link
-        break outer
-      }
+  function describeCandidate(el) {
+    const tag = el.tagName.toLowerCase()
+    const type = tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : null
+    const text = tag === 'input' ? el.value || el.getAttribute('alt') || el.getAttribute('title') || '' : textOf(el)
+    return {
+      tag,
+      id: el.id || null,
+      name: el.getAttribute('name') || null,
+      type,
+      text: (text || '').trim(),
+      onclick: el.getAttribute('onclick'),
+      href: el.getAttribute('href'),
+      disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true',
     }
   }
 
-  if (!nextLink) {
-    return { advanced: false, reason: 'no_confirmed_next_page_control' }
-  }
-
-  nextLink.click()
-
-  const start = Date.now()
-  while (Date.now() - start < timeoutMs) {
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    const after = fingerprintGrid()
-    if (after !== null && after !== beforeFingerprint) {
-      return { advanced: true, reason: null }
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  let anchorNode = null
+  let match = null
+  let node
+  while ((node = walker.nextNode())) {
+    const text = (node.textContent || '').trim()
+    const found = OF_PATTERN.exec(text)
+    if (found) {
+      anchorNode = node
+      match = found
+      break
     }
   }
-  return { advanced: false, reason: 'timeout_waiting_for_page_change' }
+
+  if (!anchorNode) {
+    return { found: false, currentPageText: null, totalPagesText: null, candidates: [] }
+  }
+
+  let container = anchorNode.parentElement
+  let clickableEls = []
+  for (let depth = 0; depth < 5 && container; depth++) {
+    clickableEls = Array.from(container.querySelectorAll(CLICKABLE_SELECTOR))
+    if (clickableEls.length > 0) break
+    container = container.parentElement
+  }
+
+  return {
+    found: true,
+    currentPageText: match[1],
+    totalPagesText: match[2],
+    candidates: clickableEls.map(describeCandidate),
+  }
+}
+
+/**
+ * item 4: triggers the REAL Next control's own native handler with a
+ * plain, ordinary click call — the default browser action is never
+ * suppressed first, so an ASP.NET `__doPostBack` (or any other wiring
+ * already on the element) fires exactly as it would for a genuine
+ * teacher click; this never simulates a postback itself. Re-locates the
+ * element FRESH in this SEPARATE
+ * executeScript call (an element reference from inspectPaginationControls'
+ * own call cannot be reused here — see popup.js's own note on why the
+ * two are split into independent calls) — by id when the confirmed
+ * descriptor has one (the most stable identity), otherwise by an exact
+ * match on every other captured field, never a looser guess that could
+ * silently click a different control in the same cluster.
+ */
+export function clickPaginationControl(descriptor) {
+  const OF_PATTERN = /(\d+)\s*ของ\s*(\d+)/
+  const CLICKABLE_SELECTOR = 'a,button,input[type="button"],input[type="submit"],input[type="image"],[onclick]'
+
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+  let anchorNode = null
+  let node
+  while ((node = walker.nextNode())) {
+    if (OF_PATTERN.test((node.textContent || '').trim())) {
+      anchorNode = node
+      break
+    }
+  }
+  if (!anchorNode) return { clicked: false }
+
+  let container = anchorNode.parentElement
+  let elements = []
+  for (let depth = 0; depth < 5 && container; depth++) {
+    elements = Array.from(container.querySelectorAll(CLICKABLE_SELECTOR))
+    if (elements.length > 0) break
+    container = container.parentElement
+  }
+
+  function describe(el) {
+    const tag = el.tagName.toLowerCase()
+    const text = tag === 'input' ? el.value || el.getAttribute('alt') || el.getAttribute('title') || '' : (el.textContent || '').trim()
+    return { tag, id: el.id || null, onclick: el.getAttribute('onclick'), href: el.getAttribute('href'), text: (text || '').trim() }
+  }
+
+  let target = descriptor.id ? elements.find((el) => el.id === descriptor.id) : null
+  if (!target) {
+    target = elements.find((el) => {
+      const d = describe(el)
+      return d.tag === descriptor.tag && d.text === descriptor.text && d.onclick === descriptor.onclick && d.href === descriptor.href
+    })
+  }
+
+  if (!target) return { clicked: false }
+  target.click()
+  return { clicked: true }
+}
+
+/**
+ * item 3's "current grid fingerprint" — the confirmed run's own row text,
+ * read fresh in ITS OWN executeScript call so it can be captured once
+ * right before a click and again afterward (from two independent calls,
+ * which safely survive an intervening full-page navigation that would
+ * destroy any single long-running injected function — see popup.js's own
+ * note on why the old single-call polling approach was fragile against a
+ * real ASP.NET postback). Read-only.
+ */
+export function readGridFingerprint(tableIndex, runStartIndex, runLength) {
+  const table = document.querySelectorAll('table')[tableIndex]
+  if (!table) return null
+  const rows = Array.from(table.rows).slice(runStartIndex, runStartIndex + runLength)
+  return rows
+    .map((row) =>
+      Array.from(row.cells)
+        .map((c) => (c.textContent || '').trim())
+        .join('|'),
+    )
+    .join('||')
 }

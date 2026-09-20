@@ -70,11 +70,10 @@ describe('evaluateAutoRunStopCondition', () => {
       columnWritableNow: true,
       headerCheckboxOk: true,
       hasAmbiguousWriteCandidate: false,
-      pageAdvancement: null,
     }
   }
 
-  it('does not stop when everything holds and no page advancement was attempted yet (first page)', () => {
+  it('does not stop when everything holds', () => {
     expect(evaluateAutoRunStopCondition(okInput())).toEqual({ shouldStop: false, reason: null })
   })
 
@@ -104,18 +103,13 @@ describe('evaluateAutoRunStopCondition', () => {
     expect(evaluateAutoRunStopCondition({ ...okInput(), hasAmbiguousWriteCandidate: true }).shouldStop).toBe(true)
   })
 
-  it('stops when a page-advancement attempt failed', () => {
+  it('a page-advance failure surfaces here ONLY as a confirmed context mismatch (via contextRevalidation) — a merely-unconfirmed advance is handled by popup.js\'s manual-continue fallback, never this stop gate', () => {
     const result = evaluateAutoRunStopCondition({
       ...okInput(),
-      pageAdvancement: { ok: false, reason: 'timeout_waiting_for_page_change' },
+      contextRevalidation: { ok: false, reason: 'รายวิชาบนหน้า SGS เปลี่ยนไปหลังเปลี่ยนหน้า — หยุดเพื่อความปลอดภัย' },
     })
     expect(result.shouldStop).toBe(true)
-    expect(result.reason).toBe('timeout_waiting_for_page_change')
-  })
-
-  it('does not stop when a page-advancement attempt succeeded', () => {
-    const result = evaluateAutoRunStopCondition({ ...okInput(), pageAdvancement: { ok: true, reason: null } })
-    expect(result.shouldStop).toBe(false)
+    expect(result.reason).toContain('รายวิชา')
   })
 
   it('checks conditions in a fixed order — the FIRST failing one wins, never a batch', () => {
@@ -256,5 +250,44 @@ describe('buildAutoRunReport — item 9\'s downloadable/copyable report', () => 
     const serialized = JSON.stringify(report)
     expect(serialized).not.toContain('internal-uuid')
     expect(serialized.toLowerCase()).not.toMatch(/password|token|cookie|secret|credential|session/)
+  })
+})
+
+describe('BUG FIX — accumulated results survive all 4 SGS pages of a real 32-student classroom', () => {
+  it('merges four 8-student pages into one correct final total, with pagesProcessed listing every page in order', () => {
+    let summary = emptyAutoRunSummary()
+    let allResults: unknown[] = []
+    const pagesProcessed: number[] = []
+
+    for (let page = 1; page <= 4; page++) {
+      const students = Array.from({ length: 8 }, (_, i) => kn(`k${page}-${i}`, i + 1, `นักเรียน ${page}-${i}`, i === 0 ? null : 5))
+      const mappings = students.map((_, i) => (i === 0 ? matched(`row-${i}`) : matched(`row-${i}`)))
+      const plan = computeWholeColumnPlan(students, mappings, {}, 'skip_existing', 15)
+      const { writesByOffset } = buildWholeColumnWriteInstructions(plan, 4)
+      const fillResult = { found: true, writtenCount: Object.keys(writesByOffset).length, missingOffsets: [] }
+      const freshValuesResult = { found: true, values: writesByOffset }
+      const verified = verifyWholeColumnWrite(plan, writesByOffset, fillResult, freshValuesResult)
+      summary = mergeAutoRunSummaries(summary, summarizeAutoRunPageResult(verified))
+      allResults = allResults.concat(verified)
+      pagesProcessed.push(page)
+    }
+
+    // 4 pages x 8 students = 32; one blank score per page -> 4 skipped,
+    // the other 28 all written successfully.
+    expect(summary.written).toBe(28)
+    expect(summary.skippedNoScore).toBe(4)
+    expect(summary.failed).toBe(0)
+    expect(allResults.length).toBe(32)
+    expect(pagesProcessed).toEqual([1, 2, 3, 4])
+
+    const report = buildAutoRunReport({
+      subjectName: 'สังคมศึกษา3',
+      classroomName: '2/1',
+      columnLabel: 'ช่อง 10',
+      pagesProcessed,
+      perStudentResults: allResults as never,
+    })
+    expect(report.students.length).toBe(32)
+    expect(report.pagesProcessed).toEqual([1, 2, 3, 4])
   })
 })

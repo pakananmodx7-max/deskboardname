@@ -57,7 +57,9 @@ const CONTENT_DIAGNOSTIC_FUNCTIONS = [
   'fillSgsColumnValues',
   'readSingleCellRevalidationState',
   'readSingleColumnCellValue',
-  'advanceToNextSgsPage',
+  'inspectPaginationControls',
+  'clickPaginationControl',
+  'readGridFingerprint',
 ]
 
 describe('BUG FIX — known filter ids, never a CSS selector string passed to getElementById', () => {
@@ -288,41 +290,76 @@ describe('NEXT PHASE — content-diagnostic.js: readSingleColumnCellValue, the a
   })
 })
 
-describe('NEXT PHASE — content-diagnostic.js: advanceToNextSgsPage, the ONLY page-advance mechanism, and only via an already-confirmed pagination shape', () => {
-  const source = sliceFunction(contentDiagnosticSource, 'advanceToNextSgsPage', CONTENT_DIAGNOSTIC_FUNCTIONS)
+describe('BUG FIX — content-diagnostic.js: inspectPaginationControls, read-only collection of the REAL "<< < 1 ของ 4 > >>" pager cluster', () => {
+  const source = sliceFunction(contentDiagnosticSource, 'inspectPaginationControls', CONTENT_DIAGNOSTIC_FUNCTIONS)
 
   it('never touches document.cookie, localStorage, or sessionStorage', () => {
     expect(source).not.toMatch(/document\.cookie/)
     expect(source).not.toMatch(/localStorage|sessionStorage/)
   })
 
-  it('the ONLY .click() call in this whole file is here, and only ever on a link cell found by the SAME row-of-page-number-links shape detectPagination already trusts — never a guessed "next"/arrow/icon button selector', () => {
-    expect(contentDiagnosticSource.match(/\.click\(\)/g)?.length).toBe(1)
-    expect(source).toContain('nextLink.click()')
-    expect(source).toContain('PAGE_NUMBER_PATTERN')
-    expect(source).toContain("match.querySelector('a')")
+  it('never calls .click() — this function only ever COLLECTS candidates, never decides or acts', () => {
+    expect(source).not.toMatch(/\.click\(\)/)
   })
 
-  it('never clicks anything inside the confirmed student grid run — the pager search explicitly excludes the run\'s own row range', () => {
-    expect(source).toMatch(/isGridTable && ri >= runStartIndex && ri < runStartIndex \+ runLength\) continue/)
+  it('never writes to .value/.checked — read-only', () => {
+    expect(source).not.toMatch(/\.value\s*=(?!=)/)
+    expect(source).not.toMatch(/\.checked\s*=(?!=)/)
   })
 
-  it('never assumes a click alone means the page changed — polls a fingerprint of the SAME confirmed grid range for an actual change, bounded by timeoutMs, before ever reporting advanced: true', () => {
-    expect(source).toContain('fingerprintGrid()')
-    expect(source).toMatch(/while \(Date\.now\(\) - start < timeoutMs\)/)
-    expect(source).toMatch(/after !== null && after !== beforeFingerprint/)
+  it('anchors to the real live-reported "N ของ M" text pattern, never a guessed selector', () => {
+    expect(source).toContain('OF_PATTERN')
+    expect(source).toContain('ของ')
   })
 
-  it('reports an honest "no confirmed control" reason (never advancing) when no row-of-links pager is found — the real, live-confirmed SGS page (text-only pagination) always takes this path', () => {
-    expect(source).toContain("reason: 'no_confirmed_next_page_control'")
-    const noLinkPaths = [...source.matchAll(/return \{ advanced: false, reason: '([^']+)' \}/g)].map((m) => m[1])
-    expect(noLinkPaths).toContain('no_confirmed_next_page_control')
-    expect(noLinkPaths).toContain('timeout_waiting_for_page_change')
+  it('supports every real ASP.NET control mechanism the spec lists — anchors, buttons, input[type=image], and a plain onclick — never assumes only one', () => {
+    expect(source).toContain('CLICKABLE_SELECTOR')
+    expect(source).toMatch(/input\[type="image"\]/)
+    expect(source).toMatch(/\[onclick\]/)
   })
 
-  it('never toggles a checkbox and never writes an input value — the click target is only ever an <a> pager link', () => {
+  it('returns the full diagnostic metadata the spec requires: tag, id, name, type, onclick/href, disabled', () => {
+    for (const field of ['tag', 'id', 'name', 'type', 'onclick', 'href', 'disabled']) {
+      expect(source).toContain(field)
+    }
+  })
+})
+
+describe('BUG FIX — content-diagnostic.js: clickPaginationControl, the ONLY page-advance click in this whole file', () => {
+  const source = sliceFunction(contentDiagnosticSource, 'clickPaginationControl', CONTENT_DIAGNOSTIC_FUNCTIONS)
+
+  it('the ONLY .click() call anywhere in content-diagnostic.js', () => {
+    const allClicks = [...contentDiagnosticSource.matchAll(/\.click\(\)/g)]
+    expect(allClicks.length).toBe(1)
+    expect(source).toContain('target.click()')
+  })
+
+  it('never calls preventDefault — item 4: "allow the normal page event/postback to execute"', () => {
+    expect(contentDiagnosticSource).not.toMatch(/\.preventDefault\(/)
+  })
+
+  it('re-locates the element fresh by id first, then by an EXACT match on every other captured field — never a loose/partial match that could click a different control', () => {
+    expect(source).toMatch(/elements\.find\(\(el\) => el\.id === descriptor\.id\)/)
+    expect(source).toMatch(/d\.tag === descriptor\.tag && d\.text === descriptor\.text && d\.onclick === descriptor\.onclick && d\.href === descriptor\.href/)
+  })
+
+  it('never toggles a checkbox and never writes an input value — the click target is only ever a pagination control, never a score cell', () => {
     expect(source).not.toMatch(/\.checked\s*=(?!=)/)
     expect(source).not.toMatch(/\.value\s*=(?!=)/)
+  })
+})
+
+describe('BUG FIX — content-diagnostic.js: readGridFingerprint, a standalone read reusable both before and after a click', () => {
+  const source = sliceFunction(contentDiagnosticSource, 'readGridFingerprint', CONTENT_DIAGNOSTIC_FUNCTIONS)
+
+  it('locates the table by the CONFIRMED tableIndex argument, never a re-run heuristic guess', () => {
+    expect(source).toContain("document.querySelectorAll('table')[tableIndex]")
+  })
+
+  it('read-only, and scoped to only the confirmed run range (runStartIndex..+runLength)', () => {
+    expect(source).not.toMatch(/\.value\s*=(?!=)/)
+    expect(source).not.toMatch(/\.click\(\)/)
+    expect(source).toContain('runStartIndex, runStartIndex + runLength')
   })
 })
 
@@ -533,25 +570,31 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toMatch(/if \(arStopRequested\) \{[\s\S]{0,400}continue\s*\n\s*\}/)
   })
 
-  it('NEXT PHASE (auto-run, item 4): after a click reports advanced, the run does NOT trust that alone — the NEXT fresh scan\'s own currentPage is compared against the expected page number before pageAdvancement is ever considered ok', () => {
+  it('BUG FIX (item 2): a page-advance is only ever ATTEMPTED at high/medium confidence (isConfidentEnoughToAutoClick) — a low-confidence or absent finding pauses for manual continue instead of clicking anything', () => {
     const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toContain('expectedPageAfterAdvance = expectedNextPage')
-    expect(fn).toMatch(/if \(expectedPageAfterAdvance !== null\) \{[\s\S]{0,400}actualPage === expectedPageAfterAdvance/)
-    // The click-success branch itself never sets pageAdvancement directly.
-    const advancedBranch = fn.slice(fn.indexOf('if (advanceResult.advanced)'), fn.indexOf('if (advanceResult.reason ==='))
-    expect(advancedBranch).not.toContain('pageAdvancement = { ok: true')
+    expect(fn).toContain('findSgsNextPageControl(inspection.candidates)')
+    expect(fn).toMatch(/if \(!nextControlResult\.control \|\| !isConfidentEnoughToAutoClick\(nextControlResult\.confidence\)\) \{[\s\S]{0,300}pauseForManualContinue\(/)
   })
 
-  it('NEXT PHASE (auto-run): a page-advance is only ever attempted through advanceToNextSgsPage (never a bespoke click), and "no confirmed control" pauses for manual continue rather than aborting or guessing', () => {
+  it('BUG FIX (item 3): a click\'s success is NEVER trusted alone — the run polls a FRESH scan (pollForConfirmedPageAdvance/verifyPageAdvance) for the page number, grid fingerprint, and subject/classroom before treating an advance as confirmed', () => {
     const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    expect(fn).toContain('func: advanceToNextSgsPage,')
-    expect(fn).toMatch(/if \(advanceResult\.reason === 'no_confirmed_next_page_control'\) \{\s*\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*pauseForManualContinue\(/)
+    expect(fn).toContain('await pollForConfirmedPageAdvance({ tab, expectedNextPage, beforeFingerprint })')
+    expect(fn).toContain('const beforeFingerprint = await readFreshGridFingerprint(tab, candidate)')
   })
 
-  it('NEXT PHASE (auto-run): a failed page-advance that ISN\'T "no confirmed control" (e.g. a timeout after a click) aborts the run — it never silently re-scans the same stale page', () => {
+  it('BUG FIX (item 4): before clicking, run state is persisted (survives a real ASP.NET full-page postback), and the click itself never calls preventDefault or simulates the postback — clickPaginationControl\'s own plain .click() is the only DOM action taken', () => {
     const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
-    const afterPauseCheck = fn.slice(fn.indexOf("no_confirmed_next_page_control'"))
-    expect(afterPauseCheck).toContain('abortAutoRun(')
+    const clickIndex = fn.indexOf('func: clickPaginationControl,')
+    const persistIndex = fn.indexOf('await persistActiveAutoRunState(expectedNextPage)')
+    expect(persistIndex).toBeGreaterThan(-1)
+    expect(clickIndex).toBeGreaterThan(persistIndex)
+    expect(fn).toMatch(/try \{\s*\n\s*await chrome\.scripting\.executeScript\(\{\s*\n\s*target: \{ tabId: tab\.id \},\s*\n\s*func: clickPaginationControl,/)
+  })
+
+  it('BUG FIX (item 6): every page-advance failure mode (no confirmed control, unconfirmed advance) falls back to the SAME manual-continue prompt with the exact required message — only a CONFIRMED context mismatch aborts the run', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    expect(fn).toContain("pauseForManualContinue(pagination.currentPage, expectedNextPage, 'ไม่สามารถเปลี่ยนหน้าอัตโนมัติได้ กรุณาเปิดหน้าถัดไปแล้วกดดำเนินการต่อ')")
+    expect(fn).toMatch(/if \(advanceVerification\.kind === 'context_mismatch'\) \{[\s\S]{0,200}abortAutoRun\(advanceVerification\.reason\)/)
   })
 
   it('NEXT PHASE (auto-run): a per-page write-failure rate above the safe threshold aborts the run — never silently absorbed into the summary alone', () => {
@@ -574,6 +617,25 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toContain('buildAutoRunReport(')
     expect(fn).not.toMatch(/studentId/)
     expect(fn).not.toMatch(/password|token|cookie|secret|credential/i)
+  })
+
+  it('BUG FIX (item 4/5): popup closing never itself cancels an active run — nothing in this file clears AUTO_RUN_STORAGE_KEY from an unload/visibilitychange/blur handler; only an explicit reset (a fresh step-4 rescan) or a CONFIRMED successful page advance ever clears it', () => {
+    expect(source).not.toMatch(/addEventListener\('(unload|beforeunload|visibilitychange|blur)'/)
+    const clearCalls = [...source.matchAll(/chrome\.storage\.session\.remove\(AUTO_RUN_STORAGE_KEY\)/g)]
+    // resetAutoRunState (explicit reset) + the confirmed-advance success
+    // path (clearPersistedAutoRunState's own body) — exactly two writers,
+    // never a third triggered by the popup simply losing focus/closing.
+    expect(clearCalls.length).toBe(2)
+  })
+
+  it('BUG FIX (item 4/5): on every popup open, an active run is detected and offered for resumption BEFORE the teacher can take any other action — restoreActiveAutoRunIfAny runs immediately after restoreSessionPayload, at the bottom of the file', () => {
+    expect(source).toMatch(/void restoreSessionPayload\(\)\.then\(\(\) => restoreActiveAutoRunIfAny\(\)\)/)
+  })
+
+  it('BUG FIX (item 4/5): resuming an active run never guesses — evaluateRunResumption\'s own verdict (matched column key AND matched expected page) decides, and a non-resumable stored run is surfaced once, then cleared, never retried forever', () => {
+    const fn = source.slice(source.indexOf('async function restoreActiveAutoRunIfAny'), source.indexOf('void refreshStatus()'))
+    expect(fn).toContain('evaluateRunResumption(state,')
+    expect(fn).toMatch(/if \(!resumption\.shouldResume\) \{[\s\S]{0,600}clearPersistedAutoRunState\(\)/)
   })
 
   it('SGS Score Workspace payload: loading and restoring a payload both dispatch by `kind` via validateAnySgsBridgePayload, never the single-kind validator', () => {
@@ -658,7 +720,15 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     for (const [, target, rhs] of checkedAssignments) {
       expect(target === 'input' || ownConsentCheckboxes.includes(target)).toBe(true)
       if (target === 'input') expect(rhs).toMatch(/^matchResult\.column/)
-      if (ownConsentCheckboxes.includes(target)) expect(rhs.trim()).toBe('false')
+      if (ownConsentCheckboxes.includes(target)) {
+        // Every reset path sets these to a literal `false`. The ONE
+        // exception is arOverwriteCheckbox being restored from a
+        // PREVIOUSLY PERSISTED run's own overwriteMode choice on popup
+        // reopen (item 4/5) — still this extension's OWN stored state,
+        // never anything read from the SGS page itself.
+        const isRestoredOverwriteChoice = target === 'arOverwriteCheckbox' && rhs.trim() === "state.overwriteMode === 'overwrite_selected_column'"
+        expect(rhs.trim() === 'false' || isRestoredOverwriteChoice).toBe(true)
+      }
     }
     expect(source).not.toMatch(/headerCheckbox.*\.click\(\)/)
     // These consent/option checkboxes are never passed into an injected

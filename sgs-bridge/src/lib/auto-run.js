@@ -10,19 +10,27 @@
  * semi-automatic flow (sections 5-6) cannot regress).
  *
  * Auto-run is that SAME per-page engine driven in a loop by popup.js,
- * with two things layered on top:
- *   1. A page-advance attempt (content-diagnostic.js's
- *      advanceToNextSgsPage) — see that function's own doc comment for
- *      why it only ever acts on an ALREADY-CONFIRMED pagination shape
- *      (a row of page-number links) and honestly reports "no confirmed
- *      control" on the real, live-confirmed SGS page (plain TEXT
- *      pagination) — the run then falls back to the SAME
- *      "ดำเนินการต่อ" semi-automatic continuation section 6 already has,
- *      per item 11's explicit "do not force automatic navigation when
- *      confidence is low."
- *   2. evaluateAutoRunStopCondition below — checked before EVERY write
- *      and EVERY page advance, aborting the ENTIRE run immediately (never
- *      a partial continue) on the first condition that fails.
+ * with three things layered on top:
+ *   1. A page-advance attempt (pagination-control.js's
+ *      findSgsNextPageControl/verifyPageAdvance, driving
+ *      content-diagnostic.js's inspectPaginationControls/
+ *      clickPaginationControl) — only clicked at 'high'/'medium'
+ *      confidence, verified against a FRESH post-click scan, and never
+ *      trusted from a click alone. A low-confidence or unconfirmed
+ *      advance falls back to the SAME "ดำเนินการต่อ" semi-automatic
+ *      continuation section 6 already has (item 11) — that fallback is
+ *      handled directly in popup.js, NOT as one of the stop conditions
+ *      below, since "couldn't confirm the page changed" is recoverable
+ *      by the teacher's own click, not a reason to abort the whole run.
+ *   2. evaluateAutoRunStopCondition below — checked before every page's
+ *      write, aborting the ENTIRE run immediately (never a partial
+ *      continue) on the first condition that fails. A CONFIRMED context
+ *      mismatch after a page advance (verifyPageAdvance's own
+ *      'context_mismatch' kind — the wrong subject/classroom, not just
+ *      an unconfirmed page number) is surfaced through
+ *      contextRevalidation here, since that IS a real safety concern.
+ *   3. pageFailureExceedsThreshold — aborts mid-page once too many
+ *      attempted writes fail to verify.
  */
 
 import { WHOLE_COLUMN_STATUS, emptyWholeColumnSummary, mergeWholeColumnSummaries, summarizeWholeColumnResult } from './whole-column-write.js'
@@ -56,12 +64,14 @@ export function planHasAmbiguousWriteCandidate(plan) {
 }
 
 /**
- * The ONE gate checked before every page's write AND before every page
- * advance attempt — the FIRST failing condition stops the entire run
- * immediately (item 5: never a batch of reasons, never a partial
- * continue). `pageAdvancement` is null on the very first page (nothing
- * to advance into yet) and only checked once a navigation was actually
- * attempted.
+ * The ONE gate checked before every page's write — the FIRST failing
+ * condition stops the entire run immediately (item 5: never a batch of
+ * reasons, never a partial continue). Page-advance failures are handled
+ * separately in popup.js (falling back to manual continue, per item 11)
+ * UNLESS verifyPageAdvance itself reports a CONFIRMED context mismatch,
+ * in which case the caller passes that failure through
+ * `contextRevalidation` here — a real subject/classroom change is a stop
+ * condition, not a recoverable "couldn't confirm" case.
  *
  * @param {{
  *   gridFound: boolean,
@@ -69,7 +79,6 @@ export function planHasAmbiguousWriteCandidate(plan) {
  *   columnWritableNow: boolean,
  *   headerCheckboxOk: boolean,
  *   hasAmbiguousWriteCandidate: boolean,
- *   pageAdvancement: {ok: boolean, reason: string|null} | null,
  * }} input
  */
 export function evaluateAutoRunStopCondition({
@@ -78,7 +87,6 @@ export function evaluateAutoRunStopCondition({
   columnWritableNow,
   headerCheckboxOk,
   hasAmbiguousWriteCandidate,
-  pageAdvancement,
 }) {
   if (!gridFound) {
     return { shouldStop: true, reason: 'ไม่พบตารางคะแนนนักเรียนในหน้านี้' }
@@ -94,9 +102,6 @@ export function evaluateAutoRunStopCondition({
   }
   if (hasAmbiguousWriteCandidate) {
     return { shouldStop: true, reason: 'พบนักเรียนที่จับคู่กำกวมซึ่งมีคะแนนที่จะเขียน — ต้องตรวจสอบด้วยตนเอง' }
-  }
-  if (pageAdvancement && !pageAdvancement.ok) {
-    return { shouldStop: true, reason: pageAdvancement.reason }
   }
   return { shouldStop: false, reason: null }
 }
