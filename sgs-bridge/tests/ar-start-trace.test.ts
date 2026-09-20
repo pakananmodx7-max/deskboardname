@@ -324,6 +324,97 @@ describe('REMOVE GENERIC ERROR COLLAPSING — distinct failures no longer read i
   })
 })
 
+describe('ROOT CAUSE — AR_GET_STATE from a CONTENT SCRIPT must resolve by the sender\'s own tab', () => {
+  it('REGRESSION (the live 0/32 bug): a content-script GET_STATE carries NO tabId, and must still get the run state back — it used to come back null, which is what silently skipped processCurrentPage', async () => {
+    const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
+    await runHandleStart(harness.stub, harness, validStartMessage())
+
+    const listener = harness.messageListeners[0]
+    // Exactly what content-script.js sends: no tabId anywhere in the
+    // message, and the sender's own tab supplied by Chrome.
+    const response = await new Promise<Record<string, unknown>>((resolve) => {
+      listener({ type: 'AR_GET_STATE' }, { tab: { id: VERIFIED_TAB_ID } }, (r) => resolve(r as Record<string, unknown>))
+    })
+
+    expect(response.state, 'a content script must be able to read its own tab\'s run state').not.toBeNull()
+    expect((response.state as Record<string, unknown>).tabId).toBe(VERIFIED_TAB_ID)
+  })
+
+  it('still refuses to hand a content script ANOTHER tab\'s run — the sender tab is the authority, not a wildcard', async () => {
+    const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
+    await runHandleStart(harness.stub, harness, validStartMessage())
+
+    const listener = harness.messageListeners[0]
+    const response = await new Promise<Record<string, unknown>>((resolve) => {
+      listener({ type: 'AR_GET_STATE' }, { tab: { id: 999999 } }, (r) => resolve(r as Record<string, unknown>))
+    })
+
+    expect(response.state).toBeNull()
+  })
+
+  it('the POPUP path is unchanged — no sender.tab, so message.tabId still decides', async () => {
+    const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
+    await runHandleStart(harness.stub, harness, validStartMessage())
+
+    const listener = harness.messageListeners[0]
+    const matching = await new Promise<Record<string, unknown>>((resolve) => {
+      listener({ type: 'AR_GET_STATE', tabId: VERIFIED_TAB_ID }, { tab: undefined }, (r) => resolve(r as Record<string, unknown>))
+    })
+    const mismatched = await new Promise<Record<string, unknown>>((resolve) => {
+      listener({ type: 'AR_GET_STATE', tabId: 424242 }, { tab: undefined }, (r) => resolve(r as Record<string, unknown>))
+    })
+
+    expect(matching.state).not.toBeNull()
+    expect(mismatched.state).toBeNull()
+  })
+})
+
+describe('content-script PROCESS_CURRENT_PAGE checkpoints reach Section 7', () => {
+  it('AR_PROCESS_TRACE is persisted into the same startup-trace slot the popup renders, with errorMessage surfaced as the panel\'s "ข้อผิดพลาดจริง"', async () => {
+    const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
+    await runHandleStart(harness.stub, harness, validStartMessage())
+    const listener = harness.messageListeners[0]
+
+    await new Promise((resolve) => {
+      listener(
+        {
+          type: 'AR_PROCESS_TRACE',
+          step: 'PROCESS_CURRENT_PAGE_FAILED',
+          detail: { step: 'LIVE_SCAN_BEGIN', errorName: 'TypeError', errorMessage: 'x is not a function', stack: 'TypeError: x is not a function\n  at ...' },
+        },
+        { tab: { id: VERIFIED_TAB_ID } },
+        resolve,
+      )
+    })
+
+    const persisted = harness.sessionStore.sgsBridgeLastStartupTrace as Record<string, unknown>
+    expect(persisted.step).toBe('PROCESS_CURRENT_PAGE_FAILED')
+    const detail = persisted.detail as Record<string, unknown>
+    expect(detail.step).toBe('LIVE_SCAN_BEGIN')
+    expect(detail.errorName).toBe('TypeError')
+    expect(detail.error).toBe('x is not a function')
+    expect(detail.stack).toContain('TypeError')
+    expect(detail.resolvedTabId).toBe(VERIFIED_TAB_ID)
+  })
+
+  it('handleContentReady no longer returns silently when it declines to dispatch — the reason is recorded', async () => {
+    const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
+    vi.stubGlobal('chrome', harness.stub)
+    vi.resetModules()
+    await import('../src/background.js')
+    const listener = harness.messageListeners[0]
+
+    // No run has been created, so shouldContentScriptProcess is false.
+    await new Promise((resolve) => {
+      listener({ type: 'AR_SGS_CONTENT_READY', pageUrl: VERIFIED_PAGE_URL }, { tab: { id: VERIFIED_TAB_ID } }, resolve)
+    })
+
+    expect(tracedSteps(harness)).toContain('CONTENT_SCRIPT_RECEIVED')
+    expect(tracedSteps(harness)).toContain('CONTENT_READY_NO_ACTIVE_RUN')
+    expect(String(traceDetail(harness, 'CONTENT_READY_NO_ACTIVE_RUN')?.abortReason)).toContain('KICKOFF')
+  })
+})
+
 describe('the healing fallback still runs — but only when the direct PING genuinely failed', () => {
   it('falls back to inject/reload healing when the verified tab does not answer, and succeeds if the tab answers after injection', async () => {
     const harness = createChromeStub({ queryResult: [] })

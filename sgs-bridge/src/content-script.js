@@ -69,6 +69,7 @@
     STOPPED: 'AR_STOPPED',
     COMPLETE: 'AR_COMPLETE',
     DEBUG_EVENT: 'AR_DEBUG_EVENT',
+    PROCESS_TRACE: 'AR_PROCESS_TRACE',
     PING: 'AR_PING',
     CONTENT_READY: 'AR_SGS_CONTENT_READY',
     KICKOFF: 'AR_KICKOFF',
@@ -116,6 +117,23 @@
    * slow down or interrupt the real pipeline it is only observing. */
   function debugEvent(event, detail) {
     void sendMessage({ type: AR_MESSAGE.DEBUG_EVENT, event, detail })
+  }
+
+  /**
+   * TRACE THE FAILURE BOUNDARY — every checkpoint between
+   * CONTENT_SCRIPT_RECEIVED and PAGE_SCAN_OK. Unlike debugEvent (which
+   * appends to a RUN's debugLog, and is therefore invisible whenever the
+   * handler stops before/without a matching run state), this lands in
+   * background.js's persisted startup-trace slot that Section 7 renders,
+   * so a handler that stops early can no longer do so silently.
+   *
+   * AWAITED, unlike debugEvent: the whole point is that the last
+   * checkpoint before a failure must already be persisted by the time
+   * the failure happens. A checkpoint that loses its race with the very
+   * exception it is meant to locate is worse than no checkpoint at all.
+   */
+  async function processTrace(step, detail) {
+    await sendMessage({ type: AR_MESSAGE.PROCESS_TRACE, step, detail: detail ?? null })
   }
 
   let libsPromise = null
@@ -278,17 +296,58 @@
    * batches writes, never clicks Save/another column/a header checkbox.
    */
   async function processCurrentPage(libs, runState) {
-    if (processing) return
+    if (processing) {
+      // Re-entrancy is a legitimate outcome (main() and an AR_KICKOFF can
+      // both arrive for the same page), but never a silent one.
+      await processTrace('PROCESS_HANDLER_SKIPPED_ALREADY_RUNNING', {
+        abortReason: 'ข้ามการประมวลผล: มีการประมวลผลหน้านี้ค้างอยู่แล้ว (processing === true)',
+      })
+      return
+    }
     processing = true
+    // Tracks the last checkpoint reached, so the catch below can name the
+    // exact step that threw rather than reporting a bare stack.
+    let step = 'PROCESS_HANDLER_ENTER'
     try {
+      await processTrace('PROCESS_HANDLER_ENTER', {
+        runId: runState?.runId ?? null,
+        targetColumnKey: runState?.targetColumn?.key ?? null,
+        currentPage: runState?.currentPage ?? null,
+      })
+
+      step = 'LIVE_SCAN_BEGIN'
+      await processTrace('LIVE_SCAN_BEGIN', { targetColumnKey: runState.targetColumn.key })
       const scan = scanCurrentPage(libs, runState.targetColumn.key)
+      step = 'LIVE_SCAN_RESULT'
+      await processTrace('LIVE_SCAN_RESULT', {
+        scanOk: scan.ok,
+        page: scan.pagination?.currentPage ?? null,
+        abortReason: scan.ok ? null : scan.reason,
+      })
       if (scan.ok) debugEvent('PAGE_SCAN_OK', { page: scan.pagination?.currentPage ?? null })
+      if (scan.ok) {
+        step = 'PAGE_SCAN_OK'
+        await processTrace('PAGE_SCAN_OK', { page: scan.pagination?.currentPage ?? null })
+      }
       const confirmedContext = runState.confirmedContext
 
+      step = 'VALIDATION_BEGIN'
+      await processTrace('VALIDATION_BEGIN', { hasConfirmedContext: Boolean(confirmedContext) })
       const gate = evaluatePageGate(libs, runState, scan, confirmedContext)
+      step = 'VALIDATION_RESULT'
+      await processTrace('VALIDATION_RESULT', { gateOk: gate.ok, abortReason: gate.ok ? null : gate.reason })
 
+      step = 'PAGE_PLAN_BUILD_BEGIN'
+      await processTrace('PAGE_PLAN_BUILD_BEGIN', { scanOk: scan.ok })
       const plan = scan.ok ? buildPlanFromScan(libs, runState, scan) : []
+      step = 'PAGE_PLAN_BUILD_RESULT'
+      await processTrace('PAGE_PLAN_BUILD_RESULT', { planLength: plan.length })
       if (scan.ok) debugEvent('PAGE_PLAN_READY', { planLength: plan.length })
+      if (scan.ok) {
+        step = 'PAGE_PLAN_READY'
+        await processTrace('PAGE_PLAN_READY', { planLength: plan.length })
+      }
+      step = 'STOP_CONDITION_EVALUATION'
       const stop = libs.autoRun.evaluateAutoRunStopCondition({
         gridFound: scan.ok,
         paginationReady: libs.autoRun.isPaginationReadyForAutoRun(scan.pagination),
@@ -299,6 +358,7 @@
       })
 
       if (stop.shouldStop) {
+        await processTrace('PROCESS_STOPPED_BY_GATE', { abortReason: stop.reason })
         await sendMessage({ type: AR_MESSAGE.ABORT, reason: stop.reason })
         return
       }
@@ -406,6 +466,28 @@
         targetColumnKey: runState.targetColumn.key,
       }
       await attemptAdvance(libs, lastPageContext)
+    } catch (err) {
+      // CRITICAL — "never allow the handler to receive PROCESS_CURRENT_PAGE
+      // and then silently stop." Before this existed, any throw in the
+      // scan/validate/plan/write pipeline unwound into the KICKOFF
+      // listener's own `void loadLibs().then(...)` chain, where it became
+      // an unhandled rejection in the page's isolated world — invisible to
+      // Section 7, invisible to the teacher, and indistinguishable from a
+      // run that simply sat at 0/32 forever. `step` names the last
+      // checkpoint reached, so the report points at the failing statement
+      // rather than only the stack.
+      const error = err instanceof Error ? err : new Error(String(err))
+      await processTrace('PROCESS_CURRENT_PAGE_FAILED', {
+        step,
+        errorName: error.name,
+        errorMessage: error.message,
+        stack: error.stack ?? null,
+        abortReason: `PROCESS_CURRENT_PAGE_FAILED ที่ขั้นตอน ${step}: ${error.name}: ${error.message}`,
+      })
+      await sendMessage({
+        type: AR_MESSAGE.ABORT,
+        reason: `การประมวลผลหน้านี้ล้มเหลวที่ขั้นตอน ${step}: ${error.name}: ${error.message}`,
+      })
     } finally {
       processing = false
     }
@@ -546,11 +628,52 @@
       return false
     }
     if (message?.type === AR_MESSAGE.KICKOFF) {
+      // Answered immediately and synchronously — background.js's
+      // PROCESS_CURRENT_PAGE_SEND_RESULT only proves the message was
+      // RECEIVED, never that the pipeline below finished, so this handler
+      // deliberately does not keep the port open waiting for it (the real
+      // progress signal is AR_PAGE_PROGRESS, and the real failure signal
+      // is PROCESS_CURRENT_PAGE_FAILED).
       sendResponse({ ok: true })
-      void loadLibs().then(async (libs) => {
-        const stateResponse = await sendMessage({ type: AR_MESSAGE.GET_STATE })
-        if (stateResponse?.state) await processCurrentPage(libs, stateResponse.state)
-      })
+      void (async () => {
+        let step = 'KICKOFF_LOAD_LIBS'
+        try {
+          const libs = await loadLibs()
+          step = 'PAYLOAD_STATE_READ_BEGIN'
+          await processTrace('PAYLOAD_STATE_READ_BEGIN', { runId: message.runId ?? null })
+          const stateResponse = await sendMessage({ type: AR_MESSAGE.GET_STATE })
+          if (!stateResponse?.state) {
+            // THE ROOT CAUSE THIS TRACE FOUND — background.js used to
+            // answer a content-script GET_STATE by matching
+            // `message.tabId`, which a content script can never send, so
+            // this was always null and the pipeline stopped right here
+            // without a word. Fixed in background.js (the sender's own tab
+            // is the authority); this branch stays as the explicit,
+            // never-silent report should state ever genuinely be absent.
+            await processTrace('PAYLOAD_STATE_READ_FAILED', {
+              runId: message.runId ?? null,
+              abortReason: 'อ่านสถานะรันจาก background ไม่ได้ (GET_STATE คืนค่า state = null) — ไม่เริ่มประมวลผลหน้านี้',
+            })
+            return
+          }
+          step = 'PAYLOAD_STATE_READ_OK'
+          await processTrace('PAYLOAD_STATE_READ_OK', {
+            runId: stateResponse.state.runId ?? null,
+            currentPage: stateResponse.state.currentPage ?? null,
+            totalPages: stateResponse.state.totalPages ?? null,
+          })
+          await processCurrentPage(libs, stateResponse.state)
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err))
+          await processTrace('PROCESS_CURRENT_PAGE_FAILED', {
+            step,
+            errorName: error.name,
+            errorMessage: error.message,
+            stack: error.stack ?? null,
+            abortReason: `PROCESS_CURRENT_PAGE_FAILED ที่ขั้นตอน ${step}: ${error.name}: ${error.message}`,
+          })
+        }
+      })()
       return true
     }
     if (message?.type === AR_MESSAGE.RESUME) {

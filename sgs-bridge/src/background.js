@@ -447,9 +447,47 @@ async function handleCheckActive(tabId) {
 async function handleContentReady(tabId, { pageUrl }) {
   await recordStartupTrace('CONTENT_SCRIPT_RECEIVED', { resolvedTabId: tabId, resolvedPageUrl: pageUrl })
   const state = await getState()
-  if (!shouldContentScriptProcess(state, tabId)) return { ok: true }
+  if (!shouldContentScriptProcess(state, tabId)) {
+    // "Never allow the handler to receive PROCESS_CURRENT_PAGE and then
+    // silently stop" applies to this branch too: it is the very first
+    // statement after CONTENT_SCRIPT_RECEIVED, and it used to return with
+    // no checkpoint at all — leaving the trace stuck on
+    // CONTENT_SCRIPT_RECEIVED with nothing to say why. Declining to
+    // dispatch is a legitimate outcome (no run, a finished run, or a run
+    // belonging to another tab), but it is never silent.
+    await recordStartupTrace('CONTENT_READY_NO_ACTIVE_RUN', {
+      resolvedTabId: tabId,
+      resolvedPageUrl: pageUrl,
+      abortReason: state
+        ? `ไม่ส่ง KICKOFF: สถานะรัน status=${state.status} approved=${state.approved} active=${state.active} tabId=${state.tabId}`
+        : 'ไม่ส่ง KICKOFF: ยังไม่มีสถานะรันที่บันทึกไว้',
+    })
+    return { ok: true }
+  }
   sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
   await recordStartupTrace('PROCESS_CURRENT_PAGE_SEND_RESULT', { resolvedTabId: tabId, runId: state.runId, pingResult: 'OK', viaReload: true })
+  return { ok: true }
+}
+
+/**
+ * TRACE THE FAILURE BOUNDARY — content-script.js's own PROCESS_CURRENT_PAGE
+ * checkpoints (PROCESS_HANDLER_ENTER .. PAGE_PLAN_READY) and, on an
+ * exception, PROCESS_CURRENT_PAGE_FAILED carrying {step, errorName,
+ * errorMessage, stack}. Persisted into the SAME single startup-trace slot
+ * Section 7 already renders, so the window between CONTENT_SCRIPT_RECEIVED
+ * and PAGE_SCAN_OK is finally visible — including when the handler stops
+ * before any run state exists for appendDebugEvent to attach to.
+ *
+ * `errorMessage` is surfaced as `error` so renderDebugPanel shows it under
+ * "ข้อผิดพลาดจริง" with no popup-side special-casing.
+ */
+async function handleProcessTrace(tabId, { step, detail }) {
+  const incoming = detail ?? {}
+  await recordStartupTrace(step, {
+    ...incoming,
+    resolvedTabId: tabId,
+    error: incoming.errorMessage ?? incoming.error ?? null,
+  })
   return { ok: true }
 }
 
@@ -541,7 +579,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       void handleStop(message.tabId).then(sendResponse)
       return true
     case AR_MESSAGE.GET_STATE:
-      void getState().then((state) => sendResponse({ state: stateForTab(state, message.tabId) }))
+      // LIVE-TRACE ROOT CAUSE FIX — a CONTENT SCRIPT cannot know its own
+      // tabId (chrome.tabs is not exposed to it), so it never sends one:
+      // every content-script GET_STATE arrived here with
+      // `message.tabId === undefined`, stateForTab compared
+      // `state.tabId === undefined`, and the run state came back as null.
+      // That is exactly why the KICKOFF handler's
+      // `if (stateResponse?.state)` was always false and
+      // processCurrentPage was never called — the run sat at 0/32 with
+      // the trace ending at CONTENT_SCRIPT_RECEIVED and no error anywhere.
+      // The sender's OWN tab is the authority for a content script, which
+      // is the convention every other content-script-facing handler in
+      // this file already uses (handleCheckActive/handlePageProgress/...).
+      // The popup has no sender.tab, so it keeps supplying message.tabId.
+      void getState().then((state) => sendResponse({ state: stateForTab(state, senderTabId ?? message.tabId) }))
+      return true
+    case AR_MESSAGE.PROCESS_TRACE:
+      void handleProcessTrace(senderTabId, message).then(sendResponse)
       return true
     case AR_MESSAGE.GET_STARTUP_TRACE:
       void getStartupTrace().then((trace) => sendResponse({ trace }))

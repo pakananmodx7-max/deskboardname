@@ -1235,7 +1235,13 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     expect(source).toMatch(/case AR_MESSAGE\.CONTENT_READY:\s*\n\s*void handleContentReady\(senderTabId, message\)\.then\(sendResponse\)/)
     const fn = source.slice(source.indexOf('async function handleContentReady'), source.indexOf('async function handlePendingAdvance'))
     expect(fn).toContain('shouldContentScriptProcess(state, tabId)')
-    expect(fn).toMatch(/if \(!shouldContentScriptProcess\(state, tabId\)\) return \{ ok: true \}/)
+    // The gate is unchanged — it still refuses to dispatch for anything
+    // shouldContentScriptProcess rejects. It just no longer returns
+    // SILENTLY: declining now records CONTENT_READY_NO_ACTIVE_RUN first,
+    // so the trace never dead-ends on CONTENT_SCRIPT_RECEIVED with
+    // nothing to explain it.
+    expect(fn).toMatch(/if \(!shouldContentScriptProcess\(state, tabId\)\) \{[\s\S]{0,900}return \{ ok: true \}\s*\n\s*\}/)
+    expect(fn).toContain("recordStartupTrace('CONTENT_READY_NO_ACTIVE_RUN'")
     expect(fn).toContain('sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })')
   })
 
@@ -1357,7 +1363,11 @@ describe('TRUE unattended auto-run — content-script.js: registered only for th
 
   it('item 5: "abort immediately on mismatch" — the FIRST failing gate stops the whole page/run via AR_ABORT, never a partial continue', () => {
     const fn = source.slice(source.indexOf('async function processCurrentPage'), source.indexOf('async function attemptAdvance'))
-    expect(fn).toMatch(/if \(stop\.shouldStop\) \{\s*\n\s*await sendMessage\(\{ type: AR_MESSAGE\.ABORT, reason: stop\.reason \}\)/)
+    // The gate may first record a checkpoint so the abort is visible in the
+    // debug panel, but nothing else may happen between the failing gate and
+    // the AR_ABORT — in particular no write and no page advance.
+    expect(fn).toMatch(/if \(stop\.shouldStop\) \{[\s\S]{0,260}await sendMessage\(\{ type: AR_MESSAGE\.ABORT, reason: stop\.reason \}\)/)
+    expect(fn).toContain("processTrace('PROCESS_STOPPED_BY_GATE'")
   })
 
   it('item 6: "หยุด" is only ever checked as a flag reported by background.js (AR_GET_STATE\'s stopRequested) — this file never calls anything to abort a write already in flight, and starts no new write once the flag is set', () => {

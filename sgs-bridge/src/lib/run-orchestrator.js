@@ -104,6 +104,14 @@ export const AR_MESSAGE = {
   // debug checkpoint during one page's pipeline — never itself a state
   // transition, only appended to state.debugLog (see appendDebugEvent).
   DEBUG_EVENT: 'AR_DEBUG_EVENT',
+  // content-script -> background: PROCESS_CURRENT_PAGE tracing. Unlike
+  // DEBUG_EVENT (which only appends to a run's own debugLog, and so is
+  // invisible whenever no run state matches), this lands in the SAME
+  // persisted startup-trace slot Section 7 reads — so the checkpoints
+  // between CONTENT_SCRIPT_RECEIVED and PAGE_SCAN_OK, and any exception
+  // thrown in between, are visible even when the handler stopped before
+  // a run could ever record anything itself.
+  PROCESS_TRACE: 'AR_PROCESS_TRACE',
   // background <-> content-script: a content script availability
   // handshake, sent BEFORE a run is ever created (item 2) — a content
   // script answers it immediately, without waiting for loadLibs().
