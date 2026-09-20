@@ -64,7 +64,7 @@ export function buildCompactStudentGridReport(facts) {
       activatableScoreColumns: candidate?.activatableScoreColumns ?? [],
       derivedColumns: candidate?.derivedColumns ?? [],
     },
-    pagination: detectPagination(facts.tables, candidate),
+    pagination: detectPagination(facts.tables, candidate, facts.paginationHints),
     confidence: computeGridConfidence(candidate),
     warnings: buildGridWarnings(candidate),
   }

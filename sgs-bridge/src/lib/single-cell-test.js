@@ -97,6 +97,8 @@ export function formatSingleCellTestSummary(plan) {
  *   cellInputState: { visible: boolean, enabled: boolean, visibleInputCount: number } | null,
  *   proposedScore: number | null | undefined,
  *   maxScore: number | null | undefined,
+ *   studentVisibleOnCurrentPage: boolean,
+ *   subjectClassroomOk: boolean,
  * }} input
  * @returns {{ ok: boolean, reason: string | null }}
  */
@@ -110,6 +112,8 @@ export function evaluateSingleCellTestPreconditions({
   cellInputState,
   proposedScore,
   maxScore,
+  studentVisibleOnCurrentPage,
+  subjectClassroomOk,
 }) {
   if (!studentGridFound) {
     return { ok: false, reason: 'ยังไม่พบตารางคะแนนนักเรียนที่มั่นใจได้ในหน้านี้' }
@@ -122,6 +126,15 @@ export function evaluateSingleCellTestPreconditions({
   }
   if (selectedColumnCount !== 1) {
     return { ok: false, reason: 'ต้องเลือกคอลัมน์คะแนนให้ครบและเพียง 1 ช่องเท่านั้น' }
+  }
+  // LIVE DISCOVERY (item 5): a MATCHED student is only ever offered as a
+  // picker option when they were actually extracted from the CURRENTLY
+  // visible SGS page (see popup.js's populateSingleCellTestPickers), so
+  // this is normally true by construction — checked explicitly anyway,
+  // rather than only relied upon implicitly, so this precondition stays
+  // correct even if that population logic ever changes.
+  if (!studentVisibleOnCurrentPage) {
+    return { ok: false, reason: 'นักเรียนอยู่หน้าอื่นของ SGS กรุณาเปิดหน้าที่มีนักเรียนคนนี้ก่อน' }
   }
   if (!columnIsWritable) {
     return { ok: false, reason: 'คอลัมน์ที่เลือกไม่ใช่ช่องคะแนนที่กรอกได้จริงในขณะนี้ (writableScoreColumn)' }
@@ -140,6 +153,15 @@ export function evaluateSingleCellTestPreconditions({
   }
   if (maxScore !== null && maxScore !== undefined && proposedScore > maxScore) {
     return { ok: false, reason: `คะแนนต้องไม่เกินคะแนนเต็มของคอลัมน์นี้ (${maxScore})` }
+  }
+  // LIVE DISCOVERY (item 5): blocks only on a CONFIRMED mismatch — never
+  // when either side is unknown/missing, since KrunameClass's subject/
+  // classroom NAME and SGS's own dropdown text are two different
+  // systems' own labels and are never guaranteed to be byte-identical
+  // even when they genuinely refer to the same subject/classroom (see
+  // popup.js's computeSubjectClassroomOk).
+  if (!subjectClassroomOk) {
+    return { ok: false, reason: 'รายวิชา/ห้องเรียนในหน้า SGS ไม่ตรงกับ Bridge Payload ที่โหลดไว้ กรุณาตรวจสอบ' }
   }
   return { ok: true, reason: null }
 }

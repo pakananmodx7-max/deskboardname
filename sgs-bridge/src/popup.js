@@ -39,6 +39,8 @@ import {
   buildGridWarnings,
   buildSgsRowKey,
   computeGridConfidence,
+  detectPagination,
+  extractSgsStudentCandidates,
   matchTargetColumnToRealColumns,
   pickBestStudentGridCandidate,
   sgsRowIndexFromKey,
@@ -148,6 +150,13 @@ let confirmedRealColumn = null
  * consumed by renderRealFillPreview() and to populate the single-cell
  * test student picker. Never fed to a bulk DOM write (see item 4/5). */
 let realPlan = null
+/** detectPagination's result for the CURRENT inspection — {detected,
+ * currentPage, totalPages, visibleStudentRows, totalStudentRows}. Never
+ * used to auto-navigate anything; only to (a) tell a genuinely-missing
+ * student apart from one who's simply on a different SGS page (see
+ * describeMappingStatusForDisplay) and (b) gate the single-cell test to
+ * students visible on the CURRENT page only. */
+let currentPagination = null
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -188,6 +197,11 @@ function buildFullRosterFromPayload(payload) {
     ...payload.students.map((s) => ({
       studentId: s.studentId,
       studentNumber: s.studentNumber,
+      // Only the SGS Score Workspace payload family carries studentCode
+      // (see src/types/sgs-score-workspace.ts) — the legacy assignment-
+      // scoped payload has no such field at all, so this is honestly
+      // null for it rather than guessed from anything else.
+      studentCode: s.studentCode ?? null,
       fullName: s.fullName,
       krunameScore: s.score,
       score: s.score,
@@ -195,17 +209,12 @@ function buildFullRosterFromPayload(payload) {
     ...payload.skippedStudentIds.map((s) => ({
       studentId: s.studentId,
       studentNumber: s.studentNumber,
+      studentCode: s.studentCode ?? null,
       fullName: s.fullName,
       krunameScore: null,
       score: null,
     })),
   ]
-}
-
-function parseIntOrNull(text) {
-  if (!text) return null
-  const parsed = parseInt(text, 10)
-  return Number.isFinite(parsed) ? parsed : null
 }
 
 /**
@@ -303,6 +312,7 @@ function resetRealInspectionState() {
   currentGridCandidate = null
   confirmedRealColumn = null
   realPlan = null
+  currentPagination = null
   realColumnPickerWrap.hidden = true
   realColumnPickerEl.replaceChildren()
   realColumnMatchWarningEl.hidden = true
@@ -369,30 +379,60 @@ async function loadPayloadFromFile(file) {
   await chrome.storage.session.set({ [SESSION_PAYLOAD_KEY]: parsed })
 }
 
+/**
+ * LIVE DISCOVERY (item 5): a NOT_FOUND result is genuinely ambiguous once
+ * pagination shows more than one page — the student may simply be on a
+ * page this popup hasn't read. Never auto-navigates; only changes the
+ * displayed message so the teacher knows to open the right page first,
+ * per the exact required text. Any other status is shown as-is.
+ */
+function describeMappingStatusForDisplay(status) {
+  if (status === 'NOT_FOUND' && currentPagination?.detected && currentPagination.totalPages > 1) {
+    return 'นักเรียนอยู่หน้าอื่นของ SGS กรุณาเปิดหน้าที่มีนักเรียนคนนี้ก่อน'
+  }
+  return status
+}
+
+/**
+ * BUG FIX: this table used to call matchStudentsToSgs with a hardcoded
+ * empty candidate list, so it could never show a real match even after
+ * "ตรวจสอบตารางคะแนน SGS จริง" (section 4) had already found and
+ * extracted the exact same student rows. Now reuses
+ * extractCurrentSgsStudentCandidates() — the SAME extraction
+ * runColumnPreview uses — so a student visible in the currently-detected
+ * SGS grid shows up here as MATCHED, never as a placeholder claiming SGS
+ * isn't connected.
+ */
 function renderMappingResult(payload) {
   const krunameStudents = payload.students.map((s) => ({
     studentId: s.studentId,
     studentNumber: s.studentNumber,
+    studentCode: s.studentCode ?? null,
     fullName: s.fullName,
     score: s.score,
   }))
-  // sgsCandidates is deliberately empty: Phase 5 (structural diagnostic)
-  // hasn't yet told us which selectors safely expose real SGS student
-  // rows, and this prototype never invents one — every result below is
-  // therefore honestly NOT_FOUND until that's wired up.
-  const results = matchStudentsToSgs(krunameStudents, [])
+  const sgsCandidates = extractCurrentSgsStudentCandidates()
+  const results = matchStudentsToSgs(krunameStudents, sgsCandidates)
+  const candidateByRowKey = Object.fromEntries(sgsCandidates.map((c) => [c.sgsRowKey, c]))
 
   mappingResultBody.replaceChildren(
     ...results.map((result) => {
       const tr = document.createElement('tr')
       const tdSgs = document.createElement('td')
-      tdSgs.textContent = result.matchedSgsRowKey ?? '— (ยังไม่เชื่อมต่อข้อมูลจริงจาก SGS)'
+      const matched = result.matchedSgsRowKey ? candidateByRowKey[result.matchedSgsRowKey] : null
+      if (matched) {
+        tdSgs.textContent = `${matched.sgsStudentNumber ?? '-'} ${matched.sgsFullNameRaw}`
+      } else if (!currentGridCandidate) {
+        tdSgs.textContent = '— (ยังไม่ได้ตรวจสอบตารางคะแนน SGS จริง — ทำขั้นตอนที่ 4 ก่อน)'
+      } else {
+        tdSgs.textContent = '— (ไม่พบนักเรียนคนนี้ในหน้า SGS ปัจจุบัน)'
+      }
       const tdKruname = document.createElement('td')
       tdKruname.textContent = `${result.studentNumber ?? '-'} ${result.fullName}`
       const tdScore = document.createElement('td')
       tdScore.textContent = String(result.score)
       const tdStatus = document.createElement('td')
-      tdStatus.textContent = result.status
+      tdStatus.textContent = describeMappingStatusForDisplay(result.status)
       tr.append(tdSgs, tdKruname, tdScore, tdStatus)
       return tr
     }),
@@ -462,6 +502,12 @@ async function runRealColumnInspection() {
 
   const candidate = pickBestStudentGridCandidate(facts.tables)
   currentGridCandidate = candidate
+  // LIVE DISCOVERY (item 4): computed as soon as a candidate exists (even
+  // one with zero writable columns), so a NOT_FOUND mapping result can
+  // honestly say "this student might just be on a different SGS page"
+  // instead of implying they aren't in SGS at all — see
+  // describeMappingStatusForDisplay below. Never used to navigate pages.
+  currentPagination = detectPagination(facts.tables, candidate, facts.paginationHints)
 
   if (!candidate) {
     realInspectErrorEl.textContent = 'ไม่พบตารางคะแนนนักเรียนในหน้านี้ — ตรวจสอบว่าเปิดหน้ากรอกคะแนนของ SGS อยู่หรือไม่'
@@ -590,12 +636,31 @@ function renderRealColumnPicker(gridCandidate, matchResult) {
  * SGS rows — read-only; see renderRealFillPreview's own doc comment for
  * why no write ever follows from this in the current phase.
  */
+/**
+ * BUG FIX (live SGS student mapping was never wired to the detected
+ * student rows): the ONE place this popup ever turns the CURRENTLY
+ * confirmed grid's row text into mapping candidates — both
+ * runColumnPreview (below) and renderMappingResult (the "ตรวจสอบการ
+ * จับคู่นักเรียน" dry-run button) call this instead of each building its
+ * own list, so section 2 and section 4 of the popup can never disagree
+ * about who's actually visible on the current SGS page. Returns `[]`
+ * (never a guess) when no inspection has run yet or the winning table
+ * can't be found in the last-captured facts.
+ */
+function extractCurrentSgsStudentCandidates() {
+  if (!currentGridCandidate || !currentGridFacts) return []
+  const { tableIndex, run, identifierColumns } = currentGridCandidate
+  const winningTable = currentGridFacts.tables.find((t) => t.tableIndex === tableIndex)
+  if (!winningTable) return []
+  return extractSgsStudentCandidates(winningTable, run, identifierColumns)
+}
+
 async function runColumnPreview() {
   if (!confirmedRealColumn || !loadedPayload || !currentGridCandidate || !currentGridFacts) return
   if (!gridMeetsFillRequirements(currentGridCandidate)) return
   if (!isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn)) return
 
-  const { tableIndex, run, identifierColumns } = currentGridCandidate
+  const { tableIndex, run } = currentGridCandidate
 
   const tab = await getActiveTab()
   const [injection] = await chrome.scripting.executeScript({
@@ -609,19 +674,13 @@ async function runColumnPreview() {
   // Row text (เลขที่/รหัสนักเรียน/ชื่อ-นามสกุล) was already extracted by
   // collectAllTableRowFacts during runRealColumnInspection() — no
   // second DOM round-trip needed just to read it again.
-  const winningTable = currentGridFacts.tables.find((t) => t.tableIndex === tableIndex)
-  const rowsInRun = winningTable.rows.slice(run.startIndex, run.startIndex + run.length)
-  const sgsCandidates = rowsInRun.map((cells, offset) => ({
-    sgsRowKey: buildSgsRowKey(offset),
-    sgsStudentNumber: parseIntOrNull(cells[identifierColumns.numberColumnIndex]?.text),
-    sgsStudentId: cells[identifierColumns.codeColumnIndex]?.text || null,
-    sgsFullNameRaw: cells[identifierColumns.nameColumnIndex]?.text || '',
-  }))
+  const sgsCandidates = extractCurrentSgsStudentCandidates()
 
   const roster = buildFullRosterFromPayload(loadedPayload)
   const krunameStudents = roster.map((r) => ({
     studentId: r.studentId,
     studentNumber: r.studentNumber,
+    studentCode: r.studentCode,
     fullName: r.fullName,
     score: r.score,
   }))
@@ -661,7 +720,7 @@ function renderRealFillPreview(plan) {
       const tdNew = document.createElement('td')
       tdNew.textContent = formatRealNewValueDisplay(row)
       const tdStatus = document.createElement('td')
-      tdStatus.textContent = row.mappingStatus
+      tdStatus.textContent = describeMappingStatusForDisplay(row.mappingStatus)
       tr.append(tdNumber, tdName, tdKruname, tdExisting, tdNew, tdStatus)
       return tr
     }),
@@ -715,6 +774,28 @@ function populateSingleCellTestPickers(plan, candidate) {
   sctConfirmCheckbox.disabled = true
   sctWriteBtn.disabled = true
   singleCellTestWrap.hidden = false
+}
+
+/**
+ * LIVE DISCOVERY (item 5): blocks the single-cell test only on a
+ * CONFIRMED subject/classroom mismatch between the loaded payload and
+ * SGS's own currently-selected filters — never when either side is
+ * unknown/blank, since the two systems' own subject/classroom NAMES are
+ * never guaranteed to be byte-identical even for the same actual
+ * subject/classroom (different naming conventions between KrunameClass
+ * and SGS). This is a defensive extra check, not the primary safety
+ * mechanism — revalidateSingleCellTestContext still re-checks the exact
+ * same filter text hasn't drifted between preview and write time.
+ */
+function computeSubjectClassroomOk() {
+  if (!loadedPayload || !currentGridFacts) return true
+  const payloadSubject = (loadedPayload.subjectName ?? '').trim()
+  const payloadClassroom = (loadedPayload.classroomName ?? '').trim()
+  const sgsSubject = (currentGridFacts.subjectFilter?.selectedText ?? '').trim()
+  const sgsClassroom = (currentGridFacts.classroomFilter?.selectedText ?? '').trim()
+  const subjectOk = !payloadSubject || !sgsSubject || payloadSubject === sgsSubject
+  const classroomOk = !payloadClassroom || !sgsClassroom || payloadClassroom === sgsClassroom
+  return subjectOk && classroomOk
 }
 
 /**
@@ -787,6 +868,13 @@ async function runSingleCellTestPreview() {
     cellInputState: { visible: fresh.cellVisible, enabled: fresh.cellEnabled, visibleInputCount: fresh.visibleInputCount },
     proposedScore: plan.newValue,
     maxScore: column.maxScore,
+    // LIVE DISCOVERY (item 5): `planRow` came from `testableRows` in
+    // populateSingleCellTestPickers, which only ever offers rows whose
+    // mappingStatus is already 'MATCHED' against the CURRENTLY extracted
+    // (i.e. currently-visible-page) SGS candidates — re-checked
+    // explicitly rather than only relied upon implicitly.
+    studentVisibleOnCurrentPage: planRow.mappingStatus === 'MATCHED',
+    subjectClassroomOk: computeSubjectClassroomOk(),
   })
 
   if (!preconditions.ok) {

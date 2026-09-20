@@ -531,20 +531,55 @@ export function classifyScoreColumns(tableFacts, run, identifierColumns) {
 }
 
 // ==================================================
-// Pagination — best-effort, never blocking. Looks for a "pager row"
-// elsewhere on the page (never inside the accepted student run itself):
-// a row with no inputs where every non-empty cell is a short page-
-// number-looking string. Reports what it found rather than guessing —
-// `detected: false` is an honest answer when no such row exists, not a
-// claim that the page never paginates.
+// Pagination — best-effort, never blocking, never auto-navigating.
+//
+// LIVE DISCOVERY: the real SGS page's pagination is NOT a row of
+// clickable page-number links (the ASP.NET GridView-style pager this
+// module originally assumed, kept below as a fallback) — it's plain TEXT
+// elsewhere on the page: "32 รายการ" (total item count), "10 / หน้า"
+// (page size), and "page 1 of 4" (current/total page). content-
+// diagnostic.js's collectAllTableRowFacts extracts these via text
+// pattern matching (never a guessed selector) and hands them here as
+// `hints` — this module never reads the DOM itself. `detected: false` is
+// an honest answer when NEITHER method finds anything, not a claim that
+// the page never paginates.
 // ==================================================
 
 const PAGE_NUMBER_PATTERN = /^\d{1,3}$/
 
-export function detectPagination(tablesFacts, candidate) {
-  if (!candidate) {
-    return { detected: false, currentPage: null, totalPages: null, visibleStudentRows: 0 }
+/**
+ * The live-confirmed detection path: trusts collectAllTableRowFacts's own
+ * text-pattern extraction (`paginationHints`) whenever it found BOTH a
+ * current and a total page number. `totalStudentRows` (from "32 รายการ")
+ * is reported when that text was found, `null` when it wasn't — never
+ * guessed from `visibleStudentRows × totalPages`, since a partial last
+ * page would make that arithmetic silently wrong.
+ */
+function detectPaginationFromHints(hints, studentRowCount) {
+  if (!hints || hints.currentPage === null || hints.currentPage === undefined) return null
+  if (hints.totalPages === null || hints.totalPages === undefined) return null
+  return {
+    detected: true,
+    currentPage: hints.currentPage,
+    totalPages: hints.totalPages,
+    visibleStudentRows: studentRowCount,
+    totalStudentRows: hints.totalStudentRows ?? null,
   }
+}
+
+/**
+ * `hints` is collectAllTableRowFacts's `paginationHints` (optional — a
+ * caller passing raw facts captured before this field existed, or a test
+ * fixture, simply falls through to the old row-of-links detection below,
+ * unchanged).
+ */
+export function detectPagination(tablesFacts, candidate, hints) {
+  if (!candidate) {
+    return { detected: false, currentPage: null, totalPages: null, visibleStudentRows: 0, totalStudentRows: null }
+  }
+
+  const fromHints = detectPaginationFromHints(hints, candidate.studentRowCount)
+  if (fromHints) return fromHints
 
   let pagerCells = null
   for (const tableFacts of tablesFacts) {
@@ -568,7 +603,7 @@ export function detectPagination(tablesFacts, candidate) {
   }
 
   if (!pagerCells) {
-    return { detected: false, currentPage: null, totalPages: null, visibleStudentRows: candidate.studentRowCount }
+    return { detected: false, currentPage: null, totalPages: null, visibleStudentRows: candidate.studentRowCount, totalStudentRows: null }
   }
 
   const numbers = pagerCells.map((c) => Number(c.text.trim()))
@@ -580,7 +615,7 @@ export function detectPagination(tablesFacts, candidate) {
   const nonLinkCells = pagerCells.filter((c) => !c.hasLink)
   const currentPage = nonLinkCells.length === 1 ? Number(nonLinkCells[0].text.trim()) : null
 
-  return { detected: true, currentPage, totalPages, visibleStudentRows: candidate.studentRowCount }
+  return { detected: true, currentPage, totalPages, visibleStudentRows: candidate.studentRowCount, totalStudentRows: null }
 }
 
 // ==================================================
@@ -722,4 +757,37 @@ export function buildSgsRowKey(rowOffset) {
 export function sgsRowIndexFromKey(sgsRowKey) {
   const match = /^row-(\d+)$/.exec(sgsRowKey)
   return match ? Number(match[1]) : null
+}
+
+/**
+ * BUG FIX (live SGS student mapping was never wired to the detected
+ * student rows): the ONE place that turns the accepted student run's raw
+ * cells into the exact shape matchStudentsToSgs (mapping.js) expects.
+ * Uses ONLY the CONFIRMED numberColumnIndex/codeColumnIndex/
+ * nameColumnIndex from the already-accepted grid candidate — never a
+ * fresh table-wide text heuristic, and never any column other than the
+ * three already confirmed. Every visible student row on the CURRENT SGS
+ * page becomes exactly one candidate, keyed by its offset within the run
+ * (buildSgsRowKey) so it round-trips with sgsRowIndexFromKey exactly like
+ * every other single-column/single-cell read in this codebase.
+ *
+ * Was previously duplicated ad hoc inline in popup.js's runColumnPreview
+ * — extracted here so BOTH runColumnPreview (the real preview) and
+ * renderMappingResult (the "ตรวจสอบการจับคู่นักเรียน" dry-run button,
+ * which had been left calling matchStudentsToSgs with a hardcoded empty
+ * array ever since before this real detection existed) build the exact
+ * same candidate list from the exact same source of truth.
+ */
+export function extractSgsStudentCandidates(tableFacts, run, identifierColumns) {
+  const rowsInRun = tableFacts.rows.slice(run.startIndex, run.startIndex + run.length)
+  return rowsInRun.map((cells, offset) => {
+    const numberText = cells[identifierColumns.numberColumnIndex]?.text ?? ''
+    const parsedNumber = numberText === '' ? NaN : Number(numberText)
+    return {
+      sgsRowKey: buildSgsRowKey(offset),
+      sgsStudentNumber: Number.isFinite(parsedNumber) ? parsedNumber : null,
+      sgsStudentId: cells[identifierColumns.codeColumnIndex]?.text || null,
+      sgsFullNameRaw: cells[identifierColumns.nameColumnIndex]?.text || '',
+    }
+  })
 }

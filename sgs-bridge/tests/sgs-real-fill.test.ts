@@ -78,8 +78,12 @@ describe('computeSgsRealFillPlan — unmatched students are NEVER written', () =
   })
 
   it('AMBIGUOUS never writes, even with overwrite_selected_column chosen', () => {
+    // Both number AND normalized name agree on TWO SGS rows — the
+    // mapping engine never guesses between them (see mapping.js's
+    // priority-2 tier), so this must stay AMBIGUOUS rather than picking
+    // either row.
     const students = [kn('k1', 1, 'สมชาย ใจดี', 9)]
-    const mapping = matchStudentsToSgs(students, [sgs('row-0', 1, 'A'), sgs('row-1', 1, 'B')])
+    const mapping = matchStudentsToSgs(students, [sgs('row-0', 1, 'สมชาย ใจดี'), sgs('row-1', 1, 'สมชาย ใจดี')])
     const plan = computeSgsRealFillPlan(students, mapping, {}, 'overwrite_selected_column')
     expect(plan[0].mappingStatus).toBe('AMBIGUOUS')
     expect(plan[0].action).toBe('skip_unmatched')

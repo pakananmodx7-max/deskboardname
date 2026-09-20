@@ -324,9 +324,20 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toMatch(/func:\s*fillSgsColumnValues,\s*\n\s*args:\s*\[context\.tableIndex, currentGridCandidate\.run\.startIndex, context\.columnIndex, plan\.writesByOffset\]/)
   })
 
-  it('the SGS-candidate list passed into the placeholder mapping-dry-run is empty — no invented selector-based extraction there', () => {
+  it('BUG FIX: renderMappingResult ("ตรวจสอบการจับคู่นักเรียน") now feeds REAL extracted SGS candidates into matchStudentsToSgs — never a hardcoded empty array (that was the original bug: real detection existed elsewhere in the file but this button never used it)', () => {
     const fn = source.slice(source.indexOf('function renderMappingResult'), source.indexOf('fileInput.addEventListener'))
-    expect(fn).toContain('matchStudentsToSgs(krunameStudents, [])')
+    expect(fn).not.toContain('matchStudentsToSgs(krunameStudents, [])')
+    expect(fn).toContain('extractCurrentSgsStudentCandidates()')
+    expect(fn).toMatch(/matchStudentsToSgs\(krunameStudents,\s*sgsCandidates\)/)
+  })
+
+  it('extractCurrentSgsStudentCandidates is the ONE shared extraction path — both renderMappingResult and runColumnPreview call it, so they can never disagree about which SGS rows exist', () => {
+    expect(source).toContain('function extractCurrentSgsStudentCandidates')
+    const calls = [...source.matchAll(/extractCurrentSgsStudentCandidates\(\)/g)]
+    // one definition's own name doesn't match the no-arg call pattern, so
+    // every match here is a genuine call site — expect at least the two
+    // known callers (renderMappingResult, runColumnPreview).
+    expect(calls.length).toBeGreaterThanOrEqual(2)
   })
 
   it('buildSgsColumnWriteInstructions (Phase 1.5 preview-only path) is only ever called with payload.targetColumn.key', () => {

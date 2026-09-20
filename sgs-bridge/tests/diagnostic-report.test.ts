@@ -100,7 +100,13 @@ describe('buildCompactStudentGridReport — the exact shape the spec requires', 
     // LIVE DISCOVERY: the field exists even when empty — never omitted —
     // so a consumer can always rely on studentGrid.activatableScoreColumns.
     expect(report.studentGrid.activatableScoreColumns).toEqual([])
-    expect(report.pagination).toEqual({ detected: false, currentPage: null, totalPages: null, visibleStudentRows: 3 })
+    expect(report.pagination).toEqual({
+      detected: false,
+      currentPage: null,
+      totalPages: null,
+      visibleStudentRows: 3,
+      totalStudentRows: null,
+    })
     // Only 3 sample rows here — computeGridConfidence requires >=5 rows
     // for "high," so this small fixture is honestly "medium."
     expect(report.confidence).toBe('medium')

@@ -14,6 +14,7 @@ import {
   deriveScoreColumnHeader,
   detectPagination,
   evaluateStudentGridCandidate,
+  extractSgsStudentCandidates,
   findHeaderCheckboxState,
   findRepeatingRowRun,
   fingerprintsEqual,
@@ -924,6 +925,7 @@ describe('detectPagination — best-effort, never blocking, never auto-changing 
       currentPage: null,
       totalPages: null,
       visibleStudentRows: 10,
+      totalStudentRows: null,
     })
   })
 
@@ -941,6 +943,7 @@ describe('detectPagination — best-effort, never blocking, never auto-changing 
       currentPage: 2,
       totalPages: 3,
       visibleStudentRows: 10,
+      totalStudentRows: null,
     })
   })
 
@@ -966,12 +969,120 @@ describe('detectPagination — best-effort, never blocking, never auto-changing 
   })
 
   it('returns a null/zero-shaped result when there is no candidate at all', () => {
-    expect(detectPagination([], null)).toEqual({ detected: false, currentPage: null, totalPages: null, visibleStudentRows: 0 })
+    expect(detectPagination([], null)).toEqual({
+      detected: false,
+      currentPage: null,
+      totalPages: null,
+      visibleStudentRows: 0,
+      totalStudentRows: null,
+    })
   })
 
   it('never changes anything — detectPagination is a pure read of already-collected facts', () => {
     // Structural guarantee: the function takes plain data and returns
     // plain data, with no DOM access at all (this whole file has none).
     expect(typeof detectPagination).toBe('function')
+  })
+})
+
+describe('detectPagination — LIVE DISCOVERY: real SGS pagination is page-wide TEXT ("32 รายการ" / "10 / หน้า" / "page 1 of 4"), not a row of page-number links', () => {
+  function studentGridTableFacts(tableIndex: number, studentCount = 10) {
+    const header = [text(''), text(''), text(''), text('ช่อง 1 (15)')]
+    const rows = [header]
+    for (let i = 1; i <= studentCount; i++) {
+      rows.push(studentRow(String(i), String(i).padStart(5, '0'), `นักเรียน ${i}`))
+    }
+    return { tableIndex, selectorFingerprint: `table[${tableIndex}]`, rows }
+  }
+
+  it('reports the exact shape from the bug report: page 1 of 4, 32 total, 10 visible', () => {
+    const tables = [studentGridTableFacts(0, 10)]
+    const candidate = pickBestStudentGridCandidate(tables)
+    const hints = { totalStudentRows: 32, pageSize: 10, currentPage: 1, totalPages: 4 }
+    expect(detectPagination(tables, candidate, hints)).toEqual({
+      detected: true,
+      currentPage: 1,
+      totalPages: 4,
+      visibleStudentRows: 10,
+      totalStudentRows: 32,
+    })
+  })
+
+  it('prefers the text hints over the old row-of-links heuristic when both are present', () => {
+    const gridTable = studentGridTableFacts(0, 10)
+    const pagerTable = { tableIndex: 1, selectorFingerprint: 'table[1]', rows: [[link('1'), text('2'), link('3')]] }
+    const tables = [gridTable, pagerTable]
+    const candidate = pickBestStudentGridCandidate(tables)
+    const hints = { totalStudentRows: 32, pageSize: 10, currentPage: 1, totalPages: 4 }
+    const result = detectPagination(tables, candidate, hints)
+    expect(result.currentPage).toBe(1)
+    expect(result.totalPages).toBe(4)
+  })
+
+  it('falls back to the old row-of-links detection when hints are absent (e.g. an older capture)', () => {
+    const gridTable = studentGridTableFacts(0, 10)
+    const pagerTable = { tableIndex: 1, selectorFingerprint: 'table[1]', rows: [[link('1'), text('2'), link('3')]] }
+    const tables = [gridTable, pagerTable]
+    const candidate = pickBestStudentGridCandidate(tables)
+    const result = detectPagination(tables, candidate, undefined)
+    expect(result).toEqual({ detected: true, currentPage: 2, totalPages: 3, visibleStudentRows: 10, totalStudentRows: null })
+  })
+
+  it('falls back when hints exist but are incomplete (e.g. only the item count was found)', () => {
+    const tables = [studentGridTableFacts(0, 10)]
+    const candidate = pickBestStudentGridCandidate(tables)
+    const result = detectPagination(tables, candidate, { totalStudentRows: 32, pageSize: null, currentPage: null, totalPages: null })
+    expect(result.detected).toBe(false)
+    expect(result.totalStudentRows).toBeNull()
+  })
+})
+
+describe('extractSgsStudentCandidates — BUG FIX: real detected SGS rows passed into mapping', () => {
+  it('builds one candidate per visible run row, using ONLY the confirmed identifier column indexes', () => {
+    const tableFacts = {
+      tableIndex: 0,
+      selectorFingerprint: 'table[0]',
+      rows: [
+        studentRow('1', '00001', 'เกศ ศรีคำฉิม'),
+        studentRow('2', '00002', 'สมชาย ใจดี'),
+        studentRow('3', '00003', 'สมหญิง ใจดี'),
+      ],
+    }
+    const candidate = evaluateStudentGridCandidate(tableFacts)
+    expect(candidate).not.toBeNull()
+
+    const result = extractSgsStudentCandidates(tableFacts, candidate!.run, candidate!.identifierColumns)
+
+    expect(result).toEqual([
+      { sgsRowKey: 'row-0', sgsStudentNumber: 1, sgsStudentId: '00001', sgsFullNameRaw: 'เกศ ศรีคำฉิม' },
+      { sgsRowKey: 'row-1', sgsStudentNumber: 2, sgsStudentId: '00002', sgsFullNameRaw: 'สมชาย ใจดี' },
+      { sgsRowKey: 'row-2', sgsStudentNumber: 3, sgsStudentId: '00003', sgsFullNameRaw: 'สมหญิง ใจดี' },
+    ])
+  })
+
+  it('matches the exact live example from the bug report: row 0 is number 1 / เกศ ศรีคำฉิม', () => {
+    const tableFacts = {
+      tableIndex: 0,
+      selectorFingerprint: 'table[0]',
+      rows: [studentRow('1', '00001', 'เกศ ศรีคำฉิม'), studentRow('2', '00002', 'อีกคน'), studentRow('3', '00003', 'อีกคน 2')],
+    }
+    const candidate = evaluateStudentGridCandidate(tableFacts)!
+    const result = extractSgsStudentCandidates(tableFacts, candidate.run, candidate.identifierColumns)
+    expect(result[0]).toEqual({ sgsRowKey: 'row-0', sgsStudentNumber: 1, sgsStudentId: '00001', sgsFullNameRaw: 'เกศ ศรีคำฉิม' })
+  })
+
+  it('reports a null student number (never NaN/0) when the confirmed number cell is blank', () => {
+    // Bypasses column auto-detection here — extractSgsStudentCandidates
+    // only ever trusts the identifierColumns it's handed, so this
+    // exercises the blank-cell case directly against a fixed run.
+    const tableFacts = {
+      tableIndex: 0,
+      selectorFingerprint: 'table[0]',
+      rows: [studentRow('', '00001', 'สมชาย ใจดี'), studentRow('', '00002', 'สมหญิง ใจดี')],
+    }
+    const run = { startIndex: 0, length: 2 }
+    const identifierColumns = { numberColumnIndex: 0, codeColumnIndex: 1, nameColumnIndex: 2 }
+    const result = extractSgsStudentCandidates(tableFacts, run, identifierColumns)
+    expect(result.every((r) => r.sgsStudentNumber === null)).toBe(true)
   })
 })

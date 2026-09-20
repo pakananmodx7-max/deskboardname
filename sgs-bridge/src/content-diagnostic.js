@@ -259,6 +259,32 @@ export function collectAllTableRowFacts() {
     subjectFilter: readKnownFilterInline('ctl00_PageContent_ClassSubjectIDFilter'),
     classroomFilter: readKnownFilterInline('ctl00_PageContent_ClassSectionNoFilter'),
     tables,
+    paginationHints: extractPaginationHintsInline(),
+  }
+
+  // LIVE DISCOVERY: the real SGS page's pagination is plain page-wide
+  // TEXT ("32 รายการ", "10 / หน้า", "page 1 of 4") — not a row of
+  // clickable page-number links inside the student table (the shape
+  // detectPagination in sgs-table-extraction.js originally assumed, and
+  // still falls back to if these patterns aren't found). Reads only
+  // `document.body.innerText` (never an input's current entry, never a
+  // student's own cell text) and extracts ONLY the three small numbers
+  // these patterns name — never the surrounding text itself, so nothing
+  // beyond a page-size/item-count/page-number is ever collected. This
+  // function is itself injected via executeScript's `func` and can't
+  // share code with a sibling function once serialized (see the file
+  // header).
+  function extractPaginationHintsInline() {
+    const bodyText = document.body.innerText || document.body.textContent || ''
+    const totalMatch = bodyText.match(/(\d+)\s*รายการ/)
+    const pageSizeMatch = bodyText.match(/(\d+)\s*\/\s*หน้า/)
+    const pageOfMatch = bodyText.match(/page\s+(\d+)\s+of\s+(\d+)/i)
+    return {
+      totalStudentRows: totalMatch ? Number(totalMatch[1]) : null,
+      pageSize: pageSizeMatch ? Number(pageSizeMatch[1]) : null,
+      currentPage: pageOfMatch ? Number(pageOfMatch[1]) : null,
+      totalPages: pageOfMatch ? Number(pageOfMatch[2]) : null,
+    }
   }
 
   // Duplicates collectRawSgsFacts's own inline filter-reading logic —

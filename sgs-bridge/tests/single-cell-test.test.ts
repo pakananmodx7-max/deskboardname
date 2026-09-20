@@ -73,6 +73,8 @@ function validPreconditionsInput(overrides = {}) {
     cellInputState: { visible: true, enabled: true, visibleInputCount: 1 },
     proposedScore: 8,
     maxScore: 10,
+    studentVisibleOnCurrentPage: true,
+    subjectClassroomOk: true,
     ...overrides,
   }
 }
@@ -154,6 +156,18 @@ describe('evaluateSingleCellTestPreconditions — CONTROLLED LIVE TEST: every ga
 
   it('a score exactly equal to max score is valid, never rejected as "exceeding"', () => {
     expect(evaluateSingleCellTestPreconditions(validPreconditionsInput({ proposedScore: 10, maxScore: 10 })).ok).toBe(true)
+  })
+
+  it('LIVE DISCOVERY item 5: fails when the target student is not visible on the current SGS page, with the exact required message', () => {
+    const result = evaluateSingleCellTestPreconditions(validPreconditionsInput({ studentVisibleOnCurrentPage: false }))
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('นักเรียนอยู่หน้าอื่นของ SGS กรุณาเปิดหน้าที่มีนักเรียนคนนี้ก่อน')
+  })
+
+  it('LIVE DISCOVERY item 5: fails when the SGS page\'s subject/classroom no longer matches the loaded payload', () => {
+    const result = evaluateSingleCellTestPreconditions(validPreconditionsInput({ subjectClassroomOk: false }))
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('รายวิชา/ห้องเรียน')
   })
 })
 
