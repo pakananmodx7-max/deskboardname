@@ -47,21 +47,7 @@ import {
   withConfirmedContext,
   withPendingAdvance,
 } from './lib/run-orchestrator.js'
-
-/** FINAL SGS AUTO-RUN FIX (item 4) — "do not assume the currently active
- * Chrome tab is always the SGS tab." Reading `.url` for a tab this
- * pattern matches needs no permission beyond the host_permissions this
- * manifest already declares for it. */
-const SGS_TAB_URL_PATTERN = /^https:\/\/sgs\.bopp-obec\.info\/sgs\//
-
-async function isSgsTab(tabId) {
-  try {
-    const tab = await chrome.tabs.get(tabId)
-    return SGS_TAB_URL_PATTERN.test(tab.url ?? '')
-  } catch {
-    return false
-  }
-}
+import { resolveConnectedSgsTab, saveVerifiedSgsTab } from './lib/sgs-tab-connection.js'
 
 /** FINAL SGS AUTO-RUN FIX (item 6) — broadcast-only, never persisted:
  * every one of these connection-handshake steps happens BEFORE a run
@@ -122,21 +108,6 @@ function sendToTab(tabId, message) {
   chrome.tabs.sendMessage(tabId, message).catch(() => {})
 }
 
-/** FINAL AUTO-RUN EXECUTION BUG FIX (item 2) — a bare handshake, answered
- * by content-script.js immediately (before it even loads its own libs),
- * so this never blocks on anything the content script itself might be
- * slow at. A rejected/timed-out promise (no listener in that tab at all)
- * is the normal, expected shape of "no content script there" — never
- * itself logged as an error. */
-async function pingContentScript(tabId) {
-  try {
-    const response = await chrome.tabs.sendMessage(tabId, { type: AR_MESSAGE.PING })
-    return Boolean(response?.ready)
-  } catch {
-    return false
-  }
-}
-
 /** FINAL SGS AUTO-RUN FIX (item 3) — waits for a tab's own navigation to
  * finish loading, or `timeoutMs`, whichever comes first. Used ONLY after
  * chrome.tabs.reload below — never as a substitute for the PING handshake
@@ -163,72 +134,62 @@ function waitForTabLoadComplete(tabId, timeoutMs) {
 const RELOAD_WAIT_TIMEOUT_MS = 4000
 
 /**
- * FINAL SGS AUTO-RUN FIX (item 3) — "verify content script is
- * available... inject/reload content script safely if architecture
- * permits... retry PING... only abort if retry still fails." Three tiers,
- * each only attempted if the previous one failed:
+ * LIVE-BUG FIX (item 3) — healing tiers, tried ONLY after handleStart's
+ * own initial resolveConnectedSgsTab call already failed to find ANY
+ * connected SGS tab anywhere: inject once, then reload once, RE-
+ * RESOLVING (never a bare re-ping of the same fixed id — resolveConnectedSgsTab
+ * is the ONE shared tab-discovery/ping function, reused here exactly
+ * like everywhere else) after each attempt.
  *
- * 1. PING as-is — the common healthy case (manifest already auto-injected
- *    a working content script) costs nothing beyond this one round trip.
- * 2. Inject src/content-script.js via chrome.scripting.executeScript,
- *    then PING again — covers the tab having been opened BEFORE this
- *    extension's content script ever got a chance to auto-inject into
- *    it. content-script.js's own top-of-file already-loaded guard makes
- *    this a safe no-op if a WORKING content script is already there
- *    (never risks a second overlapping pipeline in the same tab) — but
- *    that SAME guard also means this tier is a no-op for tier 3's own
- *    failure mode below.
- * 3. Reload the tab, then PING again — the only fix for an ORPHANED
+ * 1. Inject src/content-script.js via chrome.scripting.executeScript
+ *    into `tabId` (the caller's own best guess), then re-resolve —
+ *    covers the tab having been opened BEFORE this extension's content
+ *    script ever got a chance to auto-inject into it. content-script.js's
+ *    own top-of-file already-loaded guard makes this a safe no-op if a
+ *    WORKING content script is already there (never risks a second
+ *    overlapping pipeline in the same tab) — but that SAME guard also
+ *    means this tier is a no-op for tier 2's own failure mode below.
+ * 2. Reload `tabId`, then re-resolve — the only fix for an ORPHANED
  *    content script (this extension was reloaded/updated during
  *    development while the SGS tab stayed open): its isolated world's
  *    messaging is permanently invalidated, and re-injecting more code
  *    into that SAME isolated world is blocked by its own already-loaded
- *    guard (tier 2, above) — only a real navigation tears down that
+ *    guard (tier 1, above) — only a real navigation tears down that
  *    isolated world and lets the manifest's own content_scripts entry
  *    populate a fresh, working one from scratch.
  *
  * Every step broadcasts AR_STARTUP_TRACE (item 6) so a stuck run's exact
  * failure point is visible in Section 7, not just in this worker's own
- * console.
+ * console. Returns the SAME {tabId, pageUrl, connected} shape
+ * resolveConnectedSgsTab does.
  */
 async function ensureContentScriptReady(tabId) {
-  broadcastStartupTrace('SGS_TAB_FOUND', { tabId })
-  if (!(await isSgsTab(tabId))) {
-    broadcastStartupTrace('PING_FAILED', { tabId, reason: 'tab is not an SGS page' })
-    return false
-  }
-
-  broadcastStartupTrace('PING_SENT', { tabId })
-  if (await pingContentScript(tabId)) {
-    broadcastStartupTrace('PING_OK', { tabId })
-    return true
-  }
-  broadcastStartupTrace('PING_FAILED', { tabId })
-
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content-script.js'] })
     broadcastStartupTrace('SCRIPT_INJECTED', { tabId })
   } catch (err) {
     broadcastStartupTrace('SCRIPT_INJECTED', { tabId, failed: true, message: String(err) })
   }
-  if (await pingContentScript(tabId)) {
-    broadcastStartupTrace('PING_RETRY_OK', { tabId })
-    return true
+  let resolved = await resolveConnectedSgsTab(tabId)
+  if (resolved.connected) {
+    broadcastStartupTrace('PING_RETRY_OK', resolved)
+    return resolved
   }
   broadcastStartupTrace('PING_FAILED', { tabId, afterInjection: true })
 
   try {
     await chrome.tabs.reload(tabId)
   } catch {
-    return false
+    return { tabId: null, pageUrl: null, connected: false }
   }
   await waitForTabLoadComplete(tabId, RELOAD_WAIT_TIMEOUT_MS)
-  if (await pingContentScript(tabId)) {
-    broadcastStartupTrace('PING_RETRY_OK', { tabId, afterReload: true })
-    return true
+  resolved = await resolveConnectedSgsTab(tabId)
+  if (resolved.connected) {
+    broadcastStartupTrace('PING_RETRY_OK', { ...resolved, afterReload: true })
+    return resolved
   }
   broadcastStartupTrace('PING_FAILED', { tabId, afterReload: true })
-  return false
+  return { tabId: null, pageUrl: null, connected: false }
 }
 
 /**
@@ -239,30 +200,45 @@ async function ensureContentScriptReady(tabId) {
  * here is popup.js's OWN fresh, just-taken inspection (never this file
  * re-doing or trusting any earlier/cached read).
  *
- * FINAL AUTO-RUN EXECUTION BUG FIX (item 1/2/6) — a run is ALSO never
- * created unless ensureContentScriptReady already confirmed a listener
- * exists in this exact tab: pagination detection succeeding is no proof
- * the content script itself is reachable (that is exactly the bug this
- * turn fixes — a run that reached "running"/0/32 forever because the
- * AR_KICKOFF below was silently swallowed by sendToTab's own best-effort
- * `.catch`, with nothing ever noticing). Once both guards pass,
- * createInitialRunState is called, AR_KICKOFF is dispatched immediately
- * (never waiting for a navigation/reload — item 1), and a watchdog alarm
- * is armed as the last-resort safety net (item 6) in case page-1
- * processing still somehow never begins.
+ * LIVE-BUG FIX — `message.tabId` (popup's own best guess, e.g. from its
+ * own resolveConnectedSgsTab call) is only ever a PREFERRED hint here,
+ * never trusted outright: resolveConnectedSgsTab (the SAME shared
+ * function popup.js's diagnostic button and its own AR_START click
+ * handler both call — see sgs-tab-connection.js's own doc comment on the
+ * exact live bug this fixes) independently re-searches every tab in
+ * every window and re-PINGs before this file ever creates a run. Only if
+ * NO tab anywhere answers does the inject/reload healing
+ * (ensureContentScriptReady) get one more try against popup's original
+ * guess; only if that ALSO fails is AR_START finally refused. Once a
+ * real connected tab is found, createInitialRunState uses THAT tab's own
+ * id (never necessarily `message.tabId`), AR_KICKOFF is dispatched
+ * immediately (never waiting for a navigation/reload — item 1), and a
+ * watchdog alarm is armed as the last-resort safety net (item 6) in case
+ * page-1 processing still somehow never begins.
  */
 async function handleStart(message) {
   debugLog('AR_START received', { tabId: message.tabId })
-  const { tabId, subject, classroom, targetColumn, payload, overwriteMode, pagination } = message
+  const { subject, classroom, targetColumn, payload, overwriteMode, pagination } = message
   if (!isPaginationHydrationValid(pagination)) {
     return { ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE }
   }
 
-  if (!(await ensureContentScriptReady(tabId))) {
-    debugLog('content script unavailable — refusing to start a run', { tabId })
+  broadcastStartupTrace('SGS_TAB_FOUND', { preferredTabId: message.tabId })
+  broadcastStartupTrace('PING_SENT', { preferredTabId: message.tabId })
+  let resolved = await resolveConnectedSgsTab(message.tabId)
+  broadcastStartupTrace(resolved.connected ? 'PING_OK' : 'PING_FAILED', resolved)
+
+  if (!resolved.connected) {
+    resolved = await ensureContentScriptReady(message.tabId)
+  }
+  if (!resolved.connected) {
+    debugLog('content script unavailable — refusing to start a run', { tabId: message.tabId })
     return { ok: false, state: null, reason: CONTENT_SCRIPT_UNAVAILABLE_MESSAGE }
   }
-  broadcastStartupTrace('CONTENT_SCRIPT_RECEIVED', { tabId })
+
+  const tabId = resolved.tabId
+  broadcastStartupTrace('CONTENT_SCRIPT_RECEIVED', { tabId, pageUrl: resolved.pageUrl })
+  await saveVerifiedSgsTab(tabId, resolved.pageUrl)
 
   const state = createInitialRunState({
     runId: crypto.randomUUID(),

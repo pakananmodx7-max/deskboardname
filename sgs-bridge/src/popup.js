@@ -75,7 +75,8 @@ import {
 // display-facing helpers are still needed here.
 import { buildAutoRunPreRunSummary, buildAutoRunReport, emptyAutoRunSummary, isPaginationReadyForAutoRun, PAGINATION_UNKNOWN_MESSAGE } from './lib/auto-run.js'
 import { buildPaginationDiagnosticReport, buildPaginationHintsFromInspection } from './lib/pagination-control.js'
-import { AR_MESSAGE, isPaginationHydrationValid, PAGINATION_HYDRATION_FAILED_MESSAGE } from './lib/run-orchestrator.js'
+import { AR_MESSAGE, CONTENT_SCRIPT_UNAVAILABLE_MESSAGE, isPaginationHydrationValid, PAGINATION_HYDRATION_FAILED_MESSAGE } from './lib/run-orchestrator.js'
+import { loadVerifiedSgsTabId, resolveConnectedSgsTab, saveVerifiedSgsTab } from './lib/sgs-tab-connection.js'
 
 const DEFAULT_SGS_KEYWORD = 'sgs'
 const SESSION_PAYLOAD_KEY = 'sgsBridgeLoadedPayload'
@@ -2064,23 +2065,29 @@ arInspectPaginationBtn.addEventListener('click', () => {
 })
 
 /**
- * FINAL SGS CONTENT SCRIPT FIX (item 5) — a standalone, ON-DEMAND
- * diagnostic completely independent of the AR_START flow: pings whatever
- * tab is currently active and reports CONNECTED/NOT CONNECTED plus the
- * exact pageUrl/tabId a content script itself reported (never a value
- * this popup merely assumes) — so a teacher/developer can check whether
- * the persistent content script is reachable in a tab BEFORE ever
- * attempting to start a run, and see immediately why a start might fail.
+ * LIVE-BUG FIX (item 5) — a standalone, ON-DEMAND diagnostic completely
+ * independent of the AR_START flow, calling the SAME resolveConnectedSgsTab
+ * this popup's own "เริ่มส่งครบทั้งห้อง" handler calls below (never its own
+ * separate tab-discovery logic — see sgs-tab-connection.js's own doc
+ * comment on the exact live bug this fixes: the old getActiveTab()
+ * resolved a DIFFERENT tab than this diagnostic had just confirmed,
+ * because it resolves relative to whichever WINDOW happens to be
+ * "current," not an actual search for the real SGS tab). Reports
+ * CONNECTED/NOT CONNECTED plus the exact pageUrl/tabId a content script
+ * itself answered PING with — never a value this popup merely assumes —
+ * and persists a CONNECTED result (item 4) so a later AR_START can reuse
+ * it as a hint.
  */
 async function checkContentScriptConnection() {
-  const tab = await getActiveTab()
-  const response = await chrome.tabs.sendMessage(tab?.id, { type: AR_MESSAGE.PING }).catch(() => null)
-  const connected = Boolean(response?.ready)
-  arConnectionStatusEl.textContent = connected ? 'CONNECTED' : 'NOT CONNECTED'
-  arConnectionStatusEl.classList.toggle('status-connected', connected)
-  arConnectionStatusEl.classList.toggle('status-disconnected', !connected)
-  arConnectionPageUrlEl.textContent = response?.pageUrl ?? '-'
-  arConnectionTabIdEl.textContent = tab?.id !== undefined && tab?.id !== null ? String(tab.id) : '-'
+  const resolved = await resolveConnectedSgsTab(await loadVerifiedSgsTabId())
+  arConnectionStatusEl.textContent = resolved.connected ? 'CONNECTED' : 'NOT CONNECTED'
+  arConnectionStatusEl.classList.toggle('status-connected', resolved.connected)
+  arConnectionStatusEl.classList.toggle('status-disconnected', !resolved.connected)
+  arConnectionPageUrlEl.textContent = resolved.pageUrl ?? '-'
+  arConnectionTabIdEl.textContent = resolved.tabId !== null ? String(resolved.tabId) : '-'
+  if (resolved.connected) {
+    await saveVerifiedSgsTab(resolved.tabId, resolved.pageUrl)
+  }
 }
 
 arCheckConnectionBtn.addEventListener('click', () => {
@@ -2126,6 +2133,17 @@ arConfirmAutosaveCheckbox.addEventListener('change', () => {
  * background.js's run state is hydrated with real, non-null pagination
  * from the moment it is created, and this popup never renders "หน้า ? /
  * ?".
+ *
+ * LIVE-BUG FIX — the tab this sends to background is resolved via the
+ * SAME resolveConnectedSgsTab "ตรวจสอบการเชื่อมต่อ Content Script" itself
+ * calls (never chrome.tabs.query({active: true, currentWindow: true}),
+ * which resolves relative to whichever window is "current" for THIS
+ * popup instance — the confirmed live bug: a teacher could see CONNECTED
+ * from that diagnostic and still have AR_START refused moments later,
+ * because the old getActiveTab() silently resolved a DIFFERENT tab, e.g.
+ * a chrome://extensions tab open in another window). A prior verified
+ * tab (chrome.storage.session, from either button) is tried first but
+ * never trusted without this fresh re-PING.
  */
 arRunBtn.addEventListener('click', () => {
   void (async () => {
@@ -2135,9 +2153,16 @@ arRunBtn.addEventListener('click', () => {
     arStartupTraceEl.hidden = true
     arStartupTraceEl.textContent = ''
 
-    const tab = await getActiveTab()
+    const resolvedTab = await resolveConnectedSgsTab(await loadVerifiedSgsTabId())
+    if (!resolvedTab.connected) {
+      arAbortReasonEl.textContent = CONTENT_SCRIPT_UNAVAILABLE_MESSAGE
+      arAbortReasonEl.hidden = false
+      return
+    }
+    await saveVerifiedSgsTab(resolvedTab.tabId, resolvedTab.pageUrl)
+
     const [paginationInjection] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: resolvedTab.tabId },
       func: inspectPaginationControls,
     })
     const paginationReport = buildPaginationDiagnosticReport(paginationInjection.result)
@@ -2157,7 +2182,7 @@ arRunBtn.addEventListener('click', () => {
     const response = await chrome.runtime
       .sendMessage({
         type: AR_MESSAGE.START,
-        tabId: tab.id,
+        tabId: resolvedTab.tabId,
         subject: loadedPayload.subjectName,
         classroom: loadedPayload.classroomName,
         targetColumn: { key: confirmedRealColumn.key, label: confirmedRealColumn.label, maxScore: confirmedRealColumn.maxScore },
