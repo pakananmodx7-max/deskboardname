@@ -494,9 +494,37 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
   })
 
   it('never invents a student grid — always derives it via pickBestStudentGridCandidate over collectAllTableRowFacts\'s real output', () => {
-    const fn = source.slice(source.indexOf('async function runRealColumnInspection'), source.indexOf('function renderRealColumnPicker'))
-    expect(fn).toContain('collectAllTableRowFacts')
-    expect(fn).toContain('pickBestStudentGridCandidate(facts.tables)')
+    // BUG FIX: this scan-and-pick logic was extracted into a shared
+    // performLiveGridScan() so BOTH runRealColumnInspection (step 4) and
+    // runMappingCheck (the mapping button) always read the LIVE page —
+    // never a table invented from nothing, and never one caller's stale
+    // copy of another caller's scan.
+    const scanFn = source.slice(source.indexOf('async function performLiveGridScan'), source.indexOf('async function runRealColumnInspection'))
+    expect(scanFn).toContain('collectAllTableRowFacts')
+    expect(scanFn).toContain('pickBestStudentGridCandidate(facts.tables)')
+
+    const inspectFn = source.slice(source.indexOf('async function runRealColumnInspection'), source.indexOf('function renderRealColumnPicker'))
+    expect(inspectFn).toContain('await performLiveGridScan()')
+  })
+
+  it('BUG FIX: the mapping button ("ตรวจสอบการจับคู่นักเรียน") always performs its OWN fresh live scan (performLiveGridScan) before mapping — it never depends on a previous diagnostic run or a previous step-4 inspection having already populated currentGridCandidate/currentGridFacts', () => {
+    const fn = source.slice(source.indexOf('async function runMappingCheck'), source.indexOf('fileInput.addEventListener'))
+    expect(fn).toContain('await performLiveGridScan()')
+    expect(fn).toContain('renderMappingResult(loadedPayload)')
+    // The mapping button's click handler calls this atomic function
+    // directly — never the old bare renderMappingResult(loadedPayload).
+    const listenerBlock = source.slice(source.indexOf("mappingBtn.addEventListener('click'"), source.indexOf("mappingBtn.addEventListener('click'") + 200)
+    expect(listenerBlock).toContain('runMappingCheck()')
+    expect(listenerBlock).not.toContain('renderMappingResult(loadedPayload)')
+  })
+
+  it('the compact diagnostic (section 3, debug-only) never touches currentGridCandidate/currentGridFacts — only performLiveGridScan and runMappingCheck/runRealColumnInspection are allowed to', () => {
+    const diagnosticFn = source.slice(
+      source.indexOf("diagnosticBtn.addEventListener('click'"),
+      source.indexOf("diagnosticDebugBtn.addEventListener('click'"),
+    )
+    expect(diagnosticFn).not.toContain('currentGridCandidate =')
+    expect(diagnosticFn).not.toContain('currentGridFacts =')
   })
 })
 

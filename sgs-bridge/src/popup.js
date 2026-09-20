@@ -17,7 +17,7 @@ import {
   buildStudentGridDebugReport,
   formatDiagnosticReportForCopy,
 } from './lib/diagnostic-report.js'
-import { matchStudentsToSgs } from './lib/mapping.js'
+import { matchStudentsToSgs, normalizeStudentCode, normalizeThaiFullName } from './lib/mapping.js'
 import { validateAnySgsBridgePayload } from './lib/payload-validation.js'
 import {
   computeSgsRealFillPlan,
@@ -75,8 +75,10 @@ const payloadErrorEl = document.getElementById('payload-error')
 const previewEl = document.getElementById('preview')
 const previewTableBody = document.getElementById('preview-table-body')
 const mappingBtn = document.getElementById('mapping-dry-run')
+const mappingCheckErrorEl = document.getElementById('mapping-check-error')
 const mappingResultTable = document.getElementById('mapping-result')
 const mappingResultBody = document.getElementById('mapping-result-body')
+const mappingDebugEl = document.getElementById('mapping-debug')
 const diagnosticBtn = document.getElementById('diagnostic-run')
 const diagnosticDebugBtn = document.getElementById('diagnostic-debug-run')
 const diagnosticVerboseBtn = document.getElementById('diagnostic-verbose-run')
@@ -305,6 +307,8 @@ function renderPreview(payload) {
   previewEl.hidden = false
   mappingBtn.disabled = false
   mappingResultTable.hidden = true
+  mappingCheckErrorEl.hidden = true
+  mappingDebugEl.hidden = true
 }
 
 function resetRealInspectionState() {
@@ -352,6 +356,9 @@ async function loadPayloadFromFile(file) {
   previewEl.hidden = true
   loadedPayload = null
   mappingBtn.disabled = true
+  mappingResultTable.hidden = true
+  mappingCheckErrorEl.hidden = true
+  mappingDebugEl.hidden = true
   resetRealInspectionState()
 
   let parsed
@@ -394,6 +401,25 @@ function describeMappingStatusForDisplay(status) {
 }
 
 /**
+ * DEBUG (item 7 of the follow-up spec): shown only when mapping found NO
+ * matched student at all — anonymized structural info for the first
+ * visible SGS row (never the actual name/code, only lengths/normalized
+ * forms), so a teacher/developer can see WHY a match failed without this
+ * popup ever displaying more personal data than the normal result table
+ * already does.
+ */
+function buildAnonymizedMappingDebug(sgsCandidates) {
+  if (sgsCandidates.length === 0) return null
+  const first = sgsCandidates[0]
+  return {
+    studentNumber: first.sgsStudentNumber,
+    studentCodeLength: first.sgsStudentId ? first.sgsStudentId.length : 0,
+    normalizedName: normalizeThaiFullName(first.sgsFullNameRaw),
+    rowIndex: sgsRowIndexFromKey(first.sgsRowKey),
+  }
+}
+
+/**
  * BUG FIX: this table used to call matchStudentsToSgs with a hardcoded
  * empty candidate list, so it could never show a real match even after
  * "ตรวจสอบตารางคะแนน SGS จริง" (section 4) had already found and
@@ -401,7 +427,10 @@ function describeMappingStatusForDisplay(status) {
  * extractCurrentSgsStudentCandidates() — the SAME extraction
  * runColumnPreview uses — so a student visible in the currently-detected
  * SGS grid shows up here as MATCHED, never as a placeholder claiming SGS
- * isn't connected.
+ * isn't connected. This function itself never scans the page — see
+ * runMappingCheck, which always scans FIRST and calls this only
+ * afterward, so currentGridCandidate/currentGridFacts here are always
+ * fresh from the CURRENT click, never a previous one.
  */
 function renderMappingResult(payload) {
   const krunameStudents = payload.students.map((s) => ({
@@ -423,7 +452,7 @@ function renderMappingResult(payload) {
       if (matched) {
         tdSgs.textContent = `${matched.sgsStudentNumber ?? '-'} ${matched.sgsFullNameRaw}`
       } else if (!currentGridCandidate) {
-        tdSgs.textContent = '— (ยังไม่ได้ตรวจสอบตารางคะแนน SGS จริง — ทำขั้นตอนที่ 4 ก่อน)'
+        tdSgs.textContent = '— (ไม่พบตารางคะแนนนักเรียนในหน้า SGS ปัจจุบัน — ตรวจสอบว่าเปิดหน้ากรอกคะแนนอยู่หรือไม่)'
       } else {
         tdSgs.textContent = '— (ไม่พบนักเรียนคนนี้ในหน้า SGS ปัจจุบัน)'
       }
@@ -438,6 +467,50 @@ function renderMappingResult(payload) {
     }),
   )
   mappingResultTable.hidden = false
+
+  const anyMatched = results.some((result) => result.status === 'MATCHED')
+  if (anyMatched) {
+    mappingDebugEl.hidden = true
+  } else {
+    const debugInfo = buildAnonymizedMappingDebug(sgsCandidates)
+    mappingDebugEl.hidden = !debugInfo
+    if (debugInfo) mappingDebugEl.textContent = `แถวแรกที่พบใน SGS (ไม่ระบุตัวตน): ${JSON.stringify(debugInfo, null, 2)}`
+    // Never rendered in the popup UI (studentCode/fullName are real
+    // personal data) — console-only, for comparing why a match failed.
+    console.log(
+      '[SGS Bridge] mapping debug — normalized Bridge Payload students:',
+      krunameStudents.map((s) => ({
+        studentNumber: s.studentNumber,
+        studentCodeNormalized: s.studentCode ? normalizeStudentCode(s.studentCode) : null,
+        normalizedName: normalizeThaiFullName(s.fullName),
+      })),
+    )
+  }
+}
+
+/**
+ * BUG FIX: the mapping button is now ATOMIC — every click performs its
+ * OWN fresh read of the CURRENT SGS tab (performLiveGridScan) and then
+ * maps against it immediately. It never depends on the compact
+ * diagnostic (section 3 — debug-only, never touches currentGridCandidate/
+ * currentGridFacts) or on step 4's "ตรวจสอบตารางคะแนน SGS จริง" having
+ * been run first: a teacher can click this ONE button on any open SGS
+ * scoring page and get a real mapping result, or an honest scan error,
+ * without any other step first.
+ */
+async function runMappingCheck() {
+  if (!loadedPayload) return
+  mappingCheckErrorEl.hidden = true
+  mappingResultTable.hidden = true
+  mappingDebugEl.hidden = true
+  try {
+    await performLiveGridScan()
+  } catch (err) {
+    mappingCheckErrorEl.textContent = `เกิดข้อผิดพลาดขณะสแกนหน้า SGS: ${err instanceof Error ? err.message : String(err)}`
+    mappingCheckErrorEl.hidden = false
+    return
+  }
+  renderMappingResult(loadedPayload)
 }
 
 /**
@@ -471,6 +544,38 @@ function isConfirmedColumnWritable(candidate, column) {
 }
 
 /**
+ * BUG FIX: the ONE place this popup ever talks to the live SGS tab to
+ * build a fresh grid candidate — used by BOTH runRealColumnInspection
+ * (step 4's column inspection/fill preview) and runMappingCheck (the
+ * "ตรวจสอบการจับคู่นักเรียน" button). Previously the mapping button never
+ * called anything like this at all: it just re-rendered whatever
+ * currentGridCandidate/currentGridFacts already held from a PREVIOUS
+ * step-4 run (or nothing, if step 4 had never run — running the compact
+ * diagnostic, which is debug-only and doesn't touch this state, was not
+ * enough). Every caller of this function gets a scan of the CURRENT page,
+ * every time — never a diagnostic textarea, never a stale run.
+ */
+async function performLiveGridScan() {
+  const tab = await getActiveTab()
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: collectAllTableRowFacts,
+  })
+  const facts = injection.result
+  currentGridFacts = facts
+
+  const candidate = pickBestStudentGridCandidate(facts.tables)
+  currentGridCandidate = candidate
+  // LIVE DISCOVERY (item 4): computed as soon as a candidate exists (even
+  // one with zero writable columns), so a NOT_FOUND mapping result can
+  // honestly say "this student might just be on a different SGS page"
+  // instead of implying they aren't in SGS at all — see
+  // describeMappingStatusForDisplay below. Never used to navigate pages.
+  currentPagination = detectPagination(facts.tables, candidate, facts.paginationHints)
+  return { facts, candidate }
+}
+
+/**
  * Items 1-4 of the spec: finds the real score table by STRUCTURE (a
  * repeating run of identically-shaped rows containing inputs — never a
  * single top-level table taken on faith), classifies เลขที่/รหัส
@@ -492,22 +597,7 @@ async function runRealColumnInspection() {
   resetRealInspectionState()
   realTargetLabelEl.textContent = loadedPayload.targetColumn.label
 
-  const tab = await getActiveTab()
-  const [injection] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: collectAllTableRowFacts,
-  })
-  const facts = injection.result
-  currentGridFacts = facts
-
-  const candidate = pickBestStudentGridCandidate(facts.tables)
-  currentGridCandidate = candidate
-  // LIVE DISCOVERY (item 4): computed as soon as a candidate exists (even
-  // one with zero writable columns), so a NOT_FOUND mapping result can
-  // honestly say "this student might just be on a different SGS page"
-  // instead of implying they aren't in SGS at all — see
-  // describeMappingStatusForDisplay below. Never used to navigate pages.
-  currentPagination = detectPagination(facts.tables, candidate, facts.paginationHints)
+  const { candidate } = await performLiveGridScan()
 
   if (!candidate) {
     realInspectErrorEl.textContent = 'ไม่พบตารางคะแนนนักเรียนในหน้านี้ — ตรวจสอบว่าเปิดหน้ากรอกคะแนนของ SGS อยู่หรือไม่'
@@ -1036,7 +1126,7 @@ fileInput.addEventListener('change', () => {
 })
 
 mappingBtn.addEventListener('click', () => {
-  if (loadedPayload) renderMappingResult(loadedPayload)
+  void runMappingCheck()
 })
 
 /**

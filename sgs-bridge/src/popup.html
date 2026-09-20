@@ -59,9 +59,10 @@
 
       <button type="button" id="mapping-dry-run" disabled>ตรวจสอบการจับคู่นักเรียน</button>
       <p class="hint">
-        โหมดนี้ยังไม่สามารถดึงรายชื่อจริงจากหน้า SGS ได้ (รอผลจากขั้นตอนที่ 4 ก่อน) — ผลลัพธ์ด้านล่างจึงแสดงสถานะเริ่มต้นจากข้อมูลใน
-        Bridge Payload เท่านั้น ยังไม่มีการเขียนหรือส่งข้อมูลใด ๆ ไปยัง SGS
+        กดปุ่มนี้เมื่อไรก็ได้ — จะสแกนหน้า SGS ปัจจุบันใหม่ทุกครั้งและจับคู่นักเรียนจากข้อมูลจริงบนหน้าเดี๋ยวนี้ ไม่ต้องกดตรวจสอบโครงสร้าง
+        (ขั้นตอนที่ 3-4) มาก่อน ยังไม่มีการเขียนหรือส่งข้อมูลใด ๆ ไปยัง SGS
       </p>
+      <p id="mapping-check-error" class="error" hidden></p>
       <table id="mapping-result" hidden>
         <thead>
           <tr>
@@ -73,6 +74,7 @@
         </thead>
         <tbody id="mapping-result-body"></tbody>
       </table>
+      <pre id="mapping-debug" class="hint" hidden></pre>
     </section>
 
     <section>
