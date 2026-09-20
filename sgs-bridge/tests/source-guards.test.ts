@@ -309,14 +309,21 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toMatch(/if \(!plan\.valid\)[\s\S]{0,300}disarmSingleCellTestWrite\(\)/)
   })
 
-  it('LIVE DISCOVERY item 4, now superseded for the single-cell path only: fillSgsColumnValues IS imported and called, but exactly once, and never with a bulk instruction builder — buildSgsRealWriteInstructions/summarizeSgsRealFillPlan (whole-column tools) are still never used from popup.js', () => {
+  it('NEXT PHASE: fillSgsColumnValues is called exactly twice — the single-cell path and the whole-column path — and STILL never via the old ad hoc bulk instruction builders (buildSgsRealWriteInstructions/summarizeSgsRealFillPlan from sgs-real-fill.js remain unused; the whole-column path uses ONLY the structurally single-column buildWholeColumnWriteInstructions)', () => {
     expect(source).toContain('fillSgsColumnValues')
     const fillCalls = [...source.matchAll(/func:\s*fillSgsColumnValues,/g)]
-    expect(fillCalls.length).toBe(1)
+    expect(fillCalls.length).toBe(2)
     expect(source).not.toMatch(/buildSgsRealWriteInstructions/)
     expect(source).not.toMatch(/summarizeSgsRealFillPlan/)
     expect(source).not.toContain('runFillSelectedColumn')
     expect(source).not.toContain("getElementById('fill-selected-column')")
+    expect(source).toContain('buildWholeColumnWriteInstructions')
+  })
+
+  it('NEXT PHASE: the whole-column write call passes writesByOffset straight from buildWholeColumnWriteInstructions — never a hand-built object', () => {
+    const fn = source.slice(source.indexOf('async function runWholeColumnWrite'), source.indexOf('wcStartBtn.addEventListener'))
+    expect(fn).toMatch(/const { writesByOffset } = buildWholeColumnWriteInstructions\(context\.plan, context\.columnIndex\)/)
+    expect(fn).toMatch(/func:\s*fillSgsColumnValues,\s*\n\s*args:\s*\[context\.tableIndex, context\.run\.startIndex, context\.columnIndex, writesByOffset\]/)
   })
 
   it('the single write call passes writesByOffset straight from buildSingleCellTestPlan — never a hand-built object that could contain more than one offset', () => {
@@ -353,10 +360,12 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(source).not.toMatch(/computeSgsColumnFillPlan\([^)]*'overwrite_selected_column'/)
   })
 
-  it('readColumnValues is invoked exactly once: the confirmed column\'s whole run, for the READ-ONLY bulk preview — the single-cell path uses its own atomic read instead (see below)', () => {
+  it('NEXT PHASE: readColumnValues is invoked exactly three times — the read-only section-4 preview, the whole-column page scan (existing scores for the preview table), and the whole-column write\'s own post-write verification read-back — the single-cell path uses its own atomic read instead (see below)', () => {
     const allCalls = [...source.matchAll(/func:\s*readColumnValues,[\s\S]*?args:\s*\[([^\]]*)\]/g)]
-    expect(allCalls.length).toBe(1)
+    expect(allCalls.length).toBe(3)
     expect(allCalls[0][1]).toMatch(/tableIndex, run\.startIndex, run\.length, confirmedRealColumn\.columnIndex/)
+    expect(allCalls[1][1]).toMatch(/candidate\.tableIndex, candidate\.run\.startIndex, candidate\.run\.length, column\.columnIndex/)
+    expect(allCalls[2][1]).toMatch(/context\.tableIndex, context\.run\.startIndex, context\.run\.length, context\.columnIndex/)
   })
 
   it('readSingleCellRevalidationState is invoked exactly twice: once for the single-cell preview, once as the write-time stale-DOM revalidation — never a range, always the SAME one row/column', () => {
@@ -368,6 +377,45 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     // The write-time call re-reads the EXACT same cell the preview
     // confirmed (context.*), never re-deriving it from a fresh scan.
     expect(allCalls[1][1]).toMatch(/context\.tableIndex, context\.rowIndex, context\.columnIndex, context\.identifierColumns/)
+  })
+
+  it('NEXT PHASE: buildWholeColumnWriteInstructions is called exactly once in the whole file, with a single columnIndex — structurally, no code path here can smuggle a second column into one write', () => {
+    const calls = [...source.matchAll(/buildWholeColumnWriteInstructions\(([^)]*)\)/g)]
+    expect(calls.length).toBe(1)
+    expect(calls[0][1]).toBe('context.plan, context.columnIndex')
+  })
+
+  it('NEXT PHASE: never auto-navigates SGS pages — no click()/navigation call anywhere near pagination, and the semi-automatic "เปิดหน้าถัดไปแล้วกด...ดำเนินการต่อ" message is what popup.js shows instead', () => {
+    expect(source).not.toMatch(/pagination[\s\S]{0,200}\.click\(\)/i)
+    expect(source).not.toMatch(/next[A-Z]?\w*(Page|Btn)[\s\S]{0,100}\.click\(\)/i)
+    expect(source).toMatch(/กรุณาเปิดหน้าที่ \$\{pagination\.currentPage \+ 1\} แล้วกด/)
+  })
+
+  it('NEXT PHASE: the whole-column write revalidates against a FRESH scan (performLiveGridScan) before writing — a genuine "guard against stale DOM" step, not merely reusing the preview\'s own scan', () => {
+    const fn = source.slice(source.indexOf('async function runWholeColumnWrite'), source.indexOf('wcStartBtn.addEventListener'))
+    expect(fn).toContain('await performLiveGridScan()')
+    expect(fn).toContain('revalidateWholeColumnContext(')
+    expect(fn).toMatch(/if \(!revalidation\.ok\)[\s\S]{0,300}disarmWholeColumnWrite\(\)/)
+  })
+
+  it('NEXT PHASE: locateColumnOnCurrentPage (never a raw stored columnIndex) is what re-finds the confirmed column on every fresh scan — both the per-page preview scan and the write-time revalidation use it', () => {
+    const scanFn = source.slice(source.indexOf('async function scanCurrentSgsPageForWholeColumn'), source.indexOf('function renderWholeColumnPreviewFromScan'))
+    expect(scanFn).toContain('locateColumnOnCurrentPage(candidate.writableScoreColumns, wcConfirmedColumnKey)')
+    const writeFn = source.slice(source.indexOf('async function runWholeColumnWrite'), source.indexOf('wcStartBtn.addEventListener'))
+    expect(writeFn).toContain('locateColumnOnCurrentPage(freshCandidate.writableScoreColumns, context.columnKey)')
+  })
+
+  it('NEXT PHASE: only "ส่งคอลัมน์นี้ทั้งห้อง" (a brand new session) resets the cumulative cross-page summary — "ดำเนินการต่อ" (the next page of the SAME session) never does', () => {
+    const startFn = source.slice(source.indexOf("wcStartBtn.addEventListener"), source.indexOf("wcContinueBtn.addEventListener"))
+    expect(startFn).toContain('wcCumulativeSummary = emptyWholeColumnSummary()')
+    const continueFn = source.slice(source.indexOf("wcContinueBtn.addEventListener"), source.indexOf("wcOverwriteCheckbox.addEventListener"))
+    expect(continueFn).not.toContain('wcCumulativeSummary = emptyWholeColumnSummary()')
+    expect(continueFn).not.toContain('wcCumulativeFailedStudents = []')
+  })
+
+  it('NEXT PHASE: computeWholeColumnPlan is given the CONFIRMED real column\'s own maxScore, never the Bridge Payload\'s own claimed max', () => {
+    const fn = source.slice(source.indexOf('function renderWholeColumnPreviewFromScan'), source.indexOf('function renderWcSubjectClassroomCheck'))
+    expect(fn).toMatch(/computeWholeColumnPlan\(krunameStudents, mappingResults, existingScoresBySgsRowKey, overwriteMode, column\.maxScore\)/)
   })
 
   it('SGS Score Workspace payload: loading and restoring a payload both dispatch by `kind` via validateAnySgsBridgePayload, never the single-kind validator', () => {
@@ -438,22 +486,26 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     }
   })
 
-  it('item 3: this file never clicks or toggles an SGS header checkbox — every `.checked =` assignment is either the (unrelated) radio-picker selection state, or sctConfirmCheckbox (the extension\'s OWN local popup consent toggle, never anything read from or written into the SGS page itself)', () => {
+  it('item 3: this file never clicks or toggles an SGS header checkbox — every `.checked =` assignment is either the (unrelated) radio-picker selection state, or one of this extension\'s OWN local popup consent/option toggles (sctConfirmCheckbox, wcConfirmCheckbox, wcOverwriteCheckbox — never anything read from or written into the SGS page itself)', () => {
     const checkedAssignments = [...source.matchAll(/(\w+)\.checked\s*=\s*([^\n]+)/g)]
     expect(checkedAssignments.length).toBeGreaterThan(0)
+    const ownConsentCheckboxes = ['sctConfirmCheckbox', 'wcConfirmCheckbox', 'wcOverwriteCheckbox']
     for (const [, target, rhs] of checkedAssignments) {
-      expect(target === 'input' || target === 'sctConfirmCheckbox').toBe(true)
+      expect(target === 'input' || ownConsentCheckboxes.includes(target)).toBe(true)
       if (target === 'input') expect(rhs).toMatch(/^matchResult\.column/)
-      if (target === 'sctConfirmCheckbox') expect(rhs.trim()).toBe('false')
+      if (ownConsentCheckboxes.includes(target)) expect(rhs.trim()).toBe('false')
     }
     expect(source).not.toMatch(/headerCheckbox.*\.click\(\)/)
-    // sctConfirmCheckbox is never passed into an injected content-script
-    // function — it can only ever be read/set from this extension's own
-    // popup DOM, never forwarded into (or read back from) the SGS page.
-    // Bounded to a plausible single executeScript({...}) call's length
-    // (never unbounded — this codebase has no semicolons, so an
-    // unbounded [^;]* would scan past the end of the call entirely).
-    expect(source).not.toMatch(/executeScript\([\s\S]{0,300}sctConfirmCheckbox/)
+    // These consent/option checkboxes are never passed into an injected
+    // content-script function — each can only ever be read/set from this
+    // extension's own popup DOM, never forwarded into (or read back
+    // from) the SGS page. Bounded to a plausible single
+    // executeScript({...}) call's length (never unbounded — this
+    // codebase has no semicolons, so an unbounded [^;]* would scan past
+    // the end of the call entirely).
+    for (const checkbox of ownConsentCheckboxes) {
+      expect(source).not.toMatch(new RegExp(`executeScript\\([\\s\\S]{0,300}${checkbox}`))
+    }
   })
 
   it('LIVE DISCOVERY: a persistent auto-save warning banner is present in the HTML — the extension never claims a Save button exists', () => {

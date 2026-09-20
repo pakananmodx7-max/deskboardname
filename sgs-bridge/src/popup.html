@@ -214,7 +214,96 @@
       </dl>
       <p class="hint">
         โหมดนี้เขียนได้ครั้งละ 1 ช่องเท่านั้น (1 นักเรียน × 1 คอลัมน์) และปุ่มยืนยันจะเปิดใช้งานก็ต่อเมื่อทุกเงื่อนไขความปลอดภัย
-        ผ่านครบถ้วนเท่านั้น — ยังไม่มีโหมดกรอกทั้งคอลัมน์ (ส่งทั้งคอลัมน์) ในเฟสนี้
+        ผ่านครบถ้วนเท่านั้น
+      </p>
+    </section>
+
+    <section id="whole-column-wrap" hidden>
+      <h2>6. ส่งคอลัมน์นี้ทั้งห้อง</h2>
+      <p class="warning">
+        คำเตือน: SGS บันทึกอัตโนมัติ การดำเนินการนี้จะเปลี่ยนคะแนนจริงของนักเรียนหลายคน — ระบบจะเขียนเฉพาะคอลัมน์ที่เลือกไว้เท่านั้น
+        จะไม่แตะคอลัมน์อื่น ยอดรวม เปอร์เซ็นต์ เกรด/สถานะ หมายเหตุ หรือ checkbox ใด ๆ ทั้งสิ้น
+      </p>
+      <button type="button" id="wc-start-btn">ส่งคอลัมน์นี้ทั้งห้อง</button>
+
+      <div id="wc-preview" hidden>
+        <dl>
+          <dt>รายวิชา</dt>
+          <dd id="wc-preview-subject"></dd>
+          <dt>ห้อง</dt>
+          <dd id="wc-preview-classroom"></dd>
+          <dt>ช่อง SGS</dt>
+          <dd id="wc-preview-column"></dd>
+          <dt>คะแนนเต็ม</dt>
+          <dd id="wc-preview-maxscore"></dd>
+        </dl>
+        <dl id="wc-subject-classroom-check" hidden>
+          <dt>วิชา (KrunameClass)</dt>
+          <dd id="wc-check-subject-kruname"></dd>
+          <dt>วิชา (SGS)</dt>
+          <dd id="wc-check-subject-sgs"></dd>
+          <dt>ผลตรวจวิชา</dt>
+          <dd id="wc-check-subject-result"></dd>
+          <dt>ห้องเรียน (KrunameClass)</dt>
+          <dd id="wc-check-classroom-kruname"></dd>
+          <dt>ห้องเรียน (SGS)</dt>
+          <dd id="wc-check-classroom-sgs"></dd>
+          <dt>ผลตรวจห้องเรียน</dt>
+          <dd id="wc-check-classroom-result"></dd>
+        </dl>
+        <table id="wc-preview-table">
+          <thead>
+            <tr>
+              <th>เลขที่</th>
+              <th>นักเรียน</th>
+              <th>คะแนน KrunameClass</th>
+              <th>คะแนนเดิม SGS</th>
+              <th>คะแนนใหม่</th>
+              <th>สถานะ</th>
+            </tr>
+          </thead>
+          <tbody id="wc-preview-table-body"></tbody>
+        </table>
+        <label>
+          <input type="checkbox" id="wc-overwrite-existing" />
+          เขียนทับคะแนนเดิมในคอลัมน์ที่เลือก
+        </label>
+        <p id="wc-gate-reason" class="warning" hidden></p>
+        <p id="wc-write-warning" class="warning" hidden>
+          SGS บันทึกอัตโนมัติ การยืนยันจะเปลี่ยนคะแนนจริงของนักเรียนหลายคนในหน้านี้ทันที
+        </p>
+        <label>
+          <input type="checkbox" id="wc-confirm" disabled />
+          ฉันเข้าใจว่าคะแนนของนักเรียนหลายคนในหน้านี้จะถูกบันทึกจริงใน SGS
+        </label>
+        <button type="button" id="wc-write-btn" disabled>ยืนยัน ส่งคอลัมน์นี้ (หน้าปัจจุบัน)</button>
+      </div>
+
+      <div id="wc-pagination-continue" hidden>
+        <p id="wc-pagination-message"></p>
+        <button type="button" id="wc-continue-btn">ดำเนินการต่อ</button>
+      </div>
+
+      <dl id="wc-result" hidden>
+        <dt>สำเร็จ</dt>
+        <dd id="wc-result-written"></dd>
+        <dt>ข้าม ไม่มีคะแนน</dt>
+        <dd id="wc-result-skip-no-score"></dd>
+        <dt>ข้าม คะแนนเดิม</dt>
+        <dd id="wc-result-skip-existing"></dd>
+        <dt>ไม่พบ</dt>
+        <dd id="wc-result-not-found"></dd>
+        <dt>กำกวม</dt>
+        <dd id="wc-result-ambiguous"></dd>
+        <dt>ล้มเหลว</dt>
+        <dd id="wc-result-failed"></dd>
+      </dl>
+      <ul id="wc-failed-list" hidden></ul>
+
+      <p class="hint">
+        ประมวลผลทีละหน้าของ SGS เท่านั้น — ระบบจะไม่เปลี่ยนหน้าให้อัตโนมัติ (ยังไม่ยืนยันได้ว่าปลอดภัย) เมื่อหน้านี้เสร็จแล้ว
+        ให้เปิดหน้าถัดไปของ SGS ด้วยตนเองแล้วกด "ดำเนินการต่อ" ระบบจะสแกนหน้าใหม่ ตรวจสอบวิชา/ห้องเรียน/คอลัมน์ใหม่ทั้งหมดก่อนเขียนทุกครั้ง
+        และไม่นำตำแหน่งแถวจากหน้าก่อนหน้ามาใช้ซ้ำ
       </p>
     </section>
 

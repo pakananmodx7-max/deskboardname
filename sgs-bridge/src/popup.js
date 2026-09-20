@@ -46,6 +46,25 @@ import {
   sgsRowIndexFromKey,
 } from './lib/sgs-table-extraction.js'
 import { describeMatchVerdict, evaluateSubjectClassroomMatch } from './lib/subject-classroom-match.js'
+// NEXT PHASE — whole-column writing, now that the guarded single-cell
+// test has passed live. See whole-column-write.js's own doc comment for
+// the full architecture (structural single-column guarantee,
+// pagination-safe re-scan per page, stale-DOM abort).
+import {
+  buildWholeColumnWriteInstructions,
+  canEnableWholeColumnWrite,
+  collectFailedStudents,
+  computeWholeColumnPlan,
+  emptyWholeColumnSummary,
+  evaluateWholeColumnPreconditions,
+  formatSgsExistingScoreDisplay as formatWcExistingScoreDisplay,
+  formatSgsNewValueDisplay as formatWcNewValueDisplay,
+  locateColumnOnCurrentPage,
+  mergeWholeColumnSummaries,
+  revalidateWholeColumnContext,
+  summarizeWholeColumnResult,
+  verifyWholeColumnWrite,
+} from './lib/whole-column-write.js'
 
 const DEFAULT_SGS_KEYWORD = 'sgs'
 const SESSION_PAYLOAD_KEY = 'sgsBridgeLoadedPayload'
@@ -134,6 +153,42 @@ const sctResultPreviousEl = document.getElementById('sct-result-previous')
 const sctResultNewEl = document.getElementById('sct-result-new')
 const sctResultStatusEl = document.getElementById('sct-result-status')
 
+// NEXT PHASE — whole-column writing (item 1-6 of the spec). Same
+// "confirm precondition -> explicit consent checkbox -> write button"
+// shape as the single-cell test above, one level up (a whole PAGE's
+// worth of matched students, one column, never more).
+const wholeColumnWrap = document.getElementById('whole-column-wrap')
+const wcStartBtn = document.getElementById('wc-start-btn')
+const wcPreviewEl = document.getElementById('wc-preview')
+const wcPreviewSubjectEl = document.getElementById('wc-preview-subject')
+const wcPreviewClassroomEl = document.getElementById('wc-preview-classroom')
+const wcPreviewColumnEl = document.getElementById('wc-preview-column')
+const wcPreviewMaxScoreEl = document.getElementById('wc-preview-maxscore')
+const wcSubjectClassroomCheckEl = document.getElementById('wc-subject-classroom-check')
+const wcCheckSubjectKrunameEl = document.getElementById('wc-check-subject-kruname')
+const wcCheckSubjectSgsEl = document.getElementById('wc-check-subject-sgs')
+const wcCheckSubjectResultEl = document.getElementById('wc-check-subject-result')
+const wcCheckClassroomKrunameEl = document.getElementById('wc-check-classroom-kruname')
+const wcCheckClassroomSgsEl = document.getElementById('wc-check-classroom-sgs')
+const wcCheckClassroomResultEl = document.getElementById('wc-check-classroom-result')
+const wcPreviewTableBody = document.getElementById('wc-preview-table-body')
+const wcOverwriteCheckbox = document.getElementById('wc-overwrite-existing')
+const wcGateReasonEl = document.getElementById('wc-gate-reason')
+const wcWriteWarningEl = document.getElementById('wc-write-warning')
+const wcConfirmCheckbox = document.getElementById('wc-confirm')
+const wcWriteBtn = document.getElementById('wc-write-btn')
+const wcPaginationContinueWrap = document.getElementById('wc-pagination-continue')
+const wcPaginationMessageEl = document.getElementById('wc-pagination-message')
+const wcContinueBtn = document.getElementById('wc-continue-btn')
+const wcResultEl = document.getElementById('wc-result')
+const wcResultWrittenEl = document.getElementById('wc-result-written')
+const wcResultSkipNoScoreEl = document.getElementById('wc-result-skip-no-score')
+const wcResultSkipExistingEl = document.getElementById('wc-result-skip-existing')
+const wcResultNotFoundEl = document.getElementById('wc-result-not-found')
+const wcResultAmbiguousEl = document.getElementById('wc-result-ambiguous')
+const wcResultFailedEl = document.getElementById('wc-result-failed')
+const wcFailedListEl = document.getElementById('wc-failed-list')
+
 /** The exact context the teacher's last successful single-cell preview
  * confirmed — captured by runSingleCellTestPreview(), consumed by
  * runSingleCellTestWrite() as the "known good" side of
@@ -167,6 +222,28 @@ let realPlan = null
  * describeMappingStatusForDisplay) and (b) gate the single-cell test to
  * students visible on the CURRENT page only. */
 let currentPagination = null
+
+// NEXT PHASE — whole-column writing state. `wcConfirmedColumnKey` is
+// locked in the moment the teacher clicks "ส่งคอลัมน์นี้ทั้งห้อง" and
+// reused (via locateColumnOnCurrentPage) across every subsequent SGS
+// page/"ดำเนินการต่อ" click, since a column's raw INDEX can differ page
+// to page even for the exact same real column — the KEY never does.
+let wcConfirmedColumnKey = null
+/** The CURRENT page's scan results this session's preview/write is
+ * scoped to — {candidate, column, existingScoresBySgsRowKey}. Rebuilt by
+ * scanCurrentSgsPageForWholeColumn() on every "ส่งคอลัมน์นี้ทั้งห้อง" /
+ * "ดำเนินการต่อ" click; never carried over from a previous page. */
+let wcPageScan = null
+/** The exact context confirmed once every whole-column precondition
+ * passes for the CURRENT page — consumed by runWholeColumnWrite() as the
+ * "known good" side of revalidateWholeColumnContext's stale-DOM
+ * comparison, exactly one level up from confirmedSingleCellContext. */
+let wcConfirmedContext = null
+/** Running totals across every SGS page processed so far THIS session
+ * (reset only when "ส่งคอลัมน์นี้ทั้งห้อง" starts a brand new session,
+ * never by "ดำเนินการต่อ") — see mergeWholeColumnSummaries. */
+let wcCumulativeSummary = emptyWholeColumnSummary()
+let wcCumulativeFailedStudents = []
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -335,6 +412,34 @@ function resetRealInspectionState() {
   realFillPreviewWrap.hidden = true
   realFillPreviewBody.replaceChildren()
   resetSingleCellTestState()
+  resetWholeColumnState()
+}
+
+/** Returns every whole-column UI element to its safe default and clears
+ * ALL in-progress state, including the cumulative cross-page summary —
+ * called on every fresh step-4 inspection (a rescan invalidates an
+ * in-progress whole-column session) and once at load. Never called by
+ * "ดำเนินการต่อ" itself, since that must preserve the running total. */
+function resetWholeColumnState() {
+  wcConfirmedColumnKey = null
+  wcPageScan = null
+  wcConfirmedContext = null
+  wcCumulativeSummary = emptyWholeColumnSummary()
+  wcCumulativeFailedStudents = []
+  wholeColumnWrap.hidden = true
+  wcPreviewEl.hidden = true
+  wcPreviewTableBody.replaceChildren()
+  wcSubjectClassroomCheckEl.hidden = true
+  wcOverwriteCheckbox.checked = false
+  wcGateReasonEl.hidden = true
+  wcWriteWarningEl.hidden = true
+  wcConfirmCheckbox.checked = false
+  wcConfirmCheckbox.disabled = true
+  wcWriteBtn.disabled = true
+  wcPaginationContinueWrap.hidden = true
+  wcResultEl.hidden = true
+  wcFailedListEl.hidden = true
+  wcFailedListEl.replaceChildren()
 }
 
 /**
@@ -793,6 +898,29 @@ async function runColumnPreview() {
   realPlan = computeSgsRealFillPlan(krunameStudents, mappingResults, existingScoresBySgsRowKey, loadedPayload.overwriteMode)
   renderRealFillPreview(realPlan)
   populateSingleCellTestPickers(realPlan, currentGridCandidate)
+  updateWholeColumnAvailability()
+}
+
+/**
+ * NEXT PHASE — item 1: shows/hides the "ส่งคอลัมน์นี้ทั้งห้อง" button.
+ * Same eligibility as the single-cell test section (a confirmed, real,
+ * currently-writable column) — never offered for a derived/activatable
+ * column, and never before a real column has actually been confirmed.
+ * Does NOT itself start a whole-column session; a fresh eligibility
+ * change (a different column picked, a rescan) always tears down any
+ * in-progress session via resetWholeColumnState (called from
+ * resetRealInspectionState), so the teacher must explicitly click
+ * "ส่งคอลัมน์นี้ทั้งห้อง" again for the newly-eligible column.
+ */
+function updateWholeColumnAvailability() {
+  const eligible = Boolean(
+    loadedPayload &&
+      currentGridCandidate &&
+      confirmedRealColumn &&
+      gridMeetsFillRequirements(currentGridCandidate) &&
+      isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn),
+  )
+  wholeColumnWrap.hidden = !eligible
 }
 
 /**
@@ -1282,6 +1410,339 @@ sctConfirmCheckbox.addEventListener('change', () => {
 // before writing (see runSingleCellTestWrite's own doc comment).
 sctWriteBtn.addEventListener('click', () => {
   void runSingleCellTestWrite()
+})
+
+// ==================================================
+// NEXT PHASE — whole-column writing (items 1-6). One page at a time,
+// semi-automatic pagination (item 4: automatic page navigation has never
+// been confirmed safe on the real page, so this always waits for the
+// teacher to open the next page themselves), one column, structurally
+// guaranteed by buildWholeColumnWriteInstructions/fillSgsColumnValues
+// both taking a single columnIndex for the whole call.
+// ==================================================
+
+/**
+ * Scans the CURRENTLY OPEN SGS page fresh (performLiveGridScan — the
+ * exact same scan runMappingCheck/runRealColumnInspection use, never a
+ * bespoke one), re-locates the confirmed column by its STABLE key (never
+ * by the index from a previous page/scan — see locateColumnOnCurrentPage's
+ * own doc comment), and reads that column's current values for the
+ * "คะแนนเดิม SGS" preview column. Populates wcPageScan; returns false
+ * (with a gate reason already shown) when the page doesn't have what
+ * this session needs.
+ */
+async function scanCurrentSgsPageForWholeColumn() {
+  if (!loadedPayload || !wcConfirmedColumnKey) return false
+
+  const { candidate } = await performLiveGridScan()
+  if (!candidate) {
+    wcPageScan = null
+    wcGateReasonEl.textContent = 'ไม่พบตารางคะแนนนักเรียนในหน้านี้ — ตรวจสอบว่าเปิดหน้ากรอกคะแนนของ SGS อยู่หรือไม่'
+    wcGateReasonEl.hidden = false
+    return false
+  }
+
+  const column = locateColumnOnCurrentPage(candidate.writableScoreColumns, wcConfirmedColumnKey)
+  if (!column) {
+    wcPageScan = null
+    wcGateReasonEl.textContent = 'ไม่พบคอลัมน์ที่เลือกไว้เป็นช่องกรอกได้จริงในหน้านี้ — ตรวจสอบว่าติ๊กเปิดช่องคะแนนนี้ใน SGS แล้วหรือยัง'
+    wcGateReasonEl.hidden = false
+    return false
+  }
+
+  const tab = await getActiveTab()
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: readColumnValues,
+    args: [candidate.tableIndex, candidate.run.startIndex, candidate.run.length, column.columnIndex],
+  })
+  const result = injection.result
+  const existingScoresBySgsRowKey = {}
+  if (result.found) {
+    for (const [offsetText, value] of Object.entries(result.values)) {
+      existingScoresBySgsRowKey[buildSgsRowKey(Number(offsetText))] = value
+    }
+  }
+
+  wcPageScan = { candidate, column, existingScoresBySgsRowKey }
+  return true
+}
+
+/**
+ * The one place a whole-column plan is built for display AND for the
+ * eventual write — computeWholeColumnPlan is handed the CONFIRMED real
+ * column's own maxScore (never the Bridge Payload's own claimed max —
+ * the teacher may have picked a different real column than the payload
+ * assumed) and the teacher's current overwrite-mode checkbox state. Pure
+ * re-render: never re-scans the DOM itself (see
+ * scanCurrentSgsPageForWholeColumn, its only caller-side prerequisite).
+ */
+function renderWholeColumnPreviewFromScan() {
+  if (!wcPageScan || !loadedPayload || !currentGridFacts) return
+  const { candidate, column, existingScoresBySgsRowKey } = wcPageScan
+
+  const winningTable = currentGridFacts.tables.find((t) => t.tableIndex === candidate.tableIndex)
+  const sgsCandidates = winningTable ? extractSgsStudentCandidates(winningTable, candidate.run, candidate.identifierColumns) : []
+
+  const roster = buildFullRosterFromPayload(loadedPayload)
+  const krunameStudents = roster.map((r) => ({
+    studentId: r.studentId,
+    studentNumber: r.studentNumber,
+    studentCode: r.studentCode,
+    fullName: r.fullName,
+    score: r.score,
+  }))
+  const mappingResults = matchStudentsToSgs(krunameStudents, sgsCandidates)
+  const overwriteMode = wcOverwriteCheckbox.checked ? 'overwrite_selected_column' : 'skip_existing'
+  const plan = computeWholeColumnPlan(krunameStudents, mappingResults, existingScoresBySgsRowKey, overwriteMode, column.maxScore)
+
+  wcPreviewSubjectEl.textContent = loadedPayload.subjectName || '-'
+  wcPreviewClassroomEl.textContent = loadedPayload.classroomName || '-'
+  wcPreviewColumnEl.textContent = column.label
+  wcPreviewMaxScoreEl.textContent = column.maxScore !== null && column.maxScore !== undefined ? String(column.maxScore) : 'ไม่ทราบ'
+
+  wcPreviewTableBody.replaceChildren(
+    ...plan.map((row) => {
+      const tr = document.createElement('tr')
+      const tdNumber = document.createElement('td')
+      tdNumber.textContent = row.studentNumber === null ? '-' : String(row.studentNumber)
+      const tdName = document.createElement('td')
+      tdName.textContent = row.fullName
+      const tdKruname = document.createElement('td')
+      tdKruname.textContent = row.krunameScore === null ? '—' : String(row.krunameScore)
+      const tdExisting = document.createElement('td')
+      tdExisting.textContent = formatWcExistingScoreDisplay(row)
+      const tdNew = document.createElement('td')
+      tdNew.textContent = formatWcNewValueDisplay(row)
+      const tdStatus = document.createElement('td')
+      tdStatus.textContent = row.status
+      tr.append(tdNumber, tdName, tdKruname, tdExisting, tdNew, tdStatus)
+      return tr
+    }),
+  )
+  wcPreviewEl.hidden = false
+
+  const subjectClassroomMatch = evaluateCurrentSubjectClassroomMatch()
+  renderWcSubjectClassroomCheck(subjectClassroomMatch)
+
+  wcGateReasonEl.hidden = true
+  wcWriteWarningEl.hidden = true
+  wcConfirmCheckbox.checked = false
+  wcConfirmCheckbox.disabled = true
+  wcWriteBtn.disabled = true
+  wcConfirmedContext = null
+
+  const preconditions = evaluateWholeColumnPreconditions({
+    subjectClassroomOk: subjectClassroomMatch === null ? true : subjectClassroomMatch.ok,
+    columnWritableNow: candidate.writableScoreColumns.some((c) => c.key === column.key),
+    headerCheckboxOk: !column.headerCheckboxPresent || column.headerCheckboxChecked === true,
+    plan,
+  })
+
+  if (!preconditions.ok) {
+    wcGateReasonEl.textContent = preconditions.reason
+    wcGateReasonEl.hidden = false
+    return
+  }
+
+  wcWriteWarningEl.hidden = false
+  wcConfirmCheckbox.disabled = false
+  wcConfirmedContext = {
+    tableIndex: candidate.tableIndex,
+    run: candidate.run,
+    columnIndex: column.columnIndex,
+    columnKey: column.key,
+    subjectFilterText: currentGridFacts.subjectFilter?.selectedText ?? null,
+    classroomFilterText: currentGridFacts.classroomFilter?.selectedText ?? null,
+    plan,
+  }
+}
+
+/** Same "KrunameClass: ... / SGS: ... / ผลตรวจ: ..." shape as
+ * renderSubjectClassroomCheck (section 5), rendered into this section's
+ * OWN elements so the two safety checks never share DOM state. */
+function renderWcSubjectClassroomCheck(result) {
+  if (!result) {
+    wcSubjectClassroomCheckEl.hidden = true
+    return
+  }
+  wcCheckSubjectKrunameEl.textContent = loadedPayload?.subjectName || '-'
+  wcCheckSubjectSgsEl.textContent = currentGridFacts?.subjectFilter?.selectedText || '-'
+  wcCheckSubjectResultEl.textContent = describeMatchVerdict(result.subject)
+  wcCheckClassroomKrunameEl.textContent = result.classroom.krunameLabel ?? (loadedPayload?.classroomName || '-')
+  wcCheckClassroomSgsEl.textContent = result.classroom.sgsLabel ?? '-'
+  wcCheckClassroomResultEl.textContent = describeMatchVerdict(result.classroom)
+  wcSubjectClassroomCheckEl.hidden = false
+}
+
+/** Scans the current page fresh, then renders the preview/gates from
+ * that scan — the ONE function both "ส่งคอลัมน์นี้ทั้งห้อง" (a brand new
+ * session) and "ดำเนินการต่อ" (the next SGS page of the SAME session)
+ * call, so every page — including the first — is scanned/validated
+ * identically (item 4: "scan current page ... re-scan DOM ... revalidate
+ * subject/classroom/column"). */
+async function runWholeColumnPageScanAndPreview() {
+  wcGateReasonEl.hidden = true
+  wcPreviewEl.hidden = true
+  const ok = await scanCurrentSgsPageForWholeColumn()
+  if (!ok) return
+  renderWholeColumnPreviewFromScan()
+}
+
+/** The write button's own gate, same "preconditions AND explicit
+ * consent" ordering as canEnableSingleCellTestWrite. */
+function updateWholeColumnWriteButtonState() {
+  wcWriteBtn.disabled = !canEnableWholeColumnWrite(wcConfirmedContext !== null, wcConfirmCheckbox.checked)
+}
+
+/** Returns the confirm checkbox/write button to their safe default after
+ * a write attempt (of any outcome) or a stale-DOM abort — a fresh
+ * "ส่งคอลัมน์นี้ทั้งห้อง"/"ดำเนินการต่อ" is required before another write,
+ * never a "confirm again" shortcut. */
+function disarmWholeColumnWrite() {
+  wcConfirmedContext = null
+  wcConfirmCheckbox.checked = false
+  wcConfirmCheckbox.disabled = true
+  wcWriteBtn.disabled = true
+}
+
+function renderWholeColumnResult() {
+  wcResultWrittenEl.textContent = String(wcCumulativeSummary.written)
+  wcResultSkipNoScoreEl.textContent = String(wcCumulativeSummary.skippedNoScore)
+  wcResultSkipExistingEl.textContent = String(wcCumulativeSummary.skippedExisting)
+  wcResultNotFoundEl.textContent = String(wcCumulativeSummary.notFound)
+  wcResultAmbiguousEl.textContent = String(wcCumulativeSummary.ambiguous)
+  wcResultFailedEl.textContent = String(wcCumulativeSummary.failed)
+  wcResultEl.hidden = false
+
+  if (wcCumulativeFailedStudents.length > 0) {
+    wcFailedListEl.replaceChildren(
+      ...wcCumulativeFailedStudents.map((s) => {
+        const li = document.createElement('li')
+        li.textContent = `${s.studentNumber ?? '-'} ${s.fullName}`
+        return li
+      }),
+    )
+    wcFailedListEl.hidden = false
+  } else {
+    wcFailedListEl.replaceChildren()
+    wcFailedListEl.hidden = true
+  }
+}
+
+/**
+ * The ONE live write action for whole-column mode this phase. Every
+ * write instruction it produces (buildWholeColumnWriteInstructions)
+ * carries the SAME columnIndex confirmed at preview time — structurally,
+ * there is no path here capable of writing a second column. Re-validates
+ * against a FRESH scan immediately before writing (item 5's "guard
+ * against stale DOM", one level up from the single-cell test's own),
+ * writes, waits briefly, reads the column back, and records a per-student
+ * outcome — never trusting the DOM write call's own optimistic count
+ * alone (see verifyWholeColumnWrite's own doc comment). Never clicks
+ * Save, never touches the SGS header checkbox, never navigates pages.
+ */
+async function runWholeColumnWrite() {
+  if (!wcConfirmedContext) return
+  if (!canEnableWholeColumnWrite(true, wcConfirmCheckbox.checked)) return
+  const context = wcConfirmedContext
+  wcWriteBtn.disabled = true
+
+  const { candidate: freshCandidate } = await performLiveGridScan()
+  const freshColumn = freshCandidate ? locateColumnOnCurrentPage(freshCandidate.writableScoreColumns, context.columnKey) : null
+  const revalidation = revalidateWholeColumnContext(
+    { subjectFilterText: context.subjectFilterText, classroomFilterText: context.classroomFilterText, columnKey: context.columnKey },
+    {
+      subjectFilterText: currentGridFacts?.subjectFilter?.selectedText ?? null,
+      classroomFilterText: currentGridFacts?.classroomFilter?.selectedText ?? null,
+      columnKey: freshColumn ? freshColumn.key : null,
+    },
+  )
+  if (!revalidation.ok) {
+    wcGateReasonEl.textContent = `ยกเลิกการเขียน: ${revalidation.reason}`
+    wcGateReasonEl.hidden = false
+    disarmWholeColumnWrite()
+    return
+  }
+
+  const { writesByOffset } = buildWholeColumnWriteInstructions(context.plan, context.columnIndex)
+
+  const tab = await getActiveTab()
+  const [writeInjection] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: fillSgsColumnValues,
+    args: [context.tableIndex, context.run.startIndex, context.columnIndex, writesByOffset],
+  })
+  const fillResult = writeInjection.result
+
+  // Best-effort pause for SGS's own input/change handlers (and any
+  // client-side reformatting) to settle before the verification read —
+  // NOT a confirmed "autosave network request finished" signal (no such
+  // signal has ever been confirmed live); the read-back below, not this
+  // delay, is what actually decides success per student.
+  await new Promise((resolve) => setTimeout(resolve, 400))
+
+  const [readInjection] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: readColumnValues,
+    args: [context.tableIndex, context.run.startIndex, context.run.length, context.columnIndex],
+  })
+  const freshValuesResult = readInjection.result
+
+  const verifiedPlan = verifyWholeColumnWrite(context.plan, writesByOffset, fillResult, freshValuesResult)
+  const pageSummary = summarizeWholeColumnResult(verifiedPlan)
+  wcCumulativeSummary = mergeWholeColumnSummaries(wcCumulativeSummary, pageSummary)
+  wcCumulativeFailedStudents = wcCumulativeFailedStudents.concat(collectFailedStudents(verifiedPlan))
+
+  disarmWholeColumnWrite()
+  wcPreviewEl.hidden = true
+
+  // Item 4: never auto-navigates — currentPagination here reflects the
+  // fresh scan taken above, right before this page's write.
+  const pagination = currentPagination
+  const hasMorePages = Boolean(
+    pagination && pagination.detected && pagination.currentPage !== null && pagination.totalPages !== null && pagination.currentPage < pagination.totalPages,
+  )
+
+  if (hasMorePages) {
+    wcPaginationMessageEl.textContent = `หน้าที่ ${pagination.currentPage} เสร็จแล้ว กรุณาเปิดหน้าที่ ${pagination.currentPage + 1} แล้วกด "ดำเนินการต่อ"`
+    wcPaginationContinueWrap.hidden = false
+  } else {
+    wcPaginationContinueWrap.hidden = true
+  }
+  renderWholeColumnResult()
+}
+
+wcStartBtn.addEventListener('click', () => {
+  wcConfirmedColumnKey = confirmedRealColumn ? confirmedRealColumn.key : null
+  wcCumulativeSummary = emptyWholeColumnSummary()
+  wcCumulativeFailedStudents = []
+  wcResultEl.hidden = true
+  wcFailedListEl.hidden = true
+  wcFailedListEl.replaceChildren()
+  wcPaginationContinueWrap.hidden = true
+  void runWholeColumnPageScanAndPreview()
+})
+
+wcContinueBtn.addEventListener('click', () => {
+  wcPaginationContinueWrap.hidden = true
+  void runWholeColumnPageScanAndPreview()
+})
+
+// Toggling the overwrite choice only ever changes THIS section's own
+// plan — never loadedPayload.overwriteMode (the original payload-level
+// setting used by the read-only section 4 preview), and never re-scans
+// the DOM (the already-scanned wcPageScan is reused).
+wcOverwriteCheckbox.addEventListener('change', () => {
+  if (wcPageScan) renderWholeColumnPreviewFromScan()
+})
+
+wcConfirmCheckbox.addEventListener('change', () => {
+  updateWholeColumnWriteButtonState()
+})
+
+wcWriteBtn.addEventListener('click', () => {
+  void runWholeColumnWrite()
 })
 
 async function restoreSessionPayload() {
