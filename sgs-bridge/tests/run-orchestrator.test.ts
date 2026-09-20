@@ -13,7 +13,9 @@ import {
   AUTO_RUN_STATUS,
   clearPendingAdvance,
   createInitialRunState,
+  isPaginationHydrationValid,
   isTerminalStatus,
+  PAGINATION_HYDRATION_FAILED_MESSAGE,
   shouldContentScriptProcess,
   withConfirmedContext,
   withPendingAdvance,
@@ -54,6 +56,72 @@ describe('createInitialRunState', () => {
     expect(state.pagesProcessed).toEqual([])
     expect(state.allStudentResults).toEqual([])
     expect(state.failedStudents).toEqual([])
+  })
+})
+
+describe('FINAL AUTO-RUN STATE BUG FIX: createInitialRunState HYDRATES pagination immediately — never status "running" with currentPage/totalPages still null', () => {
+  it('item 7\'s exact regression: currentPage=1, totalPages=4, totalRows=32, pageSize=10 given at creation time — the initial state already shows page 1 of 4, never "?/?"', () => {
+    const state = createInitialRunState({
+      ...baseInit(),
+      currentPage: 1,
+      totalPages: 4,
+      totalStudentRows: 32,
+      pageSize: 10,
+    })
+    expect(state.currentPage).toBe(1)
+    expect(state.totalPages).toBe(4)
+    expect(state.totalStudentRows).toBe(32)
+    expect(state.pageSize).toBe(10)
+    expect(state.status).toBe(AUTO_RUN_STATUS.RUNNING)
+    expect(state.active).toBe(true)
+    // Never the bug this whole fix targets: a "running" state must never
+    // report an unknown page.
+    expect(state.currentPage).not.toBeNull()
+    expect(state.totalPages).not.toBeNull()
+  })
+
+  it('expectedNextPage starts at the SAME confirmed currentPage — content-script.js\'s very first page-gate check also verifies its own fresh re-scan still matches what was inspected at start time', () => {
+    const state = createInitialRunState({ ...baseInit(), currentPage: 1, totalPages: 4 })
+    expect(state.expectedNextPage).toBe(1)
+  })
+
+  it('without pagination fields (an older caller, or a test not exercising this path), still defaults to null — never crashes, never fabricates a page number', () => {
+    const state = createInitialRunState(baseInit())
+    expect(state.currentPage).toBeNull()
+    expect(state.totalPages).toBeNull()
+    expect(state.totalStudentRows).toBeNull()
+    expect(state.pageSize).toBeNull()
+    expect(state.expectedNextPage).toBeNull()
+  })
+
+  it('a plain JSON round-trip (simulating chrome.runtime message passing) preserves every pagination field exactly — no schema mismatch, no field dropped/renamed/reset to null', () => {
+    const state = createInitialRunState({ ...baseInit(), currentPage: 1, totalPages: 4, totalStudentRows: 32, pageSize: 10 })
+    const roundTripped = JSON.parse(JSON.stringify(state))
+    expect(roundTripped.currentPage).toBe(1)
+    expect(roundTripped.totalPages).toBe(4)
+    expect(roundTripped.totalStudentRows).toBe(32)
+    expect(roundTripped.pageSize).toBe(10)
+    expect(roundTripped.expectedNextPage).toBe(1)
+  })
+})
+
+describe('isPaginationHydrationValid — item 6\'s hard guard, shared by popup.js and background.js so neither can drift from the other', () => {
+  it('true only when BOTH currentPage and totalPages are real numbers', () => {
+    expect(isPaginationHydrationValid({ currentPage: 1, totalPages: 4 })).toBe(true)
+    expect(isPaginationHydrationValid({ currentPage: 1, totalPages: 4, totalStudentRows: 32, pageSize: 10 })).toBe(true)
+  })
+
+  it('false when either is null/undefined, or the whole object is missing', () => {
+    expect(isPaginationHydrationValid({ currentPage: null, totalPages: 4 })).toBe(false)
+    expect(isPaginationHydrationValid({ currentPage: 1, totalPages: null })).toBe(false)
+    expect(isPaginationHydrationValid({ currentPage: undefined, totalPages: 4 })).toBe(false)
+    expect(isPaginationHydrationValid(null)).toBe(false)
+    expect(isPaginationHydrationValid(undefined)).toBe(false)
+    expect(isPaginationHydrationValid({})).toBe(false)
+  })
+
+  it('PAGINATION_HYDRATION_FAILED_MESSAGE is the one shared refusal string both guards show', () => {
+    expect(PAGINATION_HYDRATION_FAILED_MESSAGE).toBe('ยังอ่านข้อมูลหน้าของ SGS ไม่สำเร็จ')
   })
 })
 

@@ -36,6 +36,8 @@ import {
   applyStopRequested,
   clearPendingAdvance,
   createInitialRunState,
+  isPaginationHydrationValid,
+  PAGINATION_HYDRATION_FAILED_MESSAGE,
   shouldContentScriptProcess,
   withConfirmedContext,
   withPendingAdvance,
@@ -71,8 +73,22 @@ function sendToTab(tabId, message) {
   chrome.tabs.sendMessage(tabId, message).catch(() => {})
 }
 
+/**
+ * FINAL AUTO-RUN STATE BUG FIX (item 2/6) — this is the SECOND of the
+ * two required guards (popup.js's own AR_START click handler is the
+ * first): even if popup somehow sent a START with missing/incomplete
+ * pagination, a run is NEVER created from it. `pagination` here is
+ * popup.js's OWN fresh, just-taken inspection (never this file re-doing
+ * or trusting any earlier/cached read) — createInitialRunState is only
+ * ever called once this guard has already passed, so a state with
+ * `status: 'running'` can never exist with `currentPage`/`totalPages`
+ * still `null`.
+ */
 async function handleStart(message) {
-  const { tabId, subject, classroom, targetColumn, payload, overwriteMode } = message
+  const { tabId, subject, classroom, targetColumn, payload, overwriteMode, pagination } = message
+  if (!isPaginationHydrationValid(pagination)) {
+    return { ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE }
+  }
   const state = createInitialRunState({
     runId: crypto.randomUUID(),
     tabId,
@@ -81,6 +97,10 @@ async function handleStart(message) {
     targetColumn,
     payload,
     overwriteMode,
+    currentPage: pagination.currentPage,
+    totalPages: pagination.totalPages,
+    totalStudentRows: pagination.totalStudentRows ?? null,
+    pageSize: pagination.pageSize ?? null,
   })
   await setState(state)
   sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
@@ -146,10 +166,10 @@ async function handleAdvanceConfirmed(tabId) {
   return { ok: true }
 }
 
-async function handlePageProgress(tabId, { pageNumber, totalPages, runningSummary, confirmedContext }) {
+async function handlePageProgress(tabId, { pageNumber, totalPages, totalStudentRows, pageSize, runningSummary, confirmedContext }) {
   const state = await getState()
   if (!state || state.tabId !== tabId) return { ok: false }
-  let next = applyPageProgress(state, { pageNumber, totalPages, runningSummary })
+  let next = applyPageProgress(state, { pageNumber, totalPages, totalStudentRows, pageSize, runningSummary })
   if (confirmedContext) next = withConfirmedContext(next, confirmedContext)
   await setState(next)
   return { ok: true }

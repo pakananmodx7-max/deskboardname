@@ -75,7 +75,7 @@ import {
 // display-facing helpers are still needed here.
 import { buildAutoRunPreRunSummary, buildAutoRunReport, emptyAutoRunSummary, isPaginationReadyForAutoRun, PAGINATION_UNKNOWN_MESSAGE } from './lib/auto-run.js'
 import { buildPaginationDiagnosticReport, buildPaginationHintsFromInspection } from './lib/pagination-control.js'
-import { AR_MESSAGE } from './lib/run-orchestrator.js'
+import { AR_MESSAGE, isPaginationHydrationValid, PAGINATION_HYDRATION_FAILED_MESSAGE } from './lib/run-orchestrator.js'
 
 const DEFAULT_SGS_KEYWORD = 'sgs'
 const SESSION_PAYLOAD_KEY = 'sgsBridgeLoadedPayload'
@@ -2065,11 +2065,47 @@ arConfirmAutosaveCheckbox.addEventListener('change', () => {
  * after this one message, everything continues even if this popup
  * closes.
  */
+/**
+ * FINAL AUTO-RUN STATE BUG FIX (item 1/2/6) — a run is never started
+ * from stale state: this ALWAYS takes a brand-new, fresh live pagination
+ * inspection at the exact moment "เริ่มส่งครบทั้งห้อง" is clicked — the
+ * SAME inspectPaginationControls/buildPaginationDiagnosticReport this
+ * popup's own "ตรวจปุ่มเปลี่ยนหน้า SGS" button uses — never the earlier
+ * pre-run preview's own (possibly now-stale) snapshot, never
+ * currentPagination (a module-level variable a previous step-4/6 scan
+ * may have set). If that fresh read can't confidently produce BOTH
+ * currentPage and totalPages, this refuses to send AR_START at all
+ * (item 6's hard guard — background.js's handleStart enforces the SAME
+ * rule independently, in case this guard is ever bypassed) — so
+ * background.js's run state is hydrated with real, non-null pagination
+ * from the moment it is created, and this popup never renders "หน้า ? /
+ * ?".
+ */
 arRunBtn.addEventListener('click', () => {
   void (async () => {
     if (!loadedPayload || !confirmedRealColumn) return
     arPrerunEl.hidden = true
+    arAbortReasonEl.hidden = true
+
     const tab = await getActiveTab()
+    const [paginationInjection] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: inspectPaginationControls,
+    })
+    const paginationReport = buildPaginationDiagnosticReport(paginationInjection.result)
+    const pagination = {
+      currentPage: paginationReport.currentPage,
+      totalPages: paginationReport.totalPages,
+      totalStudentRows: paginationReport.totalRows,
+      pageSize: paginationReport.pageSize,
+    }
+
+    if (!isPaginationHydrationValid(pagination)) {
+      arAbortReasonEl.textContent = PAGINATION_HYDRATION_FAILED_MESSAGE
+      arAbortReasonEl.hidden = false
+      return
+    }
+
     const response = await chrome.runtime
       .sendMessage({
         type: AR_MESSAGE.START,
@@ -2079,9 +2115,16 @@ arRunBtn.addEventListener('click', () => {
         targetColumn: { key: confirmedRealColumn.key, label: confirmedRealColumn.label, maxScore: confirmedRealColumn.maxScore },
         payload: loadedPayload,
         overwriteMode: arOverwriteCheckbox.checked ? 'overwrite_selected_column' : 'skip_existing',
+        pagination,
       })
       .catch(() => null)
-    renderAutoRunFromState(response?.state ?? null)
+
+    if (!response?.ok) {
+      arAbortReasonEl.textContent = response?.reason ?? PAGINATION_HYDRATION_FAILED_MESSAGE
+      arAbortReasonEl.hidden = false
+      return
+    }
+    renderAutoRunFromState(response.state)
   })()
 })
 

@@ -23,6 +23,14 @@
 
 import { emptyAutoRunSummary, mergeAutoRunSummaries } from './auto-run.js'
 
+/** FINAL AUTO-RUN STATE BUG FIX — the exact Thai message shown by BOTH
+ * required guards (item 6): popup.js's own AR_START click handler (a
+ * fresh pagination inspection, taken at the moment "เริ่ม..." is
+ * clicked) and background.js's handleStart (isPaginationHydrationValid,
+ * below). Kept as one shared constant so neither guard can drift from
+ * the other's wording. */
+export const PAGINATION_HYDRATION_FAILED_MESSAGE = 'ยังอ่านข้อมูลหน้าของ SGS ไม่สำเร็จ'
+
 export const AUTO_RUN_STATUS = {
   RUNNING: 'running',
   PAUSED_MANUAL: 'paused_manual',
@@ -68,8 +76,37 @@ export const AR_MESSAGE = {
  * confirmedContext (the FIRST page's own subject/classroom/column
  * snapshot every later page is revalidated against — never the previous
  * page's own values, same rule the old popup-driven loop used).
+ *
+ * FINAL AUTO-RUN STATE BUG FIX — `currentPage`/`totalPages` (and
+ * `totalStudentRows`/`pageSize`, the SAME canonical field names
+ * detectPagination/buildPaginationHintsFromInspection already use) are
+ * now accepted here and set IMMEDIATELY, never hardcoded to `null` and
+ * "fixed later" by the first AR_PAGE_PROGRESS message. The caller
+ * (background.js's handleStart) is responsible for having ALREADY run a
+ * fresh pagination inspection and refused to call this at all if it
+ * came back incomplete — see handleStart's own guard — so by the time a
+ * state with `status: 'running'` exists, its pagination fields are
+ * never null. `expectedNextPage` starts at that SAME confirmed
+ * `currentPage` (never `null`), so content-script.js's very first
+ * page-gate check also verifies the page it actually re-scans on
+ * kickoff still matches what was inspected the moment the teacher
+ * clicked start — never trusting that snapshot to still be true by the
+ * time the kickoff message is handled.
  */
-export function createInitialRunState({ runId, tabId, subject, classroom, targetColumn, payload, overwriteMode }) {
+export function createInitialRunState({
+  runId,
+  tabId,
+  subject,
+  classroom,
+  targetColumn,
+  payload,
+  overwriteMode,
+  currentPage,
+  totalPages,
+  totalStudentRows,
+  pageSize,
+}) {
+  const initialCurrentPage = currentPage ?? null
   return {
     runId,
     tabId,
@@ -78,8 +115,10 @@ export function createInitialRunState({ runId, tabId, subject, classroom, target
     targetColumn,
     payload,
     overwriteMode,
-    currentPage: null,
-    totalPages: null,
+    currentPage: initialCurrentPage,
+    totalPages: totalPages ?? null,
+    totalStudentRows: totalStudentRows ?? null,
+    pageSize: pageSize ?? null,
     summary: emptyAutoRunSummary(),
     pagesProcessed: [],
     allStudentResults: [],
@@ -91,9 +130,28 @@ export function createInitialRunState({ runId, tabId, subject, classroom, target
     pauseReason: null,
     abortReason: null,
     confirmedContext: null,
-    expectedNextPage: null,
+    expectedNextPage: initialCurrentPage,
     pendingAdvance: null,
   }
+}
+
+/**
+ * FINAL AUTO-RUN STATE BUG FIX (item 6's hard guard) — the ONE place
+ * both popup.js and background.js check before ever calling
+ * createInitialRunState: a fresh pagination inspection that couldn't
+ * confidently read BOTH currentPage and totalPages must never become a
+ * running run. Pure so both call sites — and this exact rule's own
+ * regression test — share the ONE definition, never two copies that
+ * could drift.
+ */
+export function isPaginationHydrationValid(pagination) {
+  return Boolean(
+    pagination &&
+      pagination.currentPage !== null &&
+      pagination.currentPage !== undefined &&
+      pagination.totalPages !== null &&
+      pagination.totalPages !== undefined,
+  )
 }
 
 /** item 6: only ever sets a flag — never itself stops anything in
@@ -113,12 +171,14 @@ export function withConfirmedContext(state, confirmedContext) {
   return { ...state, confirmedContext }
 }
 
-export function applyPageProgress(state, { pageNumber, totalPages, runningSummary }) {
+export function applyPageProgress(state, { pageNumber, totalPages, totalStudentRows, pageSize, runningSummary }) {
   if (!state) return state
   return {
     ...state,
     currentPage: pageNumber,
     totalPages: totalPages ?? state.totalPages,
+    totalStudentRows: totalStudentRows ?? state.totalStudentRows,
+    pageSize: pageSize ?? state.pageSize,
     summary: runningSummary ?? state.summary,
     status: AUTO_RUN_STATUS.RUNNING,
   }

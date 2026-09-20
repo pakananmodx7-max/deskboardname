@@ -631,6 +631,37 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(startCalls.length).toBe(1)
   })
 
+  it('FINAL AUTO-RUN STATE BUG FIX (item 1): "เริ่มส่งครบทั้งห้อง" ALWAYS takes a brand-new live pagination inspection (chrome.scripting.executeScript with func: inspectPaginationControls, then buildPaginationDiagnosticReport) at the exact moment of the click — never reading from a stale/previously-computed snapshot such as currentPagination — and that fresh read happens BEFORE the AR_START message is sent', () => {
+    const fn = source.slice(source.indexOf('arRunBtn.addEventListener'), source.indexOf('arManualContinueBtn.addEventListener'))
+    const inspectIndex = fn.indexOf('func: inspectPaginationControls')
+    const reportIndex = fn.indexOf('buildPaginationDiagnosticReport(paginationInjection.result)')
+    const sendIndex = fn.indexOf('type: AR_MESSAGE.START')
+    expect(inspectIndex).toBeGreaterThan(-1)
+    expect(reportIndex).toBeGreaterThan(inspectIndex)
+    expect(sendIndex).toBeGreaterThan(reportIndex)
+    expect(fn).not.toMatch(/\bcurrentPagination\b/)
+  })
+
+  it('FINAL AUTO-RUN STATE BUG FIX (item 6): "เริ่มส่งครบทั้งห้อง" refuses to send AR_START at all when the fresh inspection fails isPaginationHydrationValid — shows the shared PAGINATION_HYDRATION_FAILED_MESSAGE via arAbortReasonEl instead, and also surfaces background.js\'s own reason (its independent, authoritative copy of the same guard) if THAT refuses', () => {
+    const fn = source.slice(source.indexOf('arRunBtn.addEventListener'), source.indexOf('arManualContinueBtn.addEventListener'))
+    const guardIndex = fn.indexOf('isPaginationHydrationValid(pagination)')
+    const sendIndex = fn.indexOf('type: AR_MESSAGE.START')
+    expect(guardIndex).toBeGreaterThan(-1)
+    expect(guardIndex).toBeLessThan(sendIndex)
+    expect(fn).toMatch(/if \(!isPaginationHydrationValid\(pagination\)\) \{\s*\n\s*arAbortReasonEl\.textContent = PAGINATION_HYDRATION_FAILED_MESSAGE\s*\n\s*arAbortReasonEl\.hidden = false\s*\n\s*return/)
+    expect(fn).toMatch(/if \(!response\?\.ok\) \{\s*\n\s*arAbortReasonEl\.textContent = response\?\.reason \?\? PAGINATION_HYDRATION_FAILED_MESSAGE/)
+    expect(source).toContain("import { AR_MESSAGE, isPaginationHydrationValid, PAGINATION_HYDRATION_FAILED_MESSAGE } from './lib/run-orchestrator.js'")
+  })
+
+  it('FINAL AUTO-RUN STATE BUG FIX (item 4): the AR_START message carries the ONE canonical pagination shape (currentPage/totalPages/totalStudentRows/pageSize), translated from buildPaginationDiagnosticReport\'s teacher-facing totalRows field — never sent as totalRows itself, and never dropped', () => {
+    const fn = source.slice(source.indexOf('arRunBtn.addEventListener'), source.indexOf('arManualContinueBtn.addEventListener'))
+    expect(fn).toContain('currentPage: paginationReport.currentPage,')
+    expect(fn).toContain('totalPages: paginationReport.totalPages,')
+    expect(fn).toContain('totalStudentRows: paginationReport.totalRows,')
+    expect(fn).toContain('pageSize: paginationReport.pageSize,')
+    expect(fn).toContain('pagination,')
+  })
+
   it('TRUE unattended auto-run (item 6): "หยุด" only ever sends AR_STOP to background.js — it never sets a local flag or touches any write in flight itself', () => {
     const fn = source.slice(source.indexOf("arStopBtn.addEventListener"), source.indexOf("arCopyReportBtn.addEventListener"))
     expect(fn).toContain('type: AR_MESSAGE.STOP')
@@ -897,6 +928,24 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleStop'))
     expect(fn).toContain('createInitialRunState(')
     expect(fn).toMatch(/sendToTab\(tabId, \{ type: AR_MESSAGE\.KICKOFF/)
+  })
+
+  it('FINAL AUTO-RUN STATE BUG FIX (item 2/6): handleStart is the SECOND, authoritative pagination-hydration guard — it checks isPaginationHydrationValid(pagination) and refuses to EVER call createInitialRunState (or persist any state) when that check fails, returning the shared PAGINATION_HYDRATION_FAILED_MESSAGE instead', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleStop'))
+    const guardIndex = fn.indexOf('isPaginationHydrationValid(pagination)')
+    const createIndex = fn.indexOf('createInitialRunState(')
+    expect(guardIndex).toBeGreaterThan(-1)
+    expect(createIndex).toBeGreaterThan(guardIndex)
+    expect(fn).toMatch(/if \(!isPaginationHydrationValid\(pagination\)\) \{\s*\n\s*return \{ ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE \}/)
+    expect(source).toContain("isPaginationHydrationValid,\n  PAGINATION_HYDRATION_FAILED_MESSAGE,")
+  })
+
+  it('handleStart passes the CALLER\'s own fresh pagination fields straight through to createInitialRunState — never re-deriving or defaulting currentPage/totalPages itself (only the optional totalStudentRows/pageSize fall back to null)', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleStop'))
+    expect(fn).toContain('currentPage: pagination.currentPage,')
+    expect(fn).toContain('totalPages: pagination.totalPages,')
+    expect(fn).toContain('totalStudentRows: pagination.totalStudentRows ?? null,')
+    expect(fn).toContain('pageSize: pagination.pageSize ?? null,')
   })
 
   it('item 6: AR_STOP only ever sets a flag (applyStopRequested) — it never itself aborts/completes a run, and a popup on an unrelated tab can neither see nor stop this tab\'s run (stateForTab)', () => {

@@ -297,6 +297,8 @@
         type: AR_MESSAGE.PAGE_PROGRESS,
         pageNumber: scan.pagination?.currentPage ?? null,
         totalPages: scan.pagination?.totalPages ?? null,
+        totalStudentRows: scan.pagination?.totalStudentRows ?? null,
+        pageSize: scan.pagination?.pageSize ?? null,
         runningSummary: runState.summary,
         confirmedContext: confirmedContext ? null : nextConfirmedContext,
       })
@@ -342,6 +344,8 @@
           type: AR_MESSAGE.PAGE_PROGRESS,
           pageNumber: scan.pagination?.currentPage ?? null,
           totalPages: scan.pagination?.totalPages ?? null,
+          totalStudentRows: scan.pagination?.totalStudentRows ?? null,
+          pageSize: scan.pagination?.pageSize ?? null,
           runningSummary: libs.autoRun.mergeAutoRunSummaries(runState.summary, libs.autoRun.summarizeAutoRunPageResult(verifiedRows)),
         })
 
