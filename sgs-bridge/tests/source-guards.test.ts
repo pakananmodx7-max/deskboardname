@@ -7,10 +7,21 @@ function read(relativePath: string): string {
 }
 
 function sliceFunction(source: string, name: string, nextNames: string[]): string {
-  const start = source.indexOf(`export function ${name}`)
+  // `export async function` for a function that needs to await
+  // (advanceToNextSgsPage's own bounded polling loop) is still just this
+  // SAME "one function, sliced to its own text" convention — matched
+  // here too so it isn't silently treated as "not found."
+  const startIndex = (fnName: string) => {
+    const plain = source.indexOf(`export function ${fnName}`)
+    const async = source.indexOf(`export async function ${fnName}`)
+    if (plain === -1) return async
+    if (async === -1) return plain
+    return Math.min(plain, async)
+  }
+  const start = startIndex(name)
   const ends = nextNames
-    .map((n) => source.indexOf(`export function ${n}`, start + 1))
-    .filter((i) => i !== -1)
+    .map((n) => startIndex(n))
+    .filter((i) => i !== -1 && i > start)
     .map((exportIndex) => {
       // Back up to the start of that function's own leading /** doc
       // comment (if any) so it's excluded from THIS slice — otherwise
@@ -45,6 +56,8 @@ const CONTENT_DIAGNOSTIC_FUNCTIONS = [
   'readColumnValues',
   'fillSgsColumnValues',
   'readSingleCellRevalidationState',
+  'readSingleColumnCellValue',
+  'advanceToNextSgsPage',
 ]
 
 describe('BUG FIX — known filter ids, never a CSS selector string passed to getElementById', () => {
@@ -256,6 +269,63 @@ describe('content-diagnostic.js: readSingleCellRevalidationState — the GUARD A
   })
 })
 
+describe('NEXT PHASE — content-diagnostic.js: readSingleColumnCellValue, the auto-run per-cell verification read, entirely read-only', () => {
+  const source = sliceFunction(contentDiagnosticSource, 'readSingleColumnCellValue', CONTENT_DIAGNOSTIC_FUNCTIONS)
+
+  it('never writes to .value, never calls .click(), never toggles a checkbox — read-only', () => {
+    expect(source).not.toMatch(/\.value\s*=(?!=)/)
+    expect(source).not.toMatch(/\.click\(\)/)
+    expect(source).not.toMatch(/\.checked\s*=(?!=)/)
+  })
+
+  it('locates the table by the CONFIRMED tableIndex argument, never a re-run heuristic guess', () => {
+    expect(source).toContain("document.querySelectorAll('table')[tableIndex]")
+  })
+
+  it('only ever indexes into the ONE requested rowIndex/columnIndex — never a range or loop', () => {
+    expect(source).not.toContain('for (')
+    expect(source).not.toContain('.map(')
+  })
+})
+
+describe('NEXT PHASE — content-diagnostic.js: advanceToNextSgsPage, the ONLY page-advance mechanism, and only via an already-confirmed pagination shape', () => {
+  const source = sliceFunction(contentDiagnosticSource, 'advanceToNextSgsPage', CONTENT_DIAGNOSTIC_FUNCTIONS)
+
+  it('never touches document.cookie, localStorage, or sessionStorage', () => {
+    expect(source).not.toMatch(/document\.cookie/)
+    expect(source).not.toMatch(/localStorage|sessionStorage/)
+  })
+
+  it('the ONLY .click() call in this whole file is here, and only ever on a link cell found by the SAME row-of-page-number-links shape detectPagination already trusts — never a guessed "next"/arrow/icon button selector', () => {
+    expect(contentDiagnosticSource.match(/\.click\(\)/g)?.length).toBe(1)
+    expect(source).toContain('nextLink.click()')
+    expect(source).toContain('PAGE_NUMBER_PATTERN')
+    expect(source).toContain("match.querySelector('a')")
+  })
+
+  it('never clicks anything inside the confirmed student grid run — the pager search explicitly excludes the run\'s own row range', () => {
+    expect(source).toMatch(/isGridTable && ri >= runStartIndex && ri < runStartIndex \+ runLength\) continue/)
+  })
+
+  it('never assumes a click alone means the page changed — polls a fingerprint of the SAME confirmed grid range for an actual change, bounded by timeoutMs, before ever reporting advanced: true', () => {
+    expect(source).toContain('fingerprintGrid()')
+    expect(source).toMatch(/while \(Date\.now\(\) - start < timeoutMs\)/)
+    expect(source).toMatch(/after !== null && after !== beforeFingerprint/)
+  })
+
+  it('reports an honest "no confirmed control" reason (never advancing) when no row-of-links pager is found — the real, live-confirmed SGS page (text-only pagination) always takes this path', () => {
+    expect(source).toContain("reason: 'no_confirmed_next_page_control'")
+    const noLinkPaths = [...source.matchAll(/return \{ advanced: false, reason: '([^']+)' \}/g)].map((m) => m[1])
+    expect(noLinkPaths).toContain('no_confirmed_next_page_control')
+    expect(noLinkPaths).toContain('timeout_waiting_for_page_change')
+  })
+
+  it('never toggles a checkbox and never writes an input value — the click target is only ever an <a> pager link', () => {
+    expect(source).not.toMatch(/\.checked\s*=(?!=)/)
+    expect(source).not.toMatch(/\.value\s*=(?!=)/)
+  })
+})
+
 describe('popup.js — never sends the loaded payload or diagnostic report anywhere except local chrome.storage', () => {
   const source = read('../src/popup.js')
 
@@ -309,10 +379,10 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toMatch(/if \(!plan\.valid\)[\s\S]{0,300}disarmSingleCellTestWrite\(\)/)
   })
 
-  it('NEXT PHASE: fillSgsColumnValues is called exactly twice — the single-cell path and the whole-column path — and STILL never via the old ad hoc bulk instruction builders (buildSgsRealWriteInstructions/summarizeSgsRealFillPlan from sgs-real-fill.js remain unused; the whole-column path uses ONLY the structurally single-column buildWholeColumnWriteInstructions)', () => {
+  it('NEXT PHASE: fillSgsColumnValues is called exactly three times — the single-cell path, the whole-column (semi-automatic) path, and the auto-run per-cell loop — and STILL never via the old ad hoc bulk instruction builders (buildSgsRealWriteInstructions/summarizeSgsRealFillPlan from sgs-real-fill.js remain unused; every whole-column-shaped path uses ONLY the structurally single-column buildWholeColumnWriteInstructions or a single-offset writesByOffset built inline in the auto-run loop)', () => {
     expect(source).toContain('fillSgsColumnValues')
     const fillCalls = [...source.matchAll(/func:\s*fillSgsColumnValues,/g)]
-    expect(fillCalls.length).toBe(2)
+    expect(fillCalls.length).toBe(3)
     expect(source).not.toMatch(/buildSgsRealWriteInstructions/)
     expect(source).not.toMatch(/summarizeSgsRealFillPlan/)
     expect(source).not.toContain('runFillSelectedColumn')
@@ -398,9 +468,11 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toMatch(/if \(!revalidation\.ok\)[\s\S]{0,300}disarmWholeColumnWrite\(\)/)
   })
 
-  it('NEXT PHASE: locateColumnOnCurrentPage (never a raw stored columnIndex) is what re-finds the confirmed column on every fresh scan — both the per-page preview scan and the write-time revalidation use it', () => {
-    const scanFn = source.slice(source.indexOf('async function scanCurrentSgsPageForWholeColumn'), source.indexOf('function renderWholeColumnPreviewFromScan'))
-    expect(scanFn).toContain('locateColumnOnCurrentPage(candidate.writableScoreColumns, wcConfirmedColumnKey)')
+  it('NEXT PHASE: locateColumnOnCurrentPage (never a raw stored columnIndex) is what re-finds the confirmed column on every fresh scan — the shared scan primitive (used by both section 6 and auto-run) and the write-time revalidation both use it', () => {
+    const scanFn = source.slice(source.indexOf('async function scanCurrentSgsPageForColumn'), source.indexOf('async function scanCurrentSgsPageForWholeColumn'))
+    expect(scanFn).toContain('locateColumnOnCurrentPage(candidate.writableScoreColumns, columnKey)')
+    const wrapperFn = source.slice(source.indexOf('async function scanCurrentSgsPageForWholeColumn'), source.indexOf('function renderWholeColumnPreviewFromScan'))
+    expect(wrapperFn).toContain('scanCurrentSgsPageForColumn(wcConfirmedColumnKey)')
     const writeFn = source.slice(source.indexOf('async function runWholeColumnWrite'), source.indexOf('wcStartBtn.addEventListener'))
     expect(writeFn).toContain('locateColumnOnCurrentPage(freshCandidate.writableScoreColumns, context.columnKey)')
   })
@@ -416,6 +488,92 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
   it('NEXT PHASE: computeWholeColumnPlan is given the CONFIRMED real column\'s own maxScore, never the Bridge Payload\'s own claimed max', () => {
     const fn = source.slice(source.indexOf('function renderWholeColumnPreviewFromScan'), source.indexOf('function renderWcSubjectClassroomCheck'))
     expect(fn).toMatch(/computeWholeColumnPlan\(krunameStudents, mappingResults, existingScoresBySgsRowKey, overwriteMode, column\.maxScore\)/)
+  })
+
+  it('NEXT PHASE (auto-run): runAutoRun checks evaluateAutoRunStopCondition before every write batch, and stops the ENTIRE run (never a partial continue) the moment it fails', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    expect(fn).toContain('evaluateAutoRunStopCondition(')
+    expect(fn).toMatch(/if \(stop\.shouldStop\) \{\s*\n\s*abortAutoRun\(stop\.reason\)\s*\n\s*return\s*\n\s*\}/)
+  })
+
+  it('NEXT PHASE (auto-run): every page is revalidated against the SAME first-page snapshot (arConfirmedRunContext), never the previous page\'s own values — a slow drift across pages is caught the same way a sudden one is', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    expect(fn).toContain('if (!arConfirmedRunContext && scan.ok) arConfirmedRunContext = freshSnapshot')
+    expect(fn).toContain('revalidateWholeColumnContext(arConfirmedRunContext, freshSnapshot)')
+  })
+
+  it('NEXT PHASE (auto-run): writes exactly one cell at a time (item 7) — a single-entry writesByOffset built fresh per row, never a batch of multiple offsets in one call', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    expect(fn).toMatch(/const writesByOffset = \{ \[baseRow\.sgsRowOffset\]: baseRow\.krunameScore \}/)
+    // Only ONE fillSgsColumnValues call site exists inside this loop.
+    const fillCallsInLoop = [...fn.matchAll(/func:\s*fillSgsColumnValues,/g)]
+    expect(fillCallsInLoop.length).toBe(1)
+  })
+
+  it('NEXT PHASE (auto-run): every write instruction inside the loop carries the SAME confirmed column.columnIndex — structurally, no second column can ever be targeted', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    const fillArgs = [...fn.matchAll(/func:\s*fillSgsColumnValues,\s*\n\s*args:\s*\[([^\]]*)\]/g)].map((m) => m[1])
+    expect(fillArgs.length).toBe(1)
+    expect(fillArgs[0]).toContain('column.columnIndex')
+    expect(fillArgs[0]).not.toMatch(/columnIndex\s*\+|columnIndex\s*-|column\.columnIndex\s*,\s*.*column\.columnIndex/)
+  })
+
+  it('NEXT PHASE (auto-run): each write is followed by a read-back (readSingleColumnCellValue) before the outcome is ever recorded as WRITTEN — never trusting the write call alone', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    const writeIndex = fn.indexOf('func: fillSgsColumnValues,')
+    const readIndex = fn.indexOf('func: readSingleColumnCellValue,')
+    expect(writeIndex).toBeGreaterThan(-1)
+    expect(readIndex).toBeGreaterThan(writeIndex)
+    expect(fn).toMatch(/const outcome = !missing && actualValue === baseRow\.krunameScore \? 'WRITTEN' : 'FAILED'/)
+  })
+
+  it('NEXT PHASE (auto-run): "หยุด" only sets a flag the loop checks between rows — never calls anything that could abort a write already in flight, and the loop never starts a NEW write once the flag is set', () => {
+    expect(source).toMatch(/arStopBtn\.addEventListener\('click', \(\) => \{\s*\n\s*arStopRequested = true/)
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    expect(fn).toMatch(/if \(arStopRequested\) \{[\s\S]{0,400}continue\s*\n\s*\}/)
+  })
+
+  it('NEXT PHASE (auto-run, item 4): after a click reports advanced, the run does NOT trust that alone — the NEXT fresh scan\'s own currentPage is compared against the expected page number before pageAdvancement is ever considered ok', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    expect(fn).toContain('expectedPageAfterAdvance = expectedNextPage')
+    expect(fn).toMatch(/if \(expectedPageAfterAdvance !== null\) \{[\s\S]{0,400}actualPage === expectedPageAfterAdvance/)
+    // The click-success branch itself never sets pageAdvancement directly.
+    const advancedBranch = fn.slice(fn.indexOf('if (advanceResult.advanced)'), fn.indexOf('if (advanceResult.reason ==='))
+    expect(advancedBranch).not.toContain('pageAdvancement = { ok: true')
+  })
+
+  it('NEXT PHASE (auto-run): a page-advance is only ever attempted through advanceToNextSgsPage (never a bespoke click), and "no confirmed control" pauses for manual continue rather than aborting or guessing', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    expect(fn).toContain('func: advanceToNextSgsPage,')
+    expect(fn).toMatch(/if \(advanceResult\.reason === 'no_confirmed_next_page_control'\) \{\s*\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*pauseForManualContinue\(/)
+  })
+
+  it('NEXT PHASE (auto-run): a failed page-advance that ISN\'T "no confirmed control" (e.g. a timeout after a click) aborts the run — it never silently re-scans the same stale page', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    const afterPauseCheck = fn.slice(fn.indexOf("no_confirmed_next_page_control'"))
+    expect(afterPauseCheck).toContain('abortAutoRun(')
+  })
+
+  it('NEXT PHASE (auto-run): a per-page write-failure rate above the safe threshold aborts the run — never silently absorbed into the summary alone', () => {
+    const fn = source.slice(source.indexOf('async function runAutoRun('), source.indexOf('arStartBtn.addEventListener'))
+    expect(fn).toContain('pageFailureExceedsThreshold(')
+    expect(fn).toMatch(/if \(pageThresholdExceeded\) \{\s*\n\s*abortAutoRun\(/)
+  })
+
+  it('NEXT PHASE (auto-run): only "เริ่มส่งครบทั้งห้อง" (a brand new run) resets the cumulative summary/report state — "ดำเนินการต่อ" (resuming the SAME run after a manual-continue pause) never does', () => {
+    const runBtnFn = source.slice(source.indexOf("arRunBtn.addEventListener"), source.indexOf("arManualContinueBtn.addEventListener"))
+    expect(runBtnFn).toContain('arCumulativeSummary = emptyAutoRunSummary()')
+    expect(runBtnFn).toContain('arConfirmedRunContext = null')
+    const continueBtnFn = source.slice(source.indexOf("arManualContinueBtn.addEventListener"), source.indexOf("arStopBtn.addEventListener"))
+    expect(continueBtnFn).not.toContain('arCumulativeSummary = emptyAutoRunSummary()')
+    expect(continueBtnFn).not.toContain('arConfirmedRunContext = null')
+  })
+
+  it('NEXT PHASE (auto-run): the run report never includes a credential/session/cookie/studentId — buildAutoRunReport\'s own shape is trusted, this only checks popup.js never adds extra fields on top', () => {
+    const fn = source.slice(source.indexOf('function renderAutoRunFinalSummary'), source.indexOf('function abortAutoRun'))
+    expect(fn).toContain('buildAutoRunReport(')
+    expect(fn).not.toMatch(/studentId/)
+    expect(fn).not.toMatch(/password|token|cookie|secret|credential/i)
   })
 
   it('SGS Score Workspace payload: loading and restoring a payload both dispatch by `kind` via validateAnySgsBridgePayload, never the single-kind validator', () => {
@@ -489,7 +647,14 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
   it('item 3: this file never clicks or toggles an SGS header checkbox — every `.checked =` assignment is either the (unrelated) radio-picker selection state, or one of this extension\'s OWN local popup consent/option toggles (sctConfirmCheckbox, wcConfirmCheckbox, wcOverwriteCheckbox — never anything read from or written into the SGS page itself)', () => {
     const checkedAssignments = [...source.matchAll(/(\w+)\.checked\s*=\s*([^\n]+)/g)]
     expect(checkedAssignments.length).toBeGreaterThan(0)
-    const ownConsentCheckboxes = ['sctConfirmCheckbox', 'wcConfirmCheckbox', 'wcOverwriteCheckbox']
+    const ownConsentCheckboxes = [
+      'sctConfirmCheckbox',
+      'wcConfirmCheckbox',
+      'wcOverwriteCheckbox',
+      'arOverwriteCheckbox',
+      'arConfirmSubjectClassroomCheckbox',
+      'arConfirmAutosaveCheckbox',
+    ]
     for (const [, target, rhs] of checkedAssignments) {
       expect(target === 'input' || ownConsentCheckboxes.includes(target)).toBe(true)
       if (target === 'input') expect(rhs).toMatch(/^matchResult\.column/)

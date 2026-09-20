@@ -307,6 +307,113 @@
       </p>
     </section>
 
+    <section id="auto-run-wrap" hidden>
+      <h2>7. ส่งครบทั้งห้องอัตโนมัติ (ทุกหน้า)</h2>
+      <p class="warning">
+        SGS บันทึกคะแนนอัตโนมัติ การดำเนินการนี้จะประมวลผลและเขียนคะแนนของนักเรียนทั้งห้องในคอลัมน์ที่เลือก ข้ามหลายหน้าของ SGS
+        ระบบจะเปลี่ยนหน้าให้อัตโนมัติเฉพาะเมื่อพบปุ่ม/ลิงก์เปลี่ยนหน้าที่ยืนยันได้อย่างปลอดภัยเท่านั้น — หากไม่สามารถยืนยันได้ ระบบจะหยุดรอให้เปิดหน้าถัดไปด้วยตนเอง
+        (โหมดกึ่งอัตโนมัติของขั้นตอนที่ 6 ยังใช้งานได้ตามปกติ)
+      </p>
+      <button type="button" id="ar-start-btn">ส่งครบทั้งห้องอัตโนมัติ</button>
+
+      <div id="ar-prerun" hidden>
+        <dl>
+          <dt>รายวิชา</dt>
+          <dd id="ar-subject"></dd>
+          <dt>ห้อง</dt>
+          <dd id="ar-classroom"></dd>
+          <dt>ช่อง SGS</dt>
+          <dd id="ar-column"></dd>
+          <dt>คะแนนเต็ม</dt>
+          <dd id="ar-maxscore"></dd>
+          <dt>จำนวนนักเรียนใน Payload</dt>
+          <dd id="ar-roster-count"></dd>
+          <dt>คะแนนที่จะส่ง</dt>
+          <dd id="ar-to-send"></dd>
+          <dt>ไม่มีคะแนน</dt>
+          <dd id="ar-no-score"></dd>
+          <dt>คะแนนเดิมที่จะข้าม</dt>
+          <dd id="ar-existing-skip"></dd>
+          <dt>จำนวนหน้า SGS</dt>
+          <dd id="ar-total-pages"></dd>
+          <dt>นักเรียนทั้งหมดใน SGS</dt>
+          <dd id="ar-total-sgs-students"></dd>
+        </dl>
+        <label>
+          <input type="checkbox" id="ar-overwrite-existing" />
+          เขียนทับคะแนนเดิมในคอลัมน์ที่เลือก
+        </label>
+        <label>
+          <input type="checkbox" id="ar-confirm-subject-classroom" />
+          ฉันตรวจสอบวิชา ห้อง และช่องคะแนนแล้ว
+        </label>
+        <label>
+          <input type="checkbox" id="ar-confirm-autosave" />
+          ฉันเข้าใจว่า SGS บันทึกคะแนนอัตโนมัติ
+        </label>
+        <button type="button" id="ar-run-btn" disabled>เริ่มส่งครบทั้งห้อง</button>
+      </div>
+
+      <div id="ar-progress" hidden>
+        <p>กำลังส่งคะแนน SGS</p>
+        <p id="ar-progress-page"></p>
+        <p id="ar-progress-students"></p>
+        <dl>
+          <dt>สำเร็จ</dt>
+          <dd id="ar-progress-written"></dd>
+          <dt>ข้าม ไม่มีคะแนน</dt>
+          <dd id="ar-progress-skip-no-score"></dd>
+          <dt>ข้าม คะแนนเดิม</dt>
+          <dd id="ar-progress-skip-existing"></dd>
+          <dt>ไม่พบ</dt>
+          <dd id="ar-progress-not-found"></dd>
+          <dt>กำกวม</dt>
+          <dd id="ar-progress-ambiguous"></dd>
+          <dt>ล้มเหลว</dt>
+          <dd id="ar-progress-failed"></dd>
+        </dl>
+        <button type="button" id="ar-stop-btn">หยุด</button>
+      </div>
+
+      <div id="ar-manual-continue" hidden>
+        <p id="ar-manual-continue-message"></p>
+        <button type="button" id="ar-manual-continue-btn">ดำเนินการต่อ</button>
+      </div>
+
+      <p id="ar-abort-reason" class="warning" hidden></p>
+
+      <div id="ar-final-summary" hidden>
+        <p>ส่งคะแนนเสร็จแล้ว</p>
+        <dl>
+          <dt>นักเรียนทั้งหมด</dt>
+          <dd id="ar-final-total"></dd>
+          <dt>สำเร็จ</dt>
+          <dd id="ar-final-written"></dd>
+          <dt>ข้าม ไม่มีคะแนน</dt>
+          <dd id="ar-final-skip-no-score"></dd>
+          <dt>ข้าม คะแนนเดิม</dt>
+          <dd id="ar-final-skip-existing"></dd>
+          <dt>คะแนนไม่ถูกต้อง</dt>
+          <dd id="ar-final-invalid"></dd>
+          <dt>ไม่พบ</dt>
+          <dd id="ar-final-not-found"></dd>
+          <dt>กำกวม</dt>
+          <dd id="ar-final-ambiguous"></dd>
+          <dt>ล้มเหลว</dt>
+          <dd id="ar-final-failed"></dd>
+        </dl>
+        <p id="ar-final-pages"></p>
+        <button type="button" id="ar-copy-report-btn">คัดลอกรายงาน</button>
+        <textarea id="ar-report-output" readonly rows="8"></textarea>
+      </div>
+
+      <p class="hint">
+        ระบบจะเปลี่ยนหน้า SGS ให้อัตโนมัติก็ต่อเมื่อพบการแบ่งหน้าแบบมีลิงก์หมายเลขหน้าที่ยืนยันได้เท่านั้น — บนหน้า SGS จริงที่ตรวจสอบแล้ว
+        (แสดงผลแบบข้อความ "32 รายการ" / "10 / หน้า" / "page 1 of 4") ระบบจะไม่พบลิงก์ดังกล่าว จึงหยุดรอและแสดง "ดำเนินการต่อ" ให้กดเองทีละหน้า
+        เหมือนขั้นตอนที่ 6 ทุกประการ — นี่คือพฤติกรรมที่ตั้งใจไว้ ไม่ใช่ข้อผิดพลาด
+      </p>
+    </section>
+
     <script type="module" src="popup.js"></script>
   </body>
 </html>

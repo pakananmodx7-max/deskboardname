@@ -468,3 +468,112 @@ export function readSingleCellRevalidationState(tableIndex, rowIndex, columnInde
     currentValue: Number.isFinite(parsedValue) ? parsedValue : null,
   }
 }
+
+/**
+ * NEXT PHASE — auto-run's per-cell verification read: the CURRENT value
+ * of exactly ONE cell (never a range), used immediately after writing
+ * that one cell so auto-run's progress can update per-student rather
+ * than only once per whole page. Read-only — never sets a value, never
+ * dispatches an event.
+ */
+export function readSingleColumnCellValue(tableIndex, rowIndex, columnIndex) {
+  function pickVisibleControlInline(cell) {
+    const candidates = Array.from(cell.querySelectorAll('input,select'))
+    if (candidates.length === 0) return null
+    return candidates.find((el) => el.offsetParent !== null) || candidates[0]
+  }
+
+  const table = document.querySelectorAll('table')[tableIndex]
+  const row = table ? Array.from(table.rows)[rowIndex] : null
+  const cell = row ? row.cells[columnIndex] : null
+  if (!cell) return { found: false, value: null }
+
+  const input = pickVisibleControlInline(cell)
+  const raw = input ? input.value : cell.textContent.trim()
+  const parsed = raw === '' ? null : Number(raw)
+  return { found: true, value: Number.isFinite(parsed) ? parsed : null }
+}
+
+/**
+ * NEXT PHASE — the ONLY page-advance mechanism this extension ever
+ * attempts, and only when it can find a clickable page-number link using
+ * the EXACT SAME "row of page-number links" shape
+ * sgs-table-extraction.js's detectPagination fallback path already
+ * trusts — never a guessed "next"/">"/arrow-icon button selector. On the
+ * real, live-confirmed SGS page (plain TEXT pagination — "32 รายการ" /
+ * "10 / หน้า" / "page 1 of 4", with NO row of page-number links at all),
+ * this correctly finds nothing and reports back
+ * `{advanced: false, reason: 'no_confirmed_next_page_control'}` — the
+ * caller (popup.js's auto-run engine) then falls back to the
+ * semi-automatic "ดำเนินการต่อ" flow (item 11), exactly as it must when
+ * a safe control has never been confirmed on the actual page shape.
+ *
+ * When a row-of-links pager IS found, clicks the link whose visible text
+ * equals `expectedNextPage`, then polls (bounded by `timeoutMs`) for the
+ * confirmed grid's own row content to actually change before returning —
+ * a click alone is never trusted as proof the page changed (item 4:
+ * "wait for old student rows to disappear/change ... re-scan the page
+ * from scratch").
+ */
+export async function advanceToNextSgsPage(tableIndex, runStartIndex, runLength, expectedNextPage, timeoutMs = 4000) {
+  const PAGE_NUMBER_PATTERN = /^\d{1,3}$/
+
+  function fingerprintGrid() {
+    const table = document.querySelectorAll('table')[tableIndex]
+    if (!table) return null
+    const rows = Array.from(table.rows).slice(runStartIndex, runStartIndex + runLength)
+    return rows
+      .map((row) =>
+        Array.from(row.cells)
+          .map((c) => (c.textContent || '').trim())
+          .join('|'),
+      )
+      .join('||')
+  }
+
+  const beforeFingerprint = fingerprintGrid()
+  if (beforeFingerprint === null) {
+    return { advanced: false, reason: 'no_confirmed_next_page_control' }
+  }
+
+  let nextLink = null
+  const tables = Array.from(document.querySelectorAll('table'))
+  outer: for (let ti = 0; ti < tables.length; ti++) {
+    const isGridTable = ti === tableIndex
+    const rows = Array.from(tables[ti].rows)
+    for (let ri = 0; ri < rows.length; ri++) {
+      if (isGridTable && ri >= runStartIndex && ri < runStartIndex + runLength) continue // never mistake a student data row for a pager row
+      const cells = Array.from(rows[ri].cells)
+      if (cells.some((c) => c.querySelector('input,select,textarea'))) continue
+      const nonEmpty = cells.filter((c) => (c.textContent || '').trim() !== '')
+      if (nonEmpty.length < 2) continue
+      // Every non-empty cell in the row must look like a page number —
+      // a row mixing page numbers with unrelated labels isn't a pager
+      // (matches detectPagination's own fallback exactly).
+      const allNumeric = nonEmpty.every((c) => PAGE_NUMBER_PATTERN.test((c.textContent || '').trim()))
+      if (!allNumeric) continue
+      const match = nonEmpty.find((c) => (c.textContent || '').trim() === String(expectedNextPage))
+      const link = match ? match.querySelector('a') : null
+      if (link) {
+        nextLink = link
+        break outer
+      }
+    }
+  }
+
+  if (!nextLink) {
+    return { advanced: false, reason: 'no_confirmed_next_page_control' }
+  }
+
+  nextLink.click()
+
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    const after = fingerprintGrid()
+    if (after !== null && after !== beforeFingerprint) {
+      return { advanced: true, reason: null }
+    }
+  }
+  return { advanced: false, reason: 'timeout_waiting_for_page_change' }
+}

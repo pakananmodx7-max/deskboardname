@@ -5,11 +5,13 @@ import {
   formatSgsNewValueDisplay,
 } from './lib/column-fill.js'
 import {
+  advanceToNextSgsPage,
   collectAllTableRowFacts,
   collectRawSgsFacts,
   fillSgsColumnValues,
   readColumnValues,
   readSingleCellRevalidationState,
+  readSingleColumnCellValue,
 } from './content-diagnostic.js'
 import {
   buildCompactStudentGridReport,
@@ -65,6 +67,20 @@ import {
   summarizeWholeColumnResult,
   verifyWholeColumnWrite,
 } from './lib/whole-column-write.js'
+// NEXT PHASE — safe fully-automatic multi-page run. See auto-run.js's
+// own doc comment: this is the SAME per-page engine as section 6, driven
+// in a loop, with a page-advance attempt that only ever acts on an
+// already-confirmed pagination shape (never a guessed "next" selector).
+import {
+  buildAutoRunPreRunSummary,
+  buildAutoRunReport,
+  emptyAutoRunSummary,
+  evaluateAutoRunStopCondition,
+  mergeAutoRunSummaries,
+  pageFailureExceedsThreshold,
+  planHasAmbiguousWriteCandidate,
+  summarizeAutoRunPageResult,
+} from './lib/auto-run.js'
 
 const DEFAULT_SGS_KEYWORD = 'sgs'
 const SESSION_PAYLOAD_KEY = 'sgsBridgeLoadedPayload'
@@ -189,6 +205,51 @@ const wcResultAmbiguousEl = document.getElementById('wc-result-ambiguous')
 const wcResultFailedEl = document.getElementById('wc-result-failed')
 const wcFailedListEl = document.getElementById('wc-failed-list')
 
+// NEXT PHASE — section 7, safe fully-automatic multi-page run.
+const autoRunWrap = document.getElementById('auto-run-wrap')
+const arStartBtn = document.getElementById('ar-start-btn')
+const arPrerunEl = document.getElementById('ar-prerun')
+const arSubjectEl = document.getElementById('ar-subject')
+const arClassroomEl = document.getElementById('ar-classroom')
+const arColumnEl = document.getElementById('ar-column')
+const arMaxScoreEl = document.getElementById('ar-maxscore')
+const arRosterCountEl = document.getElementById('ar-roster-count')
+const arToSendEl = document.getElementById('ar-to-send')
+const arNoScoreEl = document.getElementById('ar-no-score')
+const arExistingSkipEl = document.getElementById('ar-existing-skip')
+const arTotalPagesEl = document.getElementById('ar-total-pages')
+const arTotalSgsStudentsEl = document.getElementById('ar-total-sgs-students')
+const arOverwriteCheckbox = document.getElementById('ar-overwrite-existing')
+const arConfirmSubjectClassroomCheckbox = document.getElementById('ar-confirm-subject-classroom')
+const arConfirmAutosaveCheckbox = document.getElementById('ar-confirm-autosave')
+const arRunBtn = document.getElementById('ar-run-btn')
+const arProgressEl = document.getElementById('ar-progress')
+const arProgressPageEl = document.getElementById('ar-progress-page')
+const arProgressStudentsEl = document.getElementById('ar-progress-students')
+const arProgressWrittenEl = document.getElementById('ar-progress-written')
+const arProgressSkipNoScoreEl = document.getElementById('ar-progress-skip-no-score')
+const arProgressSkipExistingEl = document.getElementById('ar-progress-skip-existing')
+const arProgressNotFoundEl = document.getElementById('ar-progress-not-found')
+const arProgressAmbiguousEl = document.getElementById('ar-progress-ambiguous')
+const arProgressFailedEl = document.getElementById('ar-progress-failed')
+const arStopBtn = document.getElementById('ar-stop-btn')
+const arManualContinueWrap = document.getElementById('ar-manual-continue')
+const arManualContinueMessageEl = document.getElementById('ar-manual-continue-message')
+const arManualContinueBtn = document.getElementById('ar-manual-continue-btn')
+const arAbortReasonEl = document.getElementById('ar-abort-reason')
+const arFinalSummaryEl = document.getElementById('ar-final-summary')
+const arFinalTotalEl = document.getElementById('ar-final-total')
+const arFinalWrittenEl = document.getElementById('ar-final-written')
+const arFinalSkipNoScoreEl = document.getElementById('ar-final-skip-no-score')
+const arFinalSkipExistingEl = document.getElementById('ar-final-skip-existing')
+const arFinalInvalidEl = document.getElementById('ar-final-invalid')
+const arFinalNotFoundEl = document.getElementById('ar-final-not-found')
+const arFinalAmbiguousEl = document.getElementById('ar-final-ambiguous')
+const arFinalFailedEl = document.getElementById('ar-final-failed')
+const arFinalPagesEl = document.getElementById('ar-final-pages')
+const arCopyReportBtn = document.getElementById('ar-copy-report-btn')
+const arReportOutput = document.getElementById('ar-report-output')
+
 /** The exact context the teacher's last successful single-cell preview
  * confirmed — captured by runSingleCellTestPreview(), consumed by
  * runSingleCellTestWrite() as the "known good" side of
@@ -244,6 +305,33 @@ let wcConfirmedContext = null
  * never by "ดำเนินการต่อ") — see mergeWholeColumnSummaries. */
 let wcCumulativeSummary = emptyWholeColumnSummary()
 let wcCumulativeFailedStudents = []
+
+// NEXT PHASE — section 7 auto-run state. Kept entirely separate from
+// the wc* state above so the two features never share (and can never
+// corrupt) each other's in-progress session, even though a run of
+// either always starts from the SAME confirmed real column.
+let arConfirmedColumnKey = null
+/** Set true only inside runAutoRun(); the loop checks this before every
+ * write AND before every page advance so pressing "หยุด" (item 8) always
+ * finishes the current atomic cell operation and stops there — never
+ * mid-write, never starting one more write or one more page advance. */
+let arRunning = false
+let arStopRequested = false
+let arCumulativeSummary = emptyAutoRunSummary()
+let arCumulativeFailedStudents = []
+/** Every row processed on every page so far this run — the source for
+ * item 9's per-student run report (buildAutoRunReport). Never includes
+ * a credential/session/cookie; only status/writeOutcome per student. */
+let arAllStudentResults = []
+let arPagesProcessed = []
+/** The subject/classroom/column snapshot confirmed from the FIRST page
+ * of the CURRENT run — every later page's fresh scan is revalidated
+ * against this SAME original snapshot (never the previous page's own
+ * values), so a slow drift across several pages is caught exactly the
+ * same way a sudden one is. Reset only by a brand-new "เริ่มส่งครบทั้งห้อง"
+ * click — a manual-continue resume after a semi-automatic pause keeps
+ * it, since that resume is still the SAME run/session. */
+let arConfirmedRunContext = null
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -413,6 +501,7 @@ function resetRealInspectionState() {
   realFillPreviewBody.replaceChildren()
   resetSingleCellTestState()
   resetWholeColumnState()
+  resetAutoRunState()
 }
 
 /** Returns every whole-column UI element to its safe default and clears
@@ -440,6 +529,36 @@ function resetWholeColumnState() {
   wcResultEl.hidden = true
   wcFailedListEl.hidden = true
   wcFailedListEl.replaceChildren()
+}
+
+/**
+ * NEXT PHASE — same reset contract as resetWholeColumnState, one level
+ * up. If an auto-run happens to be in progress when this fires (a fresh
+ * step-4 rescan while section 7's loop is mid-flight), setting
+ * arStopRequested first means the loop's own next check-point (before
+ * its next write or page advance — see runAutoRun's own doc comment)
+ * stops it cleanly with an honest reason, rather than the loop silently
+ * continuing against state that was just cleared out from under it.
+ */
+function resetAutoRunState() {
+  arStopRequested = true
+  arConfirmedColumnKey = null
+  arCumulativeSummary = emptyAutoRunSummary()
+  arCumulativeFailedStudents = []
+  arAllStudentResults = []
+  arPagesProcessed = []
+  arConfirmedRunContext = null
+  autoRunWrap.hidden = true
+  arPrerunEl.hidden = true
+  arOverwriteCheckbox.checked = false
+  arConfirmSubjectClassroomCheckbox.checked = false
+  arConfirmAutosaveCheckbox.checked = false
+  arRunBtn.disabled = true
+  arProgressEl.hidden = true
+  arManualContinueWrap.hidden = true
+  arAbortReasonEl.hidden = true
+  arFinalSummaryEl.hidden = true
+  arReportOutput.value = ''
 }
 
 /**
@@ -921,6 +1040,9 @@ function updateWholeColumnAvailability() {
       isConfirmedColumnWritable(currentGridCandidate, confirmedRealColumn),
   )
   wholeColumnWrap.hidden = !eligible
+  // Same eligibility as section 6 — auto-run is the SAME confirmed
+  // column, just driven across pages automatically.
+  autoRunWrap.hidden = !eligible
 }
 
 /**
@@ -1424,30 +1546,32 @@ sctWriteBtn.addEventListener('click', () => {
 /**
  * Scans the CURRENTLY OPEN SGS page fresh (performLiveGridScan — the
  * exact same scan runMappingCheck/runRealColumnInspection use, never a
- * bespoke one), re-locates the confirmed column by its STABLE key (never
+ * bespoke one), re-locates the CONFIRMED column by its STABLE key (never
  * by the index from a previous page/scan — see locateColumnOnCurrentPage's
  * own doc comment), and reads that column's current values for the
- * "คะแนนเดิม SGS" preview column. Populates wcPageScan; returns false
- * (with a gate reason already shown) when the page doesn't have what
- * this session needs.
+ * "คะแนนเดิม SGS" preview column. Returns a plain result object rather
+ * than writing to any UI element directly, so BOTH section 6's
+ * scanCurrentSgsPageForWholeColumn (below) and section 7's auto-run
+ * engine share this ONE scan implementation — never two independent
+ * copies that could drift apart.
  */
-async function scanCurrentSgsPageForWholeColumn() {
-  if (!loadedPayload || !wcConfirmedColumnKey) return false
+async function scanCurrentSgsPageForColumn(columnKey) {
+  if (!loadedPayload || !columnKey) {
+    return { ok: false, reason: 'ยังไม่ได้เลือกคอลัมน์ที่จะส่ง', pageScan: null }
+  }
 
   const { candidate } = await performLiveGridScan()
   if (!candidate) {
-    wcPageScan = null
-    wcGateReasonEl.textContent = 'ไม่พบตารางคะแนนนักเรียนในหน้านี้ — ตรวจสอบว่าเปิดหน้ากรอกคะแนนของ SGS อยู่หรือไม่'
-    wcGateReasonEl.hidden = false
-    return false
+    return { ok: false, reason: 'ไม่พบตารางคะแนนนักเรียนในหน้านี้ — ตรวจสอบว่าเปิดหน้ากรอกคะแนนของ SGS อยู่หรือไม่', pageScan: null }
   }
 
-  const column = locateColumnOnCurrentPage(candidate.writableScoreColumns, wcConfirmedColumnKey)
+  const column = locateColumnOnCurrentPage(candidate.writableScoreColumns, columnKey)
   if (!column) {
-    wcPageScan = null
-    wcGateReasonEl.textContent = 'ไม่พบคอลัมน์ที่เลือกไว้เป็นช่องกรอกได้จริงในหน้านี้ — ตรวจสอบว่าติ๊กเปิดช่องคะแนนนี้ใน SGS แล้วหรือยัง'
-    wcGateReasonEl.hidden = false
-    return false
+    return {
+      ok: false,
+      reason: 'ไม่พบคอลัมน์ที่เลือกไว้เป็นช่องกรอกได้จริงในหน้านี้ — ตรวจสอบว่าติ๊กเปิดช่องคะแนนนี้ใน SGS แล้วหรือยัง',
+      pageScan: null,
+    }
   }
 
   const tab = await getActiveTab()
@@ -1464,8 +1588,20 @@ async function scanCurrentSgsPageForWholeColumn() {
     }
   }
 
-  wcPageScan = { candidate, column, existingScoresBySgsRowKey }
-  return true
+  return { ok: true, reason: null, pageScan: { candidate, column, existingScoresBySgsRowKey } }
+}
+
+/** Section 6's own thin wrapper over the shared scan above — keeps
+ * wcPageScan/wcGateReasonEl exactly as every other section-6 function
+ * already expects them. */
+async function scanCurrentSgsPageForWholeColumn() {
+  const result = await scanCurrentSgsPageForColumn(wcConfirmedColumnKey)
+  wcPageScan = result.pageScan
+  if (!result.ok) {
+    wcGateReasonEl.textContent = result.reason
+    wcGateReasonEl.hidden = false
+  }
+  return result.ok
 }
 
 /**
@@ -1743,6 +1879,409 @@ wcConfirmCheckbox.addEventListener('change', () => {
 
 wcWriteBtn.addEventListener('click', () => {
   void runWholeColumnWrite()
+})
+
+// ==================================================
+// NEXT PHASE — section 7: safe fully-automatic multi-page run. Reuses
+// scanCurrentSgsPageForColumn/computeWholeColumnPlan/
+// revalidateWholeColumnContext/locateColumnOnCurrentPage/
+// collectFailedStudents from section 6 UNCHANGED — this section only
+// adds the loop, the stop-condition checks (auto-run.js), and the
+// per-cell sequential write+verify (item 7: never batched, because a
+// batch gives no place to show live per-student progress or to stop
+// mid-page cleanly).
+// ==================================================
+
+/**
+ * item 2: builds the pre-run preview from a FRESH scan of whatever SGS
+ * page is currently open (always the CURRENT page — the run itself
+ * always starts from wherever the teacher has SGS open right now, per
+ * section 6's own convention). Never starts the run itself.
+ */
+async function runAutoRunPreRunPreview() {
+  arConfirmedColumnKey = confirmedRealColumn ? confirmedRealColumn.key : null
+  arAbortReasonEl.hidden = true
+  arFinalSummaryEl.hidden = true
+  arProgressEl.hidden = true
+  arManualContinueWrap.hidden = true
+  arPrerunEl.hidden = true
+
+  const scan = await scanCurrentSgsPageForColumn(arConfirmedColumnKey)
+  if (!scan.ok || !loadedPayload) {
+    arAbortReasonEl.textContent = scan.reason ?? 'กรุณาโหลด Bridge Payload ก่อน'
+    arAbortReasonEl.hidden = false
+    return
+  }
+
+  const { candidate, column, existingScoresBySgsRowKey } = scan.pageScan
+  const winningTable = currentGridFacts.tables.find((t) => t.tableIndex === candidate.tableIndex)
+  const sgsCandidates = winningTable ? extractSgsStudentCandidates(winningTable, candidate.run, candidate.identifierColumns) : []
+  const roster = buildFullRosterFromPayload(loadedPayload)
+  const krunameStudents = roster.map((r) => ({
+    studentId: r.studentId,
+    studentNumber: r.studentNumber,
+    studentCode: r.studentCode,
+    fullName: r.fullName,
+    score: r.score,
+  }))
+  const mappingResults = matchStudentsToSgs(krunameStudents, sgsCandidates)
+  const overwriteMode = arOverwriteCheckbox.checked ? 'overwrite_selected_column' : 'skip_existing'
+  const plan = computeWholeColumnPlan(krunameStudents, mappingResults, existingScoresBySgsRowKey, overwriteMode, column.maxScore)
+  const preRun = buildAutoRunPreRunSummary(plan, currentPagination, krunameStudents.length)
+
+  arSubjectEl.textContent = loadedPayload.subjectName || '-'
+  arClassroomEl.textContent = loadedPayload.classroomName || '-'
+  arColumnEl.textContent = column.label
+  arMaxScoreEl.textContent = column.maxScore !== null && column.maxScore !== undefined ? String(column.maxScore) : 'ไม่ทราบ'
+  arRosterCountEl.textContent = String(preRun.rosterCount)
+  arToSendEl.textContent = String(preRun.toSend)
+  arNoScoreEl.textContent = String(preRun.noScore)
+  arExistingSkipEl.textContent = String(preRun.existingToSkip)
+  arTotalPagesEl.textContent = preRun.sgsTotalPages !== null ? String(preRun.sgsTotalPages) : 'ไม่ทราบ'
+  arTotalSgsStudentsEl.textContent = preRun.sgsTotalStudents !== null ? String(preRun.sgsTotalStudents) : 'ไม่ทราบ'
+
+  arPrerunEl.hidden = false
+  updateAutoRunConfirmGate()
+}
+
+/** item 2's two explicit consent checkboxes — BOTH required before
+ * "เริ่มส่งครบทั้งห้อง" enables, same "preconditions AND explicit consent"
+ * ordering as every other write gate in this file. */
+function updateAutoRunConfirmGate() {
+  arRunBtn.disabled = !(arConfirmSubjectClassroomCheckbox.checked && arConfirmAutosaveCheckbox.checked)
+}
+
+function renderAutoRunLiveProgress(currentPageNumber, totalPages, processedCount, rosterCount, runningSummary) {
+  arProgressPageEl.textContent = `หน้า ${currentPageNumber ?? '?'} / ${totalPages ?? '?'}`
+  arProgressStudentsEl.textContent = `นักเรียนที่ประมวลผล ${processedCount} / ${rosterCount}`
+  arProgressWrittenEl.textContent = String(runningSummary.written)
+  arProgressSkipNoScoreEl.textContent = String(runningSummary.skippedNoScore)
+  arProgressSkipExistingEl.textContent = String(runningSummary.skippedExisting)
+  arProgressNotFoundEl.textContent = String(runningSummary.notFound)
+  arProgressAmbiguousEl.textContent = String(runningSummary.ambiguous)
+  arProgressFailedEl.textContent = String(runningSummary.failed)
+}
+
+/** item 9's final summary + the downloadable/copyable run report —
+ * rendered on every stop (completed, user-stopped, or aborted), never
+ * only on a clean finish, so partial progress is never silently lost. */
+function renderAutoRunFinalSummary() {
+  const rosterCount = loadedPayload ? buildFullRosterFromPayload(loadedPayload).length : arAllStudentResults.length
+  arFinalTotalEl.textContent = String(rosterCount)
+  arFinalWrittenEl.textContent = String(arCumulativeSummary.written)
+  arFinalSkipNoScoreEl.textContent = String(arCumulativeSummary.skippedNoScore)
+  arFinalSkipExistingEl.textContent = String(arCumulativeSummary.skippedExisting)
+  arFinalInvalidEl.textContent = String(arCumulativeSummary.invalidScore)
+  arFinalNotFoundEl.textContent = String(arCumulativeSummary.notFound)
+  arFinalAmbiguousEl.textContent = String(arCumulativeSummary.ambiguous)
+  arFinalFailedEl.textContent = String(arCumulativeSummary.failed)
+  arFinalPagesEl.textContent = `ประมวลผลหน้า: ${arPagesProcessed.length > 0 ? arPagesProcessed.join(', ') : '-'}`
+  arFinalSummaryEl.hidden = false
+
+  const report = buildAutoRunReport({
+    subjectName: loadedPayload?.subjectName ?? null,
+    classroomName: loadedPayload?.classroomName ?? null,
+    columnLabel: confirmedRealColumn?.label ?? null,
+    pagesProcessed: arPagesProcessed,
+    perStudentResults: arAllStudentResults,
+  })
+  arReportOutput.value = JSON.stringify(report, null, 2)
+}
+
+/** item 5: "หยุดการทำงานเพื่อความปลอดภัย / เหตุผล: ..." — shown clearly,
+ * and the run never continues automatically after this. Partial results
+ * are still rendered (renderAutoRunFinalSummary), never discarded. */
+function abortAutoRun(reason) {
+  arRunning = false
+  arStopBtn.disabled = true
+  arManualContinueWrap.hidden = true
+  arAbortReasonEl.textContent = `หยุดการทำงานเพื่อความปลอดภัย\nเหตุผล: ${reason}`
+  arAbortReasonEl.hidden = false
+  renderAutoRunFinalSummary()
+}
+
+/** item 11: the honest fallback when automatic navigation has no
+ * confirmed control to use on the current page shape (the real,
+ * live-confirmed SGS page always takes this path) — never an abort,
+ * just a pause for the teacher's own manual page change. */
+function pauseForManualContinue(currentPage, nextPage) {
+  arRunning = false
+  arStopBtn.disabled = true
+  arManualContinueMessageEl.textContent = `หน้าที่ ${currentPage} เสร็จแล้ว กรุณาเปิดหน้าที่ ${nextPage} แล้วกด "ดำเนินการต่อ" (ไม่พบปุ่ม/ลิงก์เปลี่ยนหน้าที่ยืนยันได้อย่างปลอดภัยบนหน้านี้)`
+  arManualContinueWrap.hidden = false
+  renderAutoRunFinalSummary()
+}
+
+/** item 8: a clean finish, whether the last page was reached
+ * (kind: 'completed') or the teacher pressed "หยุด" (kind:
+ * 'stopped_by_user') — either way the run stops here, never resuming on
+ * its own. */
+function finishAutoRun(kind) {
+  arRunning = false
+  arStopBtn.disabled = true
+  arManualContinueWrap.hidden = true
+  arProgressEl.hidden = true
+  if (kind === 'stopped_by_user') {
+    arAbortReasonEl.textContent = 'หยุดการทำงานตามคำสั่งผู้ใช้ (กด "หยุด")'
+    arAbortReasonEl.hidden = false
+  }
+  renderAutoRunFinalSummary()
+}
+
+/**
+ * The main auto-run loop — item 3's exact per-page sequence (fresh scan
+ * -> revalidate subject/classroom/column -> verify column writable ->
+ * extract students -> map -> build plan -> write ONLY the selected
+ * column, one cell at a time with a read-back after each -> accumulate
+ * -> only then attempt to advance). Checked via evaluateAutoRunStopCondition
+ * before every write batch and every page-advance attempt; the FIRST
+ * failing condition stops the ENTIRE run immediately (item 5) — never a
+ * partial continue, never a guess. Never resets arCumulativeSummary/
+ * arAllStudentResults/arPagesProcessed itself — only a brand-new
+ * "เริ่มส่งครบทั้งห้อง" click does that (arRunBtn's own listener), so
+ * resuming from a semi-automatic pause (item 11) correctly keeps the
+ * running total.
+ */
+async function runAutoRun() {
+  if (arRunning || !loadedPayload) return
+  arRunning = true
+  arStopRequested = false
+  arAbortReasonEl.hidden = true
+  arFinalSummaryEl.hidden = true
+  arManualContinueWrap.hidden = true
+  arPrerunEl.hidden = true
+  arProgressEl.hidden = false
+  arStopBtn.disabled = false
+
+  const overwriteMode = arOverwriteCheckbox.checked ? 'overwrite_selected_column' : 'skip_existing'
+  const rosterCount = buildFullRosterFromPayload(loadedPayload).length
+  let pageAdvancement = null // null until an automatic advance is actually attempted THIS call
+  let expectedPageAfterAdvance = null // set right after a successful click; checked against the NEXT fresh scan's own currentPage
+
+  while (true) {
+    const scan = await scanCurrentSgsPageForColumn(arConfirmedColumnKey)
+
+    // item 4's own explicit requirement, checked in the SAME order it's
+    // written there: "re-scan the page from scratch" (the line above)
+    // THEN "verify currentPage advanced exactly by 1" — a changed grid
+    // fingerprint (advanceToNextSgsPage's own check) is necessary but not
+    // sufficient; this is what actually confirms WHICH page it changed to.
+    if (expectedPageAfterAdvance !== null) {
+      const actualPage = scan.ok ? (currentPagination?.currentPage ?? null) : null
+      pageAdvancement =
+        actualPage === expectedPageAfterAdvance
+          ? { ok: true, reason: null }
+          : {
+              ok: false,
+              reason: `ไม่สามารถยืนยันว่าเปลี่ยนไปหน้าที่ ${expectedPageAfterAdvance} ได้อย่างถูกต้อง (พบว่าอยู่หน้า ${actualPage ?? 'ไม่ทราบ'})`,
+            }
+      expectedPageAfterAdvance = null
+    }
+
+    const freshSnapshot = scan.ok
+      ? {
+          subjectFilterText: currentGridFacts?.subjectFilter?.selectedText ?? null,
+          classroomFilterText: currentGridFacts?.classroomFilter?.selectedText ?? null,
+          columnKey: scan.pageScan.column.key,
+        }
+      : { subjectFilterText: null, classroomFilterText: null, columnKey: null }
+
+    // The FIRST successful scan of the run becomes the fixed baseline
+    // every later page is compared against — never the previous page's
+    // own values, so a slow drift across pages is caught the same way a
+    // sudden one is.
+    if (!arConfirmedRunContext && scan.ok) arConfirmedRunContext = freshSnapshot
+
+    const contextRevalidation = arConfirmedRunContext
+      ? revalidateWholeColumnContext(arConfirmedRunContext, freshSnapshot)
+      : { ok: false, reason: scan.reason ?? 'ไม่พบตารางคะแนนนักเรียนในหน้านี้' }
+
+    let plan = []
+    if (scan.ok) {
+      const { candidate, column, existingScoresBySgsRowKey } = scan.pageScan
+      const winningTable = currentGridFacts.tables.find((t) => t.tableIndex === candidate.tableIndex)
+      const sgsCandidates = winningTable ? extractSgsStudentCandidates(winningTable, candidate.run, candidate.identifierColumns) : []
+      const roster = buildFullRosterFromPayload(loadedPayload)
+      const krunameStudents = roster.map((r) => ({
+        studentId: r.studentId,
+        studentNumber: r.studentNumber,
+        studentCode: r.studentCode,
+        fullName: r.fullName,
+        score: r.score,
+      }))
+      const mappingResults = matchStudentsToSgs(krunameStudents, sgsCandidates)
+      plan = computeWholeColumnPlan(krunameStudents, mappingResults, existingScoresBySgsRowKey, overwriteMode, column.maxScore)
+    }
+
+    const stop = evaluateAutoRunStopCondition({
+      gridFound: scan.ok,
+      contextRevalidation,
+      columnWritableNow: scan.ok ? scan.pageScan.candidate.writableScoreColumns.some((c) => c.key === scan.pageScan.column.key) : false,
+      headerCheckboxOk: scan.ok
+        ? !scan.pageScan.column.headerCheckboxPresent || scan.pageScan.column.headerCheckboxChecked === true
+        : false,
+      hasAmbiguousWriteCandidate: planHasAmbiguousWriteCandidate(plan),
+      pageAdvancement,
+    })
+
+    if (stop.shouldStop) {
+      abortAutoRun(stop.reason)
+      return
+    }
+
+    // ---- write this page, ONE cell at a time (item 7: never blast all
+    // inputs simultaneously) ----
+    const { candidate, column } = scan.pageScan
+    const tab = await getActiveTab()
+    const verifiedRows = []
+    let pageThresholdExceeded = false
+
+    for (const baseRow of plan) {
+      if (arStopRequested) {
+        // item 8: finish the current atomic cell op (already done, we're
+        // between rows here), never start another write or page advance.
+        verifiedRows.push({ ...baseRow, writeOutcome: null })
+        continue
+      }
+      if (baseRow.status !== 'READY') {
+        verifiedRows.push({ ...baseRow, writeOutcome: null })
+      } else {
+        const writesByOffset = { [baseRow.sgsRowOffset]: baseRow.krunameScore }
+        const [writeInjection] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: fillSgsColumnValues,
+          args: [candidate.tableIndex, candidate.run.startIndex, column.columnIndex, writesByOffset],
+        })
+        // Best-effort pause for SGS's own input/change handlers to
+        // settle before reading back — never a confirmed "autosave
+        // finished" signal (see runWholeColumnWrite's identical note).
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        const [readInjection] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: readSingleColumnCellValue,
+          args: [candidate.tableIndex, candidate.run.startIndex + baseRow.sgsRowOffset, column.columnIndex],
+        })
+        const missing = writeInjection.result.missingOffsets.includes(baseRow.sgsRowOffset)
+        const actualValue = readInjection.result.found ? readInjection.result.value : null
+        const outcome = !missing && actualValue === baseRow.krunameScore ? 'WRITTEN' : 'FAILED'
+        verifiedRows.push({ ...baseRow, writeOutcome: outcome })
+
+        const attemptedSoFarThisPage = verifiedRows.filter((r) => r.status === 'READY').length
+        const pageSoFarSummary = summarizeAutoRunPageResult(verifiedRows)
+        if (pageFailureExceedsThreshold(pageSoFarSummary, attemptedSoFarThisPage)) {
+          pageThresholdExceeded = true
+        }
+      }
+
+      renderAutoRunLiveProgress(
+        currentPagination?.currentPage ?? null,
+        currentPagination?.totalPages ?? null,
+        arAllStudentResults.length + verifiedRows.length,
+        rosterCount,
+        mergeAutoRunSummaries(arCumulativeSummary, summarizeAutoRunPageResult(verifiedRows)),
+      )
+
+      if (pageThresholdExceeded) break
+    }
+
+    const pageSummary = summarizeAutoRunPageResult(verifiedRows)
+    arCumulativeSummary = mergeAutoRunSummaries(arCumulativeSummary, pageSummary)
+    arCumulativeFailedStudents = arCumulativeFailedStudents.concat(collectFailedStudents(verifiedRows))
+    arAllStudentResults = arAllStudentResults.concat(verifiedRows)
+    arPagesProcessed.push(currentPagination?.currentPage ?? arPagesProcessed.length + 1)
+
+    if (pageThresholdExceeded) {
+      abortAutoRun('อัตราการเขียนคะแนนล้มเหลวในหน้านี้สูงเกินเกณฑ์ที่ปลอดภัย — ตรวจสอบหน้า SGS ด้วยตนเองก่อนดำเนินการต่อ')
+      return
+    }
+
+    if (arStopRequested) {
+      finishAutoRun('stopped_by_user')
+      return
+    }
+
+    const pagination = currentPagination
+    const hasMorePages = Boolean(
+      pagination && pagination.detected && pagination.currentPage !== null && pagination.totalPages !== null && pagination.currentPage < pagination.totalPages,
+    )
+    if (!hasMorePages) {
+      finishAutoRun('completed')
+      return
+    }
+
+    // ---- item 4: attempt safe automatic navigation ----
+    const expectedNextPage = pagination.currentPage + 1
+    const [advanceInjection] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: advanceToNextSgsPage,
+      args: [candidate.tableIndex, candidate.run.startIndex, candidate.run.length, expectedNextPage],
+    })
+    const advanceResult = advanceInjection.result
+
+    if (advanceResult.advanced) {
+      // Not yet confirmed as a genuine advance — the top of the next
+      // iteration verifies currentPage actually became expectedNextPage
+      // (see expectedPageAfterAdvance above) before pageAdvancement is
+      // ever set to ok: true.
+      expectedPageAfterAdvance = expectedNextPage
+      continue
+    }
+
+    if (advanceResult.reason === 'no_confirmed_next_page_control') {
+      // item 11: never force it — pause for the teacher's own manual
+      // page change instead of guessing at a selector.
+      pauseForManualContinue(pagination.currentPage, expectedNextPage)
+      return
+    }
+
+    // Any OTHER advance failure (a click happened but the grid never
+    // changed within the timeout) is a genuine stop condition — the next
+    // loop iteration would otherwise re-scan the SAME stale page.
+    abortAutoRun('ไม่สามารถยืนยันว่าเปลี่ยนหน้าไปหน้าถัดไปได้อย่างถูกต้อง (หมดเวลารอให้หน้าเปลี่ยน)')
+    return
+  }
+}
+
+arStartBtn.addEventListener('click', () => {
+  void runAutoRunPreRunPreview()
+})
+
+arOverwriteCheckbox.addEventListener('change', () => {
+  void runAutoRunPreRunPreview()
+})
+
+arConfirmSubjectClassroomCheckbox.addEventListener('change', () => {
+  updateAutoRunConfirmGate()
+})
+arConfirmAutosaveCheckbox.addEventListener('change', () => {
+  updateAutoRunConfirmGate()
+})
+
+arRunBtn.addEventListener('click', () => {
+  arCumulativeSummary = emptyAutoRunSummary()
+  arCumulativeFailedStudents = []
+  arAllStudentResults = []
+  arPagesProcessed = []
+  arConfirmedRunContext = null
+  void runAutoRun()
+})
+
+arManualContinueBtn.addEventListener('click', () => {
+  arManualContinueWrap.hidden = true
+  void runAutoRun()
+})
+
+// item 8: sets the flag the run loop checks between rows/pages — never
+// interrupts a cell operation already in flight, never navigates further
+// once set.
+arStopBtn.addEventListener('click', () => {
+  arStopRequested = true
+  arStopBtn.disabled = true
+})
+
+arCopyReportBtn.addEventListener('click', async () => {
+  if (!arReportOutput.value) return
+  await navigator.clipboard.writeText(arReportOutput.value)
 })
 
 async function restoreSessionPayload() {
