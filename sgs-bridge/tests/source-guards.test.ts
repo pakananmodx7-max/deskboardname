@@ -110,7 +110,7 @@ describe('LIVE-BUG FIX — src/lib/sgs-tab-connection.js: the ONE shared tab-dis
   })
 
   it('resolveConnectedSgsTab searches EVERY tab (chrome.tabs.query filtered only by the real SGS url pattern) and PINGs each candidate — a URL match alone is never enough to call a tab "connected"', () => {
-    const fn = source.slice(source.indexOf('export async function resolveConnectedSgsTab'), source.indexOf('export async function resolveConnectedSgsTab') + 700)
+    const fn = source.slice(source.indexOf('export async function resolveConnectedSgsTab'))
     expect(fn).toContain('chrome.tabs.query({ url: SGS_TAB_URL_MATCH_PATTERN })')
     expect(fn).toContain('orderCandidatesByPreferredTabId(candidates, preferredTabId)')
     expect(fn).toContain('pingTab(tab.id)')
@@ -118,12 +118,16 @@ describe('LIVE-BUG FIX — src/lib/sgs-tab-connection.js: the ONE shared tab-dis
     expect(fn).toMatch(/connected: false/)
   })
 
-  it('a preferredTabId is only ever a HINT, tried first via orderCandidatesByPreferredTabId — it is still re-PINGed exactly like every other candidate, never trusted/returned without that fresh check', () => {
-    const fn = source.slice(source.indexOf('export async function resolveConnectedSgsTab'), source.indexOf('export async function resolveConnectedSgsTab') + 700)
+  it('a preferredTabId is only ever a HINT — TRACE FIX: it is now PINGed DIRECTLY first (never waiting on chrome.tabs.query to even enumerate it), and if that direct ping fails it is STILL re-tried exactly like every other candidate in the broad search below, never trusted/returned without a fresh PING either way', () => {
+    const fn = source.slice(source.indexOf('export async function resolveConnectedSgsTab'))
+    const directPingIndex = fn.indexOf('await pingTab(preferredTabId)')
+    const queryIndex = fn.indexOf('chrome.tabs.query({ url: SGS_TAB_URL_MATCH_PATTERN })')
     const orderIndex = fn.indexOf('orderCandidatesByPreferredTabId(')
-    const pingIndex = fn.indexOf('pingTab(tab.id)')
-    expect(orderIndex).toBeGreaterThan(-1)
-    expect(pingIndex).toBeGreaterThan(orderIndex)
+    const loopPingIndex = fn.indexOf('pingTab(tab.id)')
+    expect(directPingIndex).toBeGreaterThan(-1)
+    expect(directPingIndex).toBeLessThan(queryIndex)
+    expect(orderIndex).toBeGreaterThan(queryIndex)
+    expect(loopPingIndex).toBeGreaterThan(orderIndex)
   })
 
   it('item 4: saveVerifiedSgsTab/loadVerifiedSgsTabId persist to chrome.storage.session only — never .local (would survive a browser restart) or .sync (leaves the machine)', () => {
@@ -738,8 +742,15 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     const sendIndex = fn.indexOf('type: AR_MESSAGE.START')
     expect(guardIndex).toBeGreaterThan(-1)
     expect(guardIndex).toBeLessThan(sendIndex)
-    expect(fn).toMatch(/if \(!isPaginationHydrationValid\(pagination\)\) \{\s*\n\s*arAbortReasonEl\.textContent = PAGINATION_HYDRATION_FAILED_MESSAGE\s*\n\s*arAbortReasonEl\.hidden = false\s*\n\s*return/)
+    expect(fn).toMatch(/if \(!isPaginationHydrationValid\(pagination\)\) \{\s*\n\s*arAbortReasonEl\.textContent = PAGINATION_HYDRATION_FAILED_MESSAGE\s*\n\s*arAbortReasonEl\.hidden = false/)
     expect(fn).toMatch(/if \(!response\?\.ok\) \{\s*\n\s*arAbortReasonEl\.textContent = response\?\.reason \?\? PAGINATION_HYDRATION_FAILED_MESSAGE/)
+    // TRACE THE EXACT AR_START FAILURE — every one of this handler's own
+    // refusal paths ALSO records a visibly distinct debug-panel entry, so
+    // a live test can tell a popup-side pre-flight abort (PRERUN_*, no
+    // AR_START ever sent) apart from a background-side handleStart abort.
+    expect(fn).toContain("step: 'PRERUN_PAGINATION_INVALID'")
+    expect(fn).toContain("step: 'PRERUN_RESOLVE_FAILED'")
+    expect(fn).toContain('await refreshStartupTraceFromBackground()')
     expect(source).toContain(
       "import { AR_MESSAGE, CONTENT_SCRIPT_UNAVAILABLE_MESSAGE, isPaginationHydrationValid, PAGINATION_HYDRATION_FAILED_MESSAGE } from './lib/run-orchestrator.js'",
     )
@@ -1039,10 +1050,12 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     }
   })
 
-  it('item 3: AR_START stores runId/tabId/subject/classroom/targetColumn/payload/overwriteMode/currentPage/totalPages/summary/approved (via createInitialRunState) and immediately kicks off content-script.js in that SAME tab — never a different tab', () => {
-    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleStop'))
+  it('item 3: AR_START stores runId/tabId/subject/classroom/targetColumn/payload/overwriteMode/currentPage/totalPages/summary/approved (via createInitialRunState) and immediately kicks off content-script.js in that SAME tab — never a different tab. TRACE FIX: the kickoff send is now AWAITED (never fire-and-forget) so its own success/failure is a real, reportable checkpoint', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
     expect(fn).toContain('createInitialRunState(')
-    expect(fn).toMatch(/sendToTab\(tabId, \{ type: AR_MESSAGE\.KICKOFF/)
+    expect(fn).toMatch(/await chrome\.tabs\.sendMessage\(tabId, \{ type: AR_MESSAGE\.KICKOFF, runId: state\.runId \}\)/)
+    // Still only ever the resolved tab's own id — never message.tabId.
+    expect(fn).not.toMatch(/sendMessage\(message\.tabId/)
   })
 
   it('FINAL AUTO-RUN STATE BUG FIX (item 2/6): handleStart is the SECOND, authoritative pagination-hydration guard — it checks isPaginationHydrationValid(pagination) and refuses to EVER call createInitialRunState (or persist any state) when that check fails, returning the shared PAGINATION_HYDRATION_FAILED_MESSAGE instead', () => {
@@ -1051,7 +1064,13 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     const createIndex = fn.indexOf('createInitialRunState(')
     expect(guardIndex).toBeGreaterThan(-1)
     expect(createIndex).toBeGreaterThan(guardIndex)
-    expect(fn).toMatch(/if \(!isPaginationHydrationValid\(pagination\)\) \{\s*\n\s*return \{ ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE \}/)
+    // REMOVE GENERIC ERROR COLLAPSING — the teacher-facing Thai sentence
+    // is unchanged, but the refusal now ALSO carries its own machine
+    // readable errorCode, and records a PAGINATION_VALID checkpoint
+    // naming the abort reason.
+    expect(fn).toMatch(
+      /if \(!isPaginationHydrationValid\(pagination\)\) \{[\s\S]{0,220}return \{ ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE, errorCode: AR_ERROR_CODE\.PAGINATION_INVALID \}/,
+    )
     expect(source).toContain("isPaginationHydrationValid,\n  PAGINATION_HYDRATION_FAILED_MESSAGE,")
   })
 
@@ -1065,31 +1084,93 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
 
   it('LIVE-BUG FIX (item 1/2): handleStart resolves its tab via resolveConnectedSgsTab (the SAME shared function popup.js\'s diagnostic AND its own AR_START handler both call — never its own separate tab-discovery/ping logic) BEFORE ever calling createInitialRunState — pagination succeeding is never itself treated as proof the tab can be messaged, and popup\'s own message.tabId is only ever a PREFERRED hint, never trusted outright', () => {
     const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
-    const resolveIndex = fn.indexOf('resolveConnectedSgsTab(message.tabId)')
+    const resolveIndex = fn.indexOf('resolveConnectedSgsTab(suppliedTabId)')
     const createIndex = fn.indexOf('createInitialRunState(')
     expect(resolveIndex).toBeGreaterThan(-1)
     expect(createIndex).toBeGreaterThan(resolveIndex)
-    expect(fn).toContain('tabId: message.tabId')
+    // popup's own tabId is read into `suppliedTabId` and passed ONLY as
+    // resolveConnectedSgsTab's preferred hint — never destructured into a
+    // bare `tabId` that could be mistaken for the resolved one (the
+    // resolved id is a SEPARATE `const tabId = resolved.tabId`, below).
+    expect(fn).toContain('const suppliedTabId = message?.tabId ?? null')
     expect(fn).not.toMatch(/const \{ tabId,/)
   })
 
   it('FINAL AUTO-RUN EXECUTION BUG FIX (item 2/6 — "missing content script aborts clearly"): when NEITHER the initial resolveConnectedSgsTab NOR the ensureContentScriptReady healing fallback finds a connected tab, handleStart returns ok:false with CONTENT_SCRIPT_UNAVAILABLE_MESSAGE and NEVER reaches createInitialRunState/setState at all — no run is ever left dangling at 0/32 for a tab this file could never even reach', () => {
     const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
-    expect(fn).toMatch(/if \(!resolved\.connected\) \{\s*\n\s*resolved = await ensureContentScriptReady\(message\.tabId\)\s*\n\s*\}\s*\n\s*if \(!resolved\.connected\) \{\s*\n\s*debugLog\([^)]*\)\s*\n\s*return \{ ok: false, state: null, reason: CONTENT_SCRIPT_UNAVAILABLE_MESSAGE \}/)
-    const guardIndex = fn.indexOf("if (!resolved.connected) {\n    debugLog")
+    // The healing fallback is still tried ONLY after the first resolve
+    // failed, and the final refusal still returns the SAME teacher-facing
+    // message — now alongside its own machine-readable errorCode (REMOVE
+    // GENERIC ERROR COLLAPSING) and an AR_START_ABORTED trace entry.
+    expect(fn).toMatch(/if \(!resolved\.connected\) \{\s*\n\s*resolved = await ensureContentScriptReady\(suppliedTabId\)\s*\n\s*\}/)
+    expect(fn).toContain('return { ok: false, state: null, reason: abortReason, errorCode }')
+    expect(fn).toContain("const errorCode = resolved.errorCode ?? AR_ERROR_CODE.SGS_TAB_NOT_FOUND")
+    const abortGuardIndex = fn.indexOf('const abortReason = CONTENT_SCRIPT_UNAVAILABLE_MESSAGE')
     const setStateIndex = fn.indexOf('await setState(state)')
-    expect(guardIndex).toBeGreaterThan(-1)
-    expect(setStateIndex).toBeGreaterThan(guardIndex)
+    const createIndex = fn.indexOf('createInitialRunState(')
+    expect(abortGuardIndex).toBeGreaterThan(-1)
+    expect(setStateIndex).toBeGreaterThan(abortGuardIndex)
+    expect(createIndex).toBeGreaterThan(abortGuardIndex)
+  })
+
+  it('TRACE THE EXACT AR_START FAILURE: handleStart records EVERY required checkpoint, in order — AR_START_ENTER first (before the message body is even read), then INPUT_RECEIVED/PAGINATION_VALID/RESOLVER_BEGIN/RESOLVER_RESULT/PING_BEGIN/PING_RESULT/RUN_STATE_CREATED/KICKOFF_BEGIN/PROCESS_CURRENT_PAGE_SEND_BEGIN/PROCESS_CURRENT_PAGE_SEND_RESULT/AR_START_SUCCESS — and every early return identifies itself with an AR_START_ABORTED entry carrying the real errorCode', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
+    const ordered = [
+      'AR_START_ENTER',
+      'AR_START_INPUT_RECEIVED',
+      'PAGINATION_VALID',
+      'RESOLVER_BEGIN',
+      'RESOLVER_RESULT',
+      'PING_BEGIN',
+      'PING_RESULT',
+      'RUN_STATE_CREATED',
+      'KICKOFF_BEGIN',
+      'PROCESS_CURRENT_PAGE_SEND_BEGIN',
+      'PROCESS_CURRENT_PAGE_SEND_RESULT',
+      'AR_START_SUCCESS',
+    ]
+    let previousIndex = -1
+    for (const step of ordered) {
+      const index = fn.indexOf(`recordStartupTrace('${step}'`)
+      expect(index, `missing checkpoint ${step}`).toBeGreaterThan(-1)
+      expect(index, `checkpoint ${step} out of order`).toBeGreaterThan(previousIndex)
+      previousIndex = index
+    }
+    // AR_START_ENTER is genuinely FIRST — nothing (not even reading the
+    // message body) happens before it.
+    expect(fn).toMatch(/async function handleStart\(message\) \{[\s\S]{0,600}?await recordStartupTrace\('AR_START_ENTER'/)
+    // Every early return identifies itself.
+    const abortCalls = [...fn.matchAll(/recordStartupTrace\('AR_START_ABORTED'/g)]
+    expect(abortCalls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('REMOVE GENERIC ERROR COLLAPSING: every failed AR_START response carries a machine-readable errorCode from the shared AR_ERROR_CODE vocabulary — never only the collapsed Thai sentence', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
+    const failedReturns = [...fn.matchAll(/return \{ ok: false, state: null, reason: [^}]*\}/g)].map((m) => m[0])
+    expect(failedReturns.length).toBeGreaterThanOrEqual(3)
+    for (const failedReturn of failedReturns) {
+      expect(failedReturn, failedReturn).toMatch(/errorCode/)
+    }
+    expect(source).toContain('AR_ERROR_CODE')
   })
 
   it('FINAL AUTO-RUN EXECUTION BUG FIX (item 1 — "start page 1 immediately"): once both guards pass, AR_KICKOFF is dispatched in the SAME handleStart call, using the RESOLVED tab\'s own id (never necessarily message.tabId) — never deferred to a navigation/reload event', () => {
     const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
     const setStateIndex = fn.indexOf('await setState(state)')
-    const kickoffIndex = fn.indexOf('sendToTab(tabId, { type: AR_MESSAGE.KICKOFF')
+    const kickoffIndex = fn.indexOf('await chrome.tabs.sendMessage(tabId, { type: AR_MESSAGE.KICKOFF')
     expect(setStateIndex).toBeGreaterThan(-1)
     expect(kickoffIndex).toBeGreaterThan(setStateIndex)
     expect(fn).toContain('const tabId = resolved.tabId')
     expect(fn).toContain('await saveVerifiedSgsTab(tabId, resolved.pageUrl)')
+  })
+
+  it('TRACE FIX: a KICKOFF that cannot reach the tab is reported (KICKOFF_SEND_FAILED) but never itself aborts the already-created run — content-script.js\'s own AR_CHECK_ACTIVE/AR_SGS_CONTENT_READY paths still pick it up', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
+    const kickoffBlock = fn.slice(fn.indexOf('PROCESS_CURRENT_PAGE_SEND_BEGIN'))
+    expect(kickoffBlock).toContain('AR_ERROR_CODE.KICKOFF_SEND_FAILED')
+    // Never turns into a refusal — AR_START_SUCCESS is still reached.
+    expect(kickoffBlock).not.toMatch(/return \{ ok: false/)
+    expect(kickoffBlock).toContain("recordStartupTrace('AR_START_SUCCESS'")
   })
 
   it('LIVE-BUG FIX (item 3): ensureContentScriptReady is ONLY called after handleStart\'s own initial resolveConnectedSgsTab already failed to find ANY connected tab — it injects once, then RE-RESOLVES via the SAME shared resolveConnectedSgsTab (never a separate/duplicated ping call) before ever trying the reload tier', () => {
@@ -1108,9 +1189,13 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     const fn = source.slice(source.indexOf('async function ensureContentScriptReady'), source.indexOf('async function handleStart'))
     const injectIndex = fn.indexOf('chrome.scripting.executeScript(')
     const reloadIndex = fn.indexOf('chrome.tabs.reload(tabId)')
-    const finalReturn = fn.lastIndexOf('connected: false }')
+    // TRACE FIX: the final give-up now returns the resolver's OWN result
+    // (which already carries connected:false PLUS the real errorCode/
+    // errorMessage) rather than a hand-built, information-free object.
+    const finalReturn = fn.lastIndexOf('return resolved')
     expect(reloadIndex).toBeGreaterThan(injectIndex)
     expect(finalReturn).toBeGreaterThan(reloadIndex)
+    expect(fn).toMatch(/recordStartupTrace\('PING_FAILED'[\s\S]{0,160}afterReload|failed_after_reload/)
   })
 
   it('FINAL AUTO-RUN EXECUTION BUG FIX (item 3 — service worker lifecycle): the watchdog itself is scheduled via chrome.alarms, which keeps firing even after this service worker is suspended — never setInterval, which does not survive suspension and would silently never fire. (waitForTabLoadComplete\'s own bounded setTimeout is a different, short-lived wait entirely WITHIN one already-in-flight AR_START response — see its own doc comment — never a substitute for the alarm)', () => {
@@ -1154,10 +1239,20 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     expect(fn).toContain('sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })')
   })
 
-  it('FINAL SGS AUTO-RUN FIX (item 6): handleContentReady broadcasts CONTENT_SCRIPT_RECEIVED and (only on an actual dispatch) PROCESS_CURRENT_PAGE_SENT — the SAME startup-trace vocabulary handleStart\'s own first run uses, so a page-2/3/4 reconnect is exactly as visible in Section 7 as the initial start', () => {
+  it('FINAL SGS AUTO-RUN FIX (item 6): handleContentReady records CONTENT_SCRIPT_RECEIVED and (only on an actual dispatch) PROCESS_CURRENT_PAGE_SEND_RESULT — the SAME startup-trace vocabulary handleStart\'s own first run uses, so a page-2/3/4 reconnect is exactly as visible in Section 7 as the initial start', () => {
     const fn = source.slice(source.indexOf('async function handleContentReady'), source.indexOf('async function handlePendingAdvance'))
-    expect(fn).toContain("broadcastStartupTrace('CONTENT_SCRIPT_RECEIVED'")
-    expect(fn).toContain("broadcastStartupTrace('PROCESS_CURRENT_PAGE_SENT'")
+    expect(fn).toContain("recordStartupTrace('CONTENT_SCRIPT_RECEIVED'")
+    expect(fn).toContain("recordStartupTrace('PROCESS_CURRENT_PAGE_SEND_RESULT'")
+  })
+
+  it('TRACE THE EXACT AR_START FAILURE: every startup-trace checkpoint is PERSISTED (chrome.storage.session), not only broadcast — so a reopened popup can still show the last step reached via AR_GET_STARTUP_TRACE, even after an abort closed it', () => {
+    expect(source).toContain("const STARTUP_TRACE_KEY = 'sgsBridgeLastStartupTrace'")
+    const fn = source.slice(source.indexOf('async function recordStartupTrace'), source.indexOf('async function getStartupTrace'))
+    expect(fn).toContain('chrome.storage.session.set({ [STARTUP_TRACE_KEY]: entry })')
+    expect(fn).toContain('chrome.runtime.sendMessage({ type: AR_MESSAGE.STARTUP_TRACE')
+    expect(source).toMatch(/case AR_MESSAGE\.GET_STARTUP_TRACE:\s*\n\s*void getStartupTrace\(\)\.then\(\(trace\) => sendResponse\(\{ trace \}\)\)/)
+    // Never broadcast-only any more — the old helper name is gone.
+    expect(source).not.toMatch(/broadcastStartupTrace/)
   })
 
   it('item 6: AR_STOP only ever sets a flag (applyStopRequested) — it never itself aborts/completes a run, and a popup on an unrelated tab can neither see nor stop this tab\'s run (stateForTab)', () => {

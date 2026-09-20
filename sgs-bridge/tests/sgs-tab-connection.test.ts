@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { orderCandidatesByPreferredTabId, SGS_TAB_URL_MATCH_PATTERN } from '../src/lib/sgs-tab-connection'
+import { classifyPingError, orderCandidatesByPreferredTabId, SGS_TAB_URL_MATCH_PATTERN } from '../src/lib/sgs-tab-connection'
 
 describe('SGS_TAB_URL_MATCH_PATTERN — the ONE pattern resolveConnectedSgsTab, background.js\'s host_permissions, and manifest.json\'s content_scripts entry all share', () => {
   it('is the real SGS transcripts host, scoped to /sgs/ — never a bare origin, never <all_urls>', () => {
@@ -38,5 +38,34 @@ describe('orderCandidatesByPreferredTabId — item 6\'s exact live regression, a
     const ordered = orderCandidatesByPreferredTabId(candidates, 3)
     expect(ordered.length).toBe(candidates.length)
     expect(new Set(ordered.map((t) => t.id))).toEqual(new Set(candidates.map((t) => t.id)))
+  })
+})
+
+describe('classifyPingError — REMOVE GENERIC ERROR COLLAPSING: Chrome\'s own real message-passing errors, each its own code', () => {
+  it('maps "Receiving end does not exist" to CONTENT_RECEIVER_MISSING — a tab with no content-script listener at all', () => {
+    expect(classifyPingError('Could not establish connection. Receiving end does not exist.')).toBe('CONTENT_RECEIVER_MISSING')
+  })
+
+  it('maps "The message port closed before a response was received." to MESSAGE_PORT_CLOSED — a listener that WAS there but tore down mid-handshake', () => {
+    expect(classifyPingError('The message port closed before a response was received.')).toBe('MESSAGE_PORT_CLOSED')
+  })
+
+  it('maps "No tab with id: 2121095410." to SGS_TAB_NOT_FOUND — the verified tab is simply gone', () => {
+    expect(classifyPingError('No tab with id: 2121095410.')).toBe('SGS_TAB_NOT_FOUND')
+  })
+
+  it('falls back to the generic PING_FAILED for an unrecognized error, rather than guessing a wrong specific code', () => {
+    expect(classifyPingError('Some brand new Chrome error nobody has seen before')).toBe('PING_FAILED')
+    expect(classifyPingError(null)).toBe('PING_FAILED')
+    expect(classifyPingError(undefined)).toBe('PING_FAILED')
+  })
+
+  it('never returns the same code for two genuinely different failures — this is the whole point of the fix', () => {
+    const codes = new Set([
+      classifyPingError('Could not establish connection. Receiving end does not exist.'),
+      classifyPingError('The message port closed before a response was received.'),
+      classifyPingError('No tab with id: 1.'),
+    ])
+    expect(codes.size).toBe(3)
   })
 })

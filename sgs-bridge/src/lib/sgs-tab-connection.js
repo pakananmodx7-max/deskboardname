@@ -23,7 +23,7 @@
  * counts as "connected") until one responds.
  */
 
-import { AR_MESSAGE } from './run-orchestrator.js'
+import { AR_ERROR_CODE, AR_MESSAGE } from './run-orchestrator.js'
 
 export const SGS_TAB_URL_MATCH_PATTERN = 'https://sgs.bopp-obec.info/sgs/*'
 
@@ -46,47 +46,109 @@ export function orderCandidatesByPreferredTabId(candidates, preferredTabId) {
   return [...candidates.filter((tab) => tab.id === preferredTabId), ...candidates.filter((tab) => tab.id !== preferredTabId)]
 }
 
+/**
+ * TRACE FIX — classifies a PING failure by the REAL Chrome runtime error
+ * text, instead of collapsing every failure into one generic "not
+ * found" outcome. These are Chrome's own well-known message-passing
+ * error strings (never guessed/invented): a tab that no longer exists,
+ * a tab whose content script never registered a listener at all
+ * ("Receiving end does not exist"), and a listener that WAS there but
+ * closed the message port before replying (rare, but distinct — usually
+ * means the receiving script errored or tore down mid-handshake). Any
+ * other error text falls back to the generic PING_FAILED code rather
+ * than a wrong specific one.
+ */
+export function classifyPingError(errorMessage) {
+  const message = String(errorMessage ?? '')
+  if (/No tab with id/i.test(message)) return AR_ERROR_CODE.SGS_TAB_NOT_FOUND
+  if (/Receiving end does not exist/i.test(message)) return AR_ERROR_CODE.CONTENT_RECEIVER_MISSING
+  if (/message port closed before a response/i.test(message)) return AR_ERROR_CODE.MESSAGE_PORT_CLOSED
+  return AR_ERROR_CODE.PING_FAILED
+}
+
 /** Best-effort — a tab with no content script listener (closed,
- * navigated away, or simply never loaded one) just never responds;
- * never itself thrown as an error to the caller. */
+ * navigated away, or simply never loaded one) just never responds; this
+ * is never itself thrown as an error to the caller, but the REAL Chrome
+ * error text and its classifyPingError code are always preserved on
+ * failure rather than discarded, so a caller several layers up (Section
+ * 7's own debug panel) can show the actual runtime error instead of a
+ * single collapsed guess. */
 async function pingTab(tabId) {
   try {
     const response = await chrome.tabs.sendMessage(tabId, { type: AR_MESSAGE.PING })
-    return response?.ready ? response : null
-  } catch {
-    return null
+    if (response?.ready) return { ok: true, pageUrl: response.pageUrl ?? null }
+    return {
+      ok: false,
+      errorCode: AR_ERROR_CODE.CONTENT_RECEIVER_MISSING,
+      errorMessage: 'ตอบกลับ PING แต่ ready ไม่เป็นจริง (response.ready !== true)',
+    }
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err)
+    return { ok: false, errorCode: classifyPingError(errorMessage), errorMessage }
   }
 }
 
 /**
- * Searches EVERY tab in EVERY window for one matching the real SGS URL
- * pattern (never limited to whichever tab/window merely happens to be
- * frontmost), then PINGs each candidate until one answers. `preferredTabId`
- * (e.g. a previously
- * verified chrome.storage.session tabId, or the tabId a caller already
- * has some reason to expect) is tried FIRST (orderCandidatesByPreferredTabId,
- * above) but is NEVER trusted without a fresh re-PING right here — a
- * closed/navigated-away tab still fails exactly like any other stale
- * candidate, and a teacher who has closed that tab and opened SGS
- * somewhere else is still found via the fresh search across every other
- * candidate.
+ * TRACE FIX — "use the already verified tab": when a `preferredTabId` is
+ * given (e.g. a tab a diagnostic or a previous AR_START JUST confirmed
+ * CONNECTED), this PINGs that EXACT tab id directly FIRST — never going
+ * through chrome.tabs.query at all for that first attempt. Only when
+ * that direct re-PING itself fails does this fall back to the broader
+ * "search every tab in every window matching the SGS URL pattern" scan
+ * below. This is structurally different from (and fixes) the previous
+ * behavior of always running the broad query FIRST and only ordering a
+ * preferredTabId to the front IF chrome.tabs.query happened to include
+ * it among its results — a tab chrome.tabs.query's own matching missed
+ * or excluded for any reason was previously silently dropped and never
+ * pinged at all, even though its id was already known-good a moment
+ * earlier. A closed/navigated-away preferredTabId still just fails this
+ * direct ping exactly like any other stale candidate would, and falls
+ * through to the same broad search every other caller relies on.
  *
- * Returns { tabId, pageUrl, connected } — pageUrl is the content
- * script's OWN reported `location.href` (see content-script.js's PING
- * handler), never merely the tab's own `.url` field, though that is
- * used as a fallback if a response somehow omits it.
+ * Returns { tabId, pageUrl, connected, errorCode, errorMessage } —
+ * pageUrl is the content script's OWN reported `location.href` (see
+ * content-script.js's PING handler), never merely the tab's own `.url`
+ * field, though that is used as a fallback if a response somehow omits
+ * it. errorCode/errorMessage are populated only when connected is false,
+ * and reflect the LAST ping attempt's own real failure (see
+ * classifyPingError) — never a single generic reason.
  */
 export async function resolveConnectedSgsTab(preferredTabId) {
+  // The direct re-PING's own failure, if it happens — remembered in case
+  // the broad search below finds nothing at all either (a more specific
+  // "the tab you already verified is now gone/unreachable" beats a
+  // generic "no tab found").
+  let lastFailure = null
+  if (preferredTabId !== null && preferredTabId !== undefined) {
+    const direct = await pingTab(preferredTabId)
+    if (direct.ok) {
+      return { tabId: preferredTabId, pageUrl: direct.pageUrl, connected: true, errorCode: null, errorMessage: null }
+    }
+    lastFailure = direct
+  }
+
   const candidates = await chrome.tabs.query({ url: SGS_TAB_URL_MATCH_PATTERN })
   const ordered = orderCandidatesByPreferredTabId(candidates, preferredTabId)
 
   for (const tab of ordered) {
+    if (tab.id === preferredTabId) continue // already tried directly, above
     const response = await pingTab(tab.id)
-    if (response) {
-      return { tabId: tab.id, pageUrl: response.pageUrl ?? tab.url ?? null, connected: true }
+    if (response.ok) {
+      return { tabId: tab.id, pageUrl: response.pageUrl ?? tab.url ?? null, connected: true, errorCode: null, errorMessage: null }
+    }
+    lastFailure = response
+  }
+
+  if (!lastFailure) {
+    return {
+      tabId: null,
+      pageUrl: null,
+      connected: false,
+      errorCode: AR_ERROR_CODE.SGS_TAB_NOT_FOUND,
+      errorMessage: 'ไม่พบแท็บที่ URL ตรงกับรูปแบบหน้า SGS เลยสักแท็บเดียว',
     }
   }
-  return { tabId: null, pageUrl: null, connected: false }
+  return { tabId: null, pageUrl: null, connected: false, errorCode: lastFailure.errorCode, errorMessage: lastFailure.errorMessage }
 }
 
 /**

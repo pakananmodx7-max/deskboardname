@@ -40,6 +40,30 @@ export const PAGINATION_HYDRATION_FAILED_MESSAGE = 'ยังอ่านข้�
  * read identically to the teacher. */
 export const CONTENT_SCRIPT_UNAVAILABLE_MESSAGE = 'ไม่พบตัวเชื่อมหน้า SGS กรุณารีเฟรชหน้า SGS แล้วลองใหม่'
 
+/**
+ * REMOVE GENERIC ERROR COLLAPSING — the one shared vocabulary of
+ * MACHINE-readable reasons a run could fail to start, so
+ * CONTENT_SCRIPT_UNAVAILABLE_MESSAGE (the teacher-facing Thai sentence,
+ * unchanged above) is never the ONLY signal available. sgs-tab-connection.js
+ * produces SGS_TAB_NOT_FOUND/SGS_TAB_URL_INVALID/PING_FAILED/
+ * MESSAGE_PORT_CLOSED/CONTENT_RECEIVER_MISSING (see its own
+ * classifyPingError); background.js produces RUN_STATE_CREATE_FAILED/
+ * KICKOFF_SEND_FAILED for the two failure points after a tab is already
+ * confirmed connected. Every AR_START_ABORTED trace entry and every
+ * failed AR_START response carries one of these, alongside the real
+ * underlying error text — never just the collapsed Thai sentence alone.
+ */
+export const AR_ERROR_CODE = {
+  SGS_TAB_NOT_FOUND: 'SGS_TAB_NOT_FOUND',
+  SGS_TAB_URL_INVALID: 'SGS_TAB_URL_INVALID',
+  PING_FAILED: 'PING_FAILED',
+  MESSAGE_PORT_CLOSED: 'MESSAGE_PORT_CLOSED',
+  CONTENT_RECEIVER_MISSING: 'CONTENT_RECEIVER_MISSING',
+  RUN_STATE_CREATE_FAILED: 'RUN_STATE_CREATE_FAILED',
+  KICKOFF_SEND_FAILED: 'KICKOFF_SEND_FAILED',
+  PAGINATION_INVALID: 'PAGINATION_INVALID',
+}
+
 export const AUTO_RUN_STATUS = {
   RUNNING: 'running',
   PAUSED_MANUAL: 'paused_manual',
@@ -58,6 +82,14 @@ export const AR_MESSAGE = {
   STOP: 'AR_STOP',
   GET_STATE: 'AR_GET_STATE',
   MANUAL_CONTINUE: 'AR_MANUAL_CONTINUE',
+  // popup -> background: TRACE THE EXACT AR_START FAILURE — fetches the
+  // last PERSISTED startup-trace entry (see background.js's
+  // recordStartupTrace), never merely the last live broadcast this popup
+  // instance happened to be open/listening for. Lets a REOPENED popup
+  // (after an abort closed it, or a fresh popup click after a failure)
+  // still show "ขั้นตอนล่าสุด / tabId / PING / ข้อผิดพลาดจริง" for the
+  // most recent AR_START attempt, even if no run was ever created.
+  GET_STARTUP_TRACE: 'AR_GET_STARTUP_TRACE',
   // content-script -> background
   CHECK_ACTIVE: 'AR_CHECK_ACTIVE',
   PENDING_ADVANCE: 'AR_PENDING_ADVANCE',

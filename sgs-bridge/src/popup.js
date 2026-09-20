@@ -241,6 +241,11 @@ const arManualContinueWrap = document.getElementById('ar-manual-continue')
 const arManualContinueMessageEl = document.getElementById('ar-manual-continue-message')
 const arManualContinueBtn = document.getElementById('ar-manual-continue-btn')
 const arAbortReasonEl = document.getElementById('ar-abort-reason')
+const arDebugPanelEl = document.getElementById('ar-debug-panel')
+const arDebugStepEl = document.getElementById('ar-debug-step')
+const arDebugTabIdEl = document.getElementById('ar-debug-tabid')
+const arDebugPingEl = document.getElementById('ar-debug-ping')
+const arDebugErrorEl = document.getElementById('ar-debug-error')
 const arFinalSummaryEl = document.getElementById('ar-final-summary')
 const arFinalTotalEl = document.getElementById('ar-final-total')
 const arFinalWrittenEl = document.getElementById('ar-final-written')
@@ -2110,6 +2115,59 @@ arConfirmAutosaveCheckbox.addEventListener('change', () => {
 })
 
 /**
+ * FINAL SGS AUTO-RUN FIX (item 6) — "show these steps in Section 7... if
+ * it aborts, show exactly which step failed." Renders the MOST RECENT
+ * AR_STARTUP_TRACE broadcast as a one-line summary, and hands the same
+ * entry to renderDebugPanel below for the full required breakdown.
+ */
+function renderStartupTrace(step, detail) {
+  const failed = step === 'PING_FAILED' || Boolean(detail?.failed)
+  arStartupTraceEl.textContent = `[connect] ${step}`
+  arStartupTraceEl.hidden = false
+  arStartupTraceEl.classList.toggle('debug-line-failed', failed)
+  renderDebugPanel({ step, timestamp: Date.now(), detail: detail ?? null })
+}
+
+/**
+ * VISIBLE DEBUG — "do NOT hide this trace in a final report... show it
+ * directly in Section 7 even after abort." Renders the exact required
+ * format (ขั้นตอนล่าสุด/tabId/PING/ข้อผิดพลาดจริง) from ONE startup-trace
+ * entry — whichever of AR_START_ENTER..AR_START_SUCCESS/AR_START_ABORTED
+ * (background.js's handleStart) or PRERUN_* (this popup's OWN pre-flight
+ * tab resolve, before AR_START is even sent) was most recently recorded.
+ * Never hidden again automatically — only a fresh attempt (a new trace
+ * entry) clears it, so a reopened popup after a failed attempt still
+ * shows exactly what a live test needs: the last statement that ran.
+ */
+function renderDebugPanel(trace) {
+  if (!trace) {
+    arDebugPanelEl.hidden = true
+    return
+  }
+  const detail = trace.detail ?? {}
+  arDebugStepEl.textContent = trace.step ?? '-'
+  const tabId = detail.resolvedTabId ?? detail.suppliedTabId ?? null
+  arDebugTabIdEl.textContent = tabId !== null && tabId !== undefined ? String(tabId) : '-'
+  arDebugPingEl.textContent = detail.pingResult ?? '-'
+  arDebugErrorEl.textContent = detail.abortReason ?? detail.error ?? '-'
+  arDebugPanelEl.hidden = false
+}
+
+/**
+ * TRACE THE EXACT AR_START FAILURE — fetches the LAST PERSISTED startup
+ * trace from background.js (AR_MESSAGE.GET_STARTUP_TRACE), never only
+ * relying on a live broadcast this popup instance happened to be open
+ * for. Called whenever Section 7 needs to show the truth about the most
+ * recent AR_START attempt regardless of whether THIS popup instance was
+ * open when it happened (a reopened popup after an abort, or right after
+ * a failure this same popup instance just caused).
+ */
+async function refreshStartupTraceFromBackground() {
+  const response = await chrome.runtime.sendMessage({ type: AR_MESSAGE.GET_STARTUP_TRACE }).catch(() => null)
+  if (response?.trace) renderDebugPanel(response.trace)
+}
+
+/**
  * item 3: the ONE place a run is ever started — sends the teacher's
  * explicit approval (subject/classroom/targetColumn/payload/
  * overwriteMode, plus which tab this run belongs to) to background.js,
@@ -2152,11 +2210,32 @@ arRunBtn.addEventListener('click', () => {
     arAbortReasonEl.hidden = true
     arStartupTraceEl.hidden = true
     arStartupTraceEl.textContent = ''
+    arDebugPanelEl.hidden = true
 
+    // PRERUN_RESOLVE — this popup's OWN pre-flight tab resolve, needed
+    // only to get a tabId to run the pagination read against BEFORE
+    // AR_START can even be constructed (pagination is required in the
+    // message body — see isPaginationHydrationValid below). This is a
+    // DIFFERENT checkpoint namespace from background.js's own
+    // AR_START_ENTER.. trace (which only begins once AR_START is
+    // actually sent) — kept visibly distinct so a live test can tell
+    // WHICH layer aborted: this popup never even reaching AR_START, or
+    // background.js reaching it and refusing.
     const resolvedTab = await resolveConnectedSgsTab(await loadVerifiedSgsTabId())
     if (!resolvedTab.connected) {
       arAbortReasonEl.textContent = CONTENT_SCRIPT_UNAVAILABLE_MESSAGE
       arAbortReasonEl.hidden = false
+      renderDebugPanel({
+        step: 'PRERUN_RESOLVE_FAILED',
+        timestamp: Date.now(),
+        detail: {
+          suppliedTabId: await loadVerifiedSgsTabId(),
+          resolvedTabId: resolvedTab.tabId,
+          pingResult: 'FAILED',
+          error: resolvedTab.errorMessage ?? null,
+          abortReason: `${resolvedTab.errorCode ?? 'SGS_TAB_NOT_FOUND'}: ${CONTENT_SCRIPT_UNAVAILABLE_MESSAGE} (ยังไม่ได้ส่ง AR_START — ล้มเหลวที่ popup ก่อนถึง background.js)`,
+        },
+      })
       return
     }
     await saveVerifiedSgsTab(resolvedTab.tabId, resolvedTab.pageUrl)
@@ -2176,6 +2255,11 @@ arRunBtn.addEventListener('click', () => {
     if (!isPaginationHydrationValid(pagination)) {
       arAbortReasonEl.textContent = PAGINATION_HYDRATION_FAILED_MESSAGE
       arAbortReasonEl.hidden = false
+      renderDebugPanel({
+        step: 'PRERUN_PAGINATION_INVALID',
+        timestamp: Date.now(),
+        detail: { resolvedTabId: resolvedTab.tabId, abortReason: PAGINATION_HYDRATION_FAILED_MESSAGE },
+      })
       return
     }
 
@@ -2195,31 +2279,20 @@ arRunBtn.addEventListener('click', () => {
     if (!response?.ok) {
       arAbortReasonEl.textContent = response?.reason ?? PAGINATION_HYDRATION_FAILED_MESSAGE
       arAbortReasonEl.hidden = false
+      // The AUTHORITATIVE trace — whatever background.js's own handleStart
+      // actually recorded (AR_START_ENTER through AR_START_ABORTED, with
+      // the real resolvedTabId/pingResult/error) — always takes priority
+      // over any local guess the moment AR_START was actually sent.
+      await refreshStartupTraceFromBackground()
       return
     }
     // FINAL SGS AUTO-RUN FIX (item 6) — a successful start moves the UI
     // on to ar-progress; the connection trace has done its job by then.
     arStartupTraceEl.hidden = true
+    arDebugPanelEl.hidden = true
     renderAutoRunFromState(response.state)
   })()
 })
-
-/**
- * FINAL SGS AUTO-RUN FIX (item 6) — "show these steps in Section 7... if
- * it aborts, show exactly which step failed." Renders the MOST RECENT
- * AR_STARTUP_TRACE broadcast (SGS_TAB_FOUND/PING_SENT/PING_OK or
- * PING_FAILED/SCRIPT_INJECTED/PING_RETRY_OK/PROCESS_CURRENT_PAGE_SENT/
- * CONTENT_SCRIPT_RECEIVED — see background.js's ensureContentScriptReady/
- * handleStart). Every one of these steps happens BEFORE a run exists, so
- * this is a live broadcast-only element, never anything read from
- * state.debugLog (which only starts once a run is actually created).
- */
-function renderStartupTrace(step, detail) {
-  const failed = step === 'PING_FAILED' || Boolean(detail?.failed)
-  arStartupTraceEl.textContent = `[connect] ${step}`
-  arStartupTraceEl.hidden = false
-  arStartupTraceEl.classList.toggle('debug-line-failed', failed)
-}
 
 /** item 6: the teacher's own click after a manual-pause fallback — tells
  * background.js to resume, which forwards the resume to whichever
@@ -2290,3 +2363,7 @@ async function restoreAutoRunStateFromBackground() {
 
 void refreshStatus()
 void restoreSessionPayload().then(() => restoreAutoRunStateFromBackground())
+// VISIBLE DEBUG — a reopened popup (after an abort closed it, or simply
+// a fresh click) still shows the last startup-trace checkpoint reached,
+// not just whatever this fresh popup instance happens to broadcast live.
+void refreshStartupTraceFromBackground()

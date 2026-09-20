@@ -26,6 +26,7 @@
 
 import {
   appendDebugEvent,
+  AR_ERROR_CODE,
   AR_MESSAGE,
   applyAbort,
   applyCompleted,
@@ -49,14 +50,34 @@ import {
 } from './lib/run-orchestrator.js'
 import { resolveConnectedSgsTab, saveVerifiedSgsTab } from './lib/sgs-tab-connection.js'
 
-/** FINAL SGS AUTO-RUN FIX (item 6) — broadcast-only, never persisted:
- * every one of these connection-handshake steps happens BEFORE a run
- * exists to persist it on (see AR_MESSAGE.STARTUP_TRACE's own doc
- * comment). A closed popup has no listener, same as broadcastStateChanged
- * below — never itself an error. */
-function broadcastStartupTrace(step, detail) {
+/** TRACE THE EXACT AR_START FAILURE — the last startup-trace entry,
+ * persisted (never only broadcast) so it survives the popup being
+ * closed/reopened and can still be shown in Section 7 "even after
+ * abort," per the exact required shape: step, timestamp, suppliedTabId,
+ * resolvedTabId, resolvedPageUrl, pingResult, error, abortReason. Every
+ * connection-handshake checkpoint happens BEFORE a run exists to persist
+ * it on its own debugLog, so this is a SEPARATE, small, single-entry
+ * store (overwritten each call, never a growing list) rather than a
+ * field on run state. */
+const STARTUP_TRACE_KEY = 'sgsBridgeLastStartupTrace'
+
+/**
+ * @param {string} step
+ * @param {{ suppliedTabId?: number|null, resolvedTabId?: number|null, resolvedPageUrl?: string|null, pingResult?: unknown, error?: string|null, abortReason?: string|null } | null} detail
+ */
+async function recordStartupTrace(step, detail) {
+  const entry = { step, timestamp: Date.now(), detail: detail ?? null }
   debugLog(step, detail)
-  chrome.runtime.sendMessage({ type: AR_MESSAGE.STARTUP_TRACE, step, detail: detail ?? null }).catch(() => {})
+  await chrome.storage.session.set({ [STARTUP_TRACE_KEY]: entry }).catch(() => {})
+  // Best-effort live broadcast on top of the persisted copy above — a
+  // closed popup has no listener, same as broadcastStateChanged below,
+  // never itself an error.
+  chrome.runtime.sendMessage({ type: AR_MESSAGE.STARTUP_TRACE, ...entry }).catch(() => {})
+}
+
+async function getStartupTrace() {
+  const stored = await chrome.storage.session.get(STARTUP_TRACE_KEY)
+  return stored[STARTUP_TRACE_KEY] ?? null
 }
 
 /** FINAL AUTO-RUN EXECUTION BUG FIX (item 6) — the practical floor for a
@@ -166,30 +187,35 @@ const RELOAD_WAIT_TIMEOUT_MS = 4000
 async function ensureContentScriptReady(tabId) {
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content-script.js'] })
-    broadcastStartupTrace('SCRIPT_INJECTED', { tabId })
+    await recordStartupTrace('SCRIPT_INJECTED', { suppliedTabId: tabId })
   } catch (err) {
-    broadcastStartupTrace('SCRIPT_INJECTED', { tabId, failed: true, message: String(err) })
+    await recordStartupTrace('SCRIPT_INJECTED', { suppliedTabId: tabId, error: String(err) })
   }
   let resolved = await resolveConnectedSgsTab(tabId)
   if (resolved.connected) {
-    broadcastStartupTrace('PING_RETRY_OK', resolved)
+    await recordStartupTrace('PING_RETRY_OK', { suppliedTabId: tabId, resolvedTabId: resolved.tabId, resolvedPageUrl: resolved.pageUrl })
     return resolved
   }
-  broadcastStartupTrace('PING_FAILED', { tabId, afterInjection: true })
+  await recordStartupTrace('PING_FAILED', { suppliedTabId: tabId, pingResult: 'failed_after_injection', error: resolved.errorMessage ?? null })
 
   try {
     await chrome.tabs.reload(tabId)
-  } catch {
-    return { tabId: null, pageUrl: null, connected: false }
+  } catch (err) {
+    return { tabId: null, pageUrl: null, connected: false, errorCode: AR_ERROR_CODE.SGS_TAB_NOT_FOUND, errorMessage: String(err) }
   }
   await waitForTabLoadComplete(tabId, RELOAD_WAIT_TIMEOUT_MS)
   resolved = await resolveConnectedSgsTab(tabId)
   if (resolved.connected) {
-    broadcastStartupTrace('PING_RETRY_OK', { ...resolved, afterReload: true })
+    await recordStartupTrace('PING_RETRY_OK', {
+      suppliedTabId: tabId,
+      resolvedTabId: resolved.tabId,
+      resolvedPageUrl: resolved.pageUrl,
+      pingResult: 'ok_after_reload',
+    })
     return resolved
   }
-  broadcastStartupTrace('PING_FAILED', { tabId, afterReload: true })
-  return { tabId: null, pageUrl: null, connected: false }
+  await recordStartupTrace('PING_FAILED', { suppliedTabId: tabId, pingResult: 'failed_after_reload', error: resolved.errorMessage ?? null })
+  return resolved
 }
 
 /**
@@ -217,51 +243,124 @@ async function ensureContentScriptReady(tabId) {
  * page-1 processing still somehow never begins.
  */
 async function handleStart(message) {
-  debugLog('AR_START received', { tabId: message.tabId })
+  // AR_START_ENTER — the very first thing handleStart does, before even
+  // reading the message body, so a trace can prove this function was
+  // reached at all (as opposed to popup.js's OWN pre-flight tab check
+  // aborting before AR_START was ever sent — see popup.js's arRunBtn
+  // handler, which now sends AR_START unconditionally and lets THIS
+  // function be the single authority, per item "AR_START_ENTER must be
+  // the first checkpoint of the whole flow").
+  await recordStartupTrace('AR_START_ENTER', { suppliedTabId: message?.tabId ?? null })
+
+  const suppliedTabId = message?.tabId ?? null
   const { subject, classroom, targetColumn, payload, overwriteMode, pagination } = message
+  await recordStartupTrace('AR_START_INPUT_RECEIVED', { suppliedTabId, hasPagination: pagination != null })
+
   if (!isPaginationHydrationValid(pagination)) {
-    return { ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE }
+    await recordStartupTrace('PAGINATION_VALID', { suppliedTabId, abortReason: PAGINATION_HYDRATION_FAILED_MESSAGE })
+    return { ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE, errorCode: AR_ERROR_CODE.PAGINATION_INVALID }
   }
+  await recordStartupTrace('PAGINATION_VALID', { suppliedTabId })
 
-  broadcastStartupTrace('SGS_TAB_FOUND', { preferredTabId: message.tabId })
-  broadcastStartupTrace('PING_SENT', { preferredTabId: message.tabId })
-  let resolved = await resolveConnectedSgsTab(message.tabId)
-  broadcastStartupTrace(resolved.connected ? 'PING_OK' : 'PING_FAILED', resolved)
+  await recordStartupTrace('RESOLVER_BEGIN', { suppliedTabId })
+  let resolved = await resolveConnectedSgsTab(suppliedTabId)
+  await recordStartupTrace('RESOLVER_RESULT', {
+    suppliedTabId,
+    resolvedTabId: resolved.tabId,
+    resolvedPageUrl: resolved.pageUrl,
+    pingResult: resolved.connected ? 'connected' : 'not_connected',
+    error: resolved.errorMessage ?? null,
+  })
+
+  // PING_BEGIN/PING_RESULT are their OWN checkpoints (never folded into
+  // RESOLVER_BEGIN/RESULT above) because resolveConnectedSgsTab's PING is
+  // an implementation detail of tab RESOLUTION — this pair specifically
+  // answers "did the tab we ended up with actually answer PING," which
+  // stays meaningful even if a future resolver strategy stops doing its
+  // own internal ping.
+  await recordStartupTrace('PING_BEGIN', { suppliedTabId, resolvedTabId: resolved.tabId })
+  await recordStartupTrace('PING_RESULT', {
+    suppliedTabId,
+    resolvedTabId: resolved.tabId,
+    pingResult: resolved.connected ? 'OK' : 'FAILED',
+    error: resolved.errorMessage ?? null,
+  })
 
   if (!resolved.connected) {
-    resolved = await ensureContentScriptReady(message.tabId)
+    resolved = await ensureContentScriptReady(suppliedTabId)
   }
   if (!resolved.connected) {
-    debugLog('content script unavailable — refusing to start a run', { tabId: message.tabId })
-    return { ok: false, state: null, reason: CONTENT_SCRIPT_UNAVAILABLE_MESSAGE }
+    const abortReason = CONTENT_SCRIPT_UNAVAILABLE_MESSAGE
+    const errorCode = resolved.errorCode ?? AR_ERROR_CODE.SGS_TAB_NOT_FOUND
+    debugLog('content script unavailable — refusing to start a run', { tabId: suppliedTabId, errorCode })
+    await recordStartupTrace('AR_START_ABORTED', {
+      suppliedTabId,
+      resolvedTabId: resolved.tabId,
+      resolvedPageUrl: resolved.pageUrl,
+      pingResult: 'FAILED',
+      error: resolved.errorMessage ?? null,
+      abortReason: `${errorCode}: ${abortReason}`,
+    })
+    return { ok: false, state: null, reason: abortReason, errorCode }
   }
 
   const tabId = resolved.tabId
-  broadcastStartupTrace('CONTENT_SCRIPT_RECEIVED', { tabId, pageUrl: resolved.pageUrl })
   await saveVerifiedSgsTab(tabId, resolved.pageUrl)
 
-  const state = createInitialRunState({
-    runId: crypto.randomUUID(),
-    tabId,
-    subject,
-    classroom,
-    targetColumn,
-    payload,
-    overwriteMode,
-    currentPage: pagination.currentPage,
-    totalPages: pagination.totalPages,
-    totalStudentRows: pagination.totalStudentRows ?? null,
-    pageSize: pagination.pageSize ?? null,
-  })
+  let state
+  try {
+    state = createInitialRunState({
+      runId: crypto.randomUUID(),
+      tabId,
+      subject,
+      classroom,
+      targetColumn,
+      payload,
+      overwriteMode,
+      currentPage: pagination.currentPage,
+      totalPages: pagination.totalPages,
+      totalStudentRows: pagination.totalStudentRows ?? null,
+      pageSize: pagination.pageSize ?? null,
+    })
+  } catch (err) {
+    const abortReason = 'ไม่สามารถสร้างสถานะการทำงานได้'
+    await recordStartupTrace('AR_START_ABORTED', {
+      suppliedTabId,
+      resolvedTabId: tabId,
+      resolvedPageUrl: resolved.pageUrl,
+      error: String(err),
+      abortReason: `${AR_ERROR_CODE.RUN_STATE_CREATE_FAILED}: ${abortReason}`,
+    })
+    return { ok: false, state: null, reason: abortReason, errorCode: AR_ERROR_CODE.RUN_STATE_CREATE_FAILED }
+  }
   await setState(state)
-  debugLog('RUN_CREATED', { runId: state.runId })
+  await recordStartupTrace('RUN_STATE_CREATED', { suppliedTabId, resolvedTabId: tabId, resolvedPageUrl: resolved.pageUrl, runId: state.runId })
 
-  sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
-  broadcastStartupTrace('PROCESS_CURRENT_PAGE_SENT', { runId: state.runId })
-  debugLog('PROCESS_CURRENT_PAGE sent', { runId: state.runId })
+  await recordStartupTrace('KICKOFF_BEGIN', { resolvedTabId: tabId, runId: state.runId })
+  await recordStartupTrace('PROCESS_CURRENT_PAGE_SEND_BEGIN', { resolvedTabId: tabId, runId: state.runId })
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
+    await recordStartupTrace('PROCESS_CURRENT_PAGE_SEND_RESULT', { resolvedTabId: tabId, runId: state.runId, pingResult: 'OK' })
+  } catch (err) {
+    // KICKOFF failing to reach the tab is NOT fatal here — the run is
+    // already created/persisted, and content-script.js's own
+    // AR_CHECK_ACTIVE (on its next fresh load) / AR_SGS_CONTENT_READY
+    // (see handleContentReady) will still pick it up without the teacher
+    // needing to reopen the popup. Traced distinctly (KICKOFF_SEND_FAILED)
+    // so this is visible, never silently retried in a way that could
+    // ever send two competing KICKOFFs for the same run.
+    await recordStartupTrace('PROCESS_CURRENT_PAGE_SEND_RESULT', {
+      resolvedTabId: tabId,
+      runId: state.runId,
+      pingResult: 'FAILED',
+      error: String(err),
+      abortReason: `${AR_ERROR_CODE.KICKOFF_SEND_FAILED}: ไม่สามารถส่ง KICKOFF ไปยังแท็บได้ (ไม่ถือว่าล้มเหลวทั้งรัน)`,
+    })
+  }
 
   await chrome.alarms.create(watchdogAlarmName(state.runId), { delayInMinutes: WATCHDOG_DELAY_MINUTES })
 
+  await recordStartupTrace('AR_START_SUCCESS', { resolvedTabId: tabId, runId: state.runId })
   return { ok: true, state }
 }
 
@@ -346,11 +445,11 @@ async function handleCheckActive(tabId) {
  * all.
  */
 async function handleContentReady(tabId, { pageUrl }) {
-  broadcastStartupTrace('CONTENT_SCRIPT_RECEIVED', { tabId, pageUrl })
+  await recordStartupTrace('CONTENT_SCRIPT_RECEIVED', { resolvedTabId: tabId, resolvedPageUrl: pageUrl })
   const state = await getState()
   if (!shouldContentScriptProcess(state, tabId)) return { ok: true }
   sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
-  broadcastStartupTrace('PROCESS_CURRENT_PAGE_SENT', { runId: state.runId, viaReload: true })
+  await recordStartupTrace('PROCESS_CURRENT_PAGE_SEND_RESULT', { resolvedTabId: tabId, runId: state.runId, pingResult: 'OK', viaReload: true })
   return { ok: true }
 }
 
@@ -443,6 +542,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true
     case AR_MESSAGE.GET_STATE:
       void getState().then((state) => sendResponse({ state: stateForTab(state, message.tabId) }))
+      return true
+    case AR_MESSAGE.GET_STARTUP_TRACE:
+      void getStartupTrace().then((trace) => sendResponse({ trace }))
       return true
     case AR_MESSAGE.MANUAL_CONTINUE:
       void handleManualContinue(message.tabId).then(sendResponse)
