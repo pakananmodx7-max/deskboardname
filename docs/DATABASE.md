@@ -2202,6 +2202,63 @@ score is `UPDATE ... SET score = null`, never a row deletion).
   field (`'sgs_score_workspace'` vs. the implicit legacy `'assignment'`
   default) — never guessing which shape a loaded file is.
 
+## Hardening pass (pre-pilot review, before this was ever applied)
+
+A security review before the first real application of this migration
+found and fixed four gaps, all in the migration file itself (no schema
+redesign, no new tables):
+
+1. **`sgs_score_columns_update_own`'s `WITH CHECK` only re-checked
+   classroom ownership**, unlike INSERT's full three-part check — a
+   teacher could have UPDATEd their own column's `subject_id` to point
+   at a subject they don't own, or one never linked to that classroom.
+   `WITH CHECK` now mirrors INSERT's classroom-ownership + subject-
+   ownership + subject↔classroom-link check exactly (`created_by` stays
+   INSERT-only, on purpose — correcting a label must never require
+   re-proving who created the row).
+2. **`sgs_scores` identity fields were mutable** — a plain `UPDATE`
+   could have silently reassigned a score row to a different
+   `column_id`/`student_id`. A new `BEFORE UPDATE` trigger
+   (`enforce_sgs_scores_identity` /
+   `prevent_sgs_score_identity_change()`) now raises an exception if
+   either changes; only the `score` value (and anything else added
+   later) may change. This is also what makes it safe for
+   `sgs_scores_update_own` to keep NOT re-checking classroom membership
+   on UPDATE — a score can still be corrected for a student who has
+   since left the classroom, without that relaxation ever being usable
+   to re-point the row at a different student/column.
+3. **Deleting a non-empty column silently cascaded away real score
+   data.** A new `BEFORE DELETE` trigger
+   (`prevent_sgs_score_columns_delete_with_scores` /
+   `prevent_nonempty_sgs_score_column_delete()`) blocks deleting a
+   `sgs_score_columns` row that still has any `sgs_scores` rows — a
+   mistakenly-created empty column stays removable, a column with real
+   data does not. This runs as a trigger rather than only an RLS
+   predicate specifically so it also holds for anything that bypasses
+   RLS. It deliberately uses `pg_trigger_depth() <= 1` to distinguish a
+   DIRECT delete of the column (blocked when non-empty) from the SAME
+   row being removed as a side effect of `classrooms_delete_own` (0001)
+   or `delete_subject_permanently` (0022, `SECURITY DEFINER`) deleting
+   its parent classroom/subject — `ON DELETE CASCADE` referential
+   actions are themselves implemented as internal triggers, so a
+   cascaded delete observes a higher trigger depth than a standalone
+   one. Without this distinction, deleting an old classroom/subject that
+   happened to have SGS score data would have started failing, which
+   would have been a regression in already-existing, already-allowed
+   behavior — this migration must never make that fail.
+4. **Re-run safety**: every `create trigger` is now preceded by a
+   matching `drop trigger if exists`, since this will likely be run by
+   hand in the Supabase SQL Editor and plain `create trigger` (unlike
+   `create table`/`create index`, which already say `if not exists`)
+   errors on a second run. This changes nothing about what any trigger
+   does.
+
+Re-verified after these changes: the file still contains no `DROP
+TABLE`, `TRUNCATE`, `DELETE FROM`, or `UPDATE` touching any existing
+table, and no `ALTER TABLE` other than `ENABLE ROW LEVEL SECURITY` on
+the two new tables — confirmed by a mechanical keyword scan, not just by
+inspection.
+
 ## Is a migration required?
 
 **Yes** — `supabase/migrations/0023_sgs_score_workspace.sql`, **not

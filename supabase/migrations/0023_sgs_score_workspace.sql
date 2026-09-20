@@ -22,7 +22,22 @@
 --
 -- Ordering note (same rationale as every prior migration): table
 -- definitions first, in dependency order (sgs_score_columns →
--- sgs_scores), then RLS is enabled and policies are added afterward.
+-- sgs_scores), then two safety triggers (score-identity immutability,
+-- non-empty-column delete protection — see their own sections below),
+-- then RLS is enabled and policies are added afterward.
+--
+-- HARDENING PASS (pre-pilot review, before this was ever applied to a
+-- live database): every `create trigger` below is preceded by a
+-- matching `drop trigger if exists`, so re-running this file by hand in
+-- the Supabase SQL Editor (e.g. after a partial failure partway through)
+-- never errors on "trigger already exists" — `create table`/`create
+-- index` already say `if not exists`, but plain `create trigger` has no
+-- such clause in Postgres. This changes nothing about what the triggers
+-- do, only makes re-running the script safe. (`create policy` still has
+-- no re-run guard — if a first attempt got that far, re-running requires
+-- dropping the partially-created policies first; this is unchanged from
+-- before this hardening pass and is not something this pass claims to
+-- fix.)
 
 -- ==================================================
 -- sgs_score_columns
@@ -69,6 +84,7 @@ create table if not exists public.sgs_score_columns (
 create index if not exists sgs_score_columns_subject_id_idx on public.sgs_score_columns (subject_id);
 create index if not exists sgs_score_columns_classroom_id_idx on public.sgs_score_columns (classroom_id);
 
+drop trigger if exists set_sgs_score_columns_updated_at on public.sgs_score_columns;
 create trigger set_sgs_score_columns_updated_at
   before update on public.sgs_score_columns
   for each row
@@ -102,10 +118,44 @@ create table if not exists public.sgs_scores (
 create index if not exists sgs_scores_column_id_idx on public.sgs_scores (column_id);
 create index if not exists sgs_scores_student_id_idx on public.sgs_scores (student_id);
 
+drop trigger if exists set_sgs_scores_updated_at on public.sgs_scores;
 create trigger set_sgs_scores_updated_at
   before update on public.sgs_scores
   for each row
   execute function public.set_updated_at();
+
+-- ==================================================
+-- Immutable identity fields: an sgs_scores row's column_id/student_id
+-- must never change after insert. An UPDATE is only ever meant to
+-- correct the score value itself (see setSgsScore in
+-- sgs-score-workspace-service.ts, which only ever sends `score`) — this
+-- is what makes it safe for sgs_scores_update_own (below) to NOT
+-- re-check classroom membership the way sgs_scores_insert_own does: a
+-- score can still be corrected for a student who has since left the
+-- classroom, because correcting it can never silently reassign the row
+-- to a DIFFERENT student or column while that check is relaxed.
+-- ==================================================
+
+create or replace function public.prevent_sgs_score_identity_change()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.column_id <> old.column_id then
+    raise exception 'sgs_scores.column_id cannot be changed once set (row %); delete and re-insert instead', old.id;
+  end if;
+  if new.student_id <> old.student_id then
+    raise exception 'sgs_scores.student_id cannot be changed once set (row %); delete and re-insert instead', old.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_sgs_scores_identity on public.sgs_scores;
+create trigger enforce_sgs_scores_identity
+  before update on public.sgs_scores
+  for each row
+  execute function public.prevent_sgs_score_identity_change();
 
 -- ==================================================
 -- RLS: sgs_score_columns
@@ -144,6 +194,17 @@ create policy "sgs_score_columns_insert_own"
     and created_by = auth.uid()
   );
 
+-- HARDENING (pre-pilot review): USING only re-checks CURRENT classroom
+-- ownership (same as before — that alone decides which existing rows a
+-- teacher may even attempt to touch). WITH CHECK now mirrors
+-- sgs_score_columns_insert_own's full three-part shape, not just
+-- classroom ownership — without this, a teacher could UPDATE one of
+-- their own columns and repoint its subject_id at a DIFFERENT subject
+-- (one they don't own, or one never linked to that classroom), since the
+-- old WITH CHECK never re-validated subject_id/the subject_classrooms
+-- link on write. `created_by` is deliberately NOT re-checked here (only
+-- at INSERT): correcting a column's label/max score must never require
+-- forging who originally created it.
 create policy "sgs_score_columns_update_own"
   on public.sgs_score_columns for update
   using (
@@ -157,15 +218,69 @@ create policy "sgs_score_columns_update_own"
       select 1 from public.classrooms c
       where c.id = sgs_score_columns.classroom_id and c.teacher_id = auth.uid()
     )
+    and exists (
+      select 1 from public.subjects s
+      where s.id = sgs_score_columns.subject_id and s.teacher_id = auth.uid()
+    )
+    and exists (
+      select 1 from public.subject_classrooms sc
+      where sc.subject_id = sgs_score_columns.subject_id and sc.classroom_id = sgs_score_columns.classroom_id
+    )
   );
+
+-- ==================================================
+-- Safe deletion: a DIRECT, standalone delete of one sgs_score_columns
+-- row (the "ลบคอลัมน์" trash-can action in sgs-scores-tab.tsx) is only
+-- allowed while that column is still EMPTY (zero sgs_scores rows
+-- reference it). A mistakenly-created column (wrong label/max score,
+-- deleted before any score was ever entered) stays removable; a column
+-- that already holds real score data is preserved — enforced as a
+-- trigger (not just the RLS policy below) so it holds even for a
+-- service-role/admin connection that bypasses RLS entirely, not only for
+-- a teacher's own authenticated session.
+--
+-- CASCADE SAFETY: this must NOT block classrooms_delete_own (0001) or
+-- delete_subject_permanently (0022, SECURITY DEFINER — runs with
+-- elevated privileges that bypass RLS entirely, so an RLS-only version
+-- of this rule would have no effect there anyway) from deleting a
+-- classroom/subject that happens to have SGS score data — those are
+-- already-existing, already-allowed "delete everything under this
+-- classroom/subject" operations that assignments/attendance/etc. already
+-- cascade away under unconditionally, and this migration must never make
+-- that existing production behavior start failing. `pg_trigger_depth()`
+-- is what tells the two cases apart: `ON DELETE CASCADE` referential
+-- actions are themselves implemented as internal triggers, so this
+-- BEFORE DELETE trigger observes depth 1 (only itself on the stack) for
+-- a direct `delete from sgs_score_columns`, but a HIGHER depth when it
+-- is firing because a `classrooms`/`subjects` row deletion cascaded into
+-- it — the guard below only ever raises for the depth-1, direct case.
+-- ==================================================
+
+create or replace function public.prevent_nonempty_sgs_score_column_delete()
+returns trigger
+language plpgsql
+as $$
+begin
+  if pg_trigger_depth() <= 1 and exists (select 1 from public.sgs_scores where column_id = old.id) then
+    raise exception 'cannot delete sgs_score_column % — it already has sgs_scores rows; only an empty column may be deleted', old.id;
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists prevent_sgs_score_columns_delete_with_scores on public.sgs_score_columns;
+create trigger prevent_sgs_score_columns_delete_with_scores
+  before delete on public.sgs_score_columns
+  for each row
+  execute function public.prevent_nonempty_sgs_score_column_delete();
 
 -- Unlike assignments (deliberately no delete policy — historical academic
 -- records), an sgs_score_column is teacher-defined CONFIGURATION mirroring
--- whatever the real SGS page's columns are — a mistakenly-created column
--- (wrong label/max score, added before any score was entered) must be
--- removable. Deleting a column cascades to its sgs_scores rows (this is
--- the one intentional exception to "no hard delete" in this schema,
--- scoped to a config row, not a score value on its own).
+-- whatever the real SGS page's columns are — a mistakenly-created EMPTY
+-- column must be removable. The trigger above is what actually stops a
+-- non-empty column from being deleted (never just the app-layer UI); this
+-- policy only continues to gate WHICH columns a teacher may attempt to
+-- delete at all (their own classroom's), same as before.
 create policy "sgs_score_columns_delete_own"
   on public.sgs_score_columns for delete
   using (
