@@ -2263,3 +2263,82 @@ inspection.
 
 **Yes** — `supabase/migrations/0023_sgs_score_workspace.sql`, **not
 applied automatically**. 0001–0022 are untouched.
+
+# Phase 17: production incident — an SGS score column with no real score in it could not be deleted (0024)
+
+## Bug report
+
+Live UI: a column named "ช่อง 10" whose cells were all blank/— failed to
+delete with "ไม่สามารถลบคอลัมน์ได้", while a different column named "10"
+holding a real score correctly stayed protected.
+
+## Root cause
+
+`prevent_nonempty_sgs_score_column_delete()` (0023) judged a column
+"non-empty" purely by whether ANY `sgs_scores` row referenced it:
+
+```sql
+exists (select 1 from public.sgs_scores where column_id = old.id)
+```
+
+But `sgs_scores.score IS NULL` is itself a real, intentional state — "no
+score entered yet," distinct from an explicit 0 (0023's own doc comment
+on the column). A roster student can end up with a NULL row for a column
+nobody ever actually scored (every column write path upserts one row per
+student), so a column with zero *real* scores could still have several
+all-NULL rows, and the old check treated that identically to a column
+someone had actually filled in.
+
+## Fix
+
+`supabase/migrations/0024_fix_sgs_score_column_delete_guard.sql` replaces
+the function body's condition with:
+
+```sql
+exists (
+  select 1
+  from public.sgs_scores
+  where column_id = old.id
+    and score is not null
+)
+```
+
+A column may now be deleted when it has zero `sgs_scores` rows, or when
+every row has `score IS NULL`. It is still blocked the moment at least
+one row has `score IS NOT NULL` — **0 counts as a real score** (the
+table's own `check (score is null or score >= 0)` already treats 0 as a
+legitimate entered value) and correctly continues to block deletion.
+`create or replace function` is the entire fix: the trigger created in
+0023 already calls this function by name, so no `drop trigger`/`create
+trigger` is needed. The `pg_trigger_depth() <= 1` guard (a
+classroom/subject cascade delete is never blocked here) and the
+`sgs_scores.column_id on delete cascade` FK (a deleted column's own
+placeholder rows are removed with it) are both unchanged from 0023.
+
+Nothing about `assignments`/`assignment_submissions` was touched —
+normal assignment grades have no delete-guard trigger at all (0006).
+
+## Regression test (new — not a migration, not applied automatically)
+
+- **`supabase/tests/0024_fix_sgs_score_column_delete_guard.sql`** — B1
+  (zero rows -> delete allowed), B2 (all-NULL rows -> delete allowed,
+  and their placeholder rows are cascade-removed), B3 (a row scored 0 ->
+  delete blocked), B4 (a row with a positive score -> delete blocked),
+  B6 (a whole-classroom delete still cascades away a column that DOES
+  have a real score — the depth guard is unaffected by this fix).
+
+## Manual SQL patch for the already-live database
+
+Since migration files in this project are not applied automatically, the
+exact statement to run once against the live Supabase project (via the
+SQL Editor, with sufficient privilege to redefine the function) is the
+`create or replace function` block above, reproduced in full in
+`supabase/migrations/0024_fix_sgs_score_column_delete_guard.sql`. It is
+non-destructive: it only redefines a `plpgsql` function body, changes no
+table, column, row, or existing trigger/policy definition, and takes
+effect on the very next `DELETE` against `sgs_score_columns`.
+
+## Is a new migration required?
+
+**Yes** — `supabase/migrations/0024_fix_sgs_score_column_delete_guard.sql`,
+**not applied automatically**. 0001–0023 are untouched.
