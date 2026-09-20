@@ -25,6 +25,11 @@ import {
   watchdogAlarmName,
   withConfirmedContext,
   withPendingAdvance,
+  classifyContentReady,
+  CONTENT_READY_IDLE,
+  CONTENT_READY_RESUME,
+  isRunStatePersistedCorrectly,
+  RUN_STATE_PERSIST_FAILED_MESSAGE,
 } from '../src/lib/run-orchestrator'
 
 function baseInit() {
@@ -392,6 +397,90 @@ describe('final 32-student summary persists (item 7): the reducer never discards
 
     const aborted = applyAbort(state, 'reason')
     expect(aborted.summary.written).toBe(32)
+  })
+})
+
+describe('STARTUP-ORDER FIX — the exact live race: an early CONTENT_READY must never prevent a later AR_START from starting page 1', () => {
+  const TAB_ID = 2121095410
+
+  function startedRun() {
+    return createInitialRunState({ ...baseInit(), runId: 'run-live', tabId: TAB_ID, currentPage: 1, totalPages: 4, totalStudentRows: 32, pageSize: 10 })
+  }
+
+  describe('sequence A: CONTENT_READY arrives FIRST, with no run yet — idle, never an error — then Full Auto still starts page 1', () => {
+    it('with no persisted run at all, CONTENT_READY classifies as IDLE (never "resume", never a failure)', () => {
+      expect(classifyContentReady(null, TAB_ID)).toBe(CONTENT_READY_IDLE)
+      expect(classifyContentReady(undefined, TAB_ID)).toBe(CONTENT_READY_IDLE)
+    })
+
+    it('that idle CONTENT_READY leaves NOTHING behind that could block the AR_START that follows it — the run created afterwards is a completely normal, running, page-1 run', () => {
+      // The idle event is a pure classification with no state transition
+      // of its own — there is literally no state for it to damage.
+      expect(classifyContentReady(null, TAB_ID)).toBe(CONTENT_READY_IDLE)
+
+      const state = startedRun()
+      expect(state.status).toBe(AUTO_RUN_STATUS.RUNNING)
+      expect(state.tabId).toBe(TAB_ID)
+      expect(state.currentPage).toBe(1)
+      expect(state.totalStudentRows).toBe(32)
+      expect(state.allStudentResults.length).toBe(0)
+
+      // ...and that run is immediately dispatchable: its readback gate
+      // passes, so KICKOFF is sent and page 1 processes.
+      expect(isRunStatePersistedCorrectly(state, state.runId)).toBe(true)
+      expect(shouldContentScriptProcess(state, TAB_ID)).toBe(true)
+    })
+
+    it('an idle CONTENT_READY for a DIFFERENT tab than the run that later starts is still idle, and still harmless', () => {
+      expect(classifyContentReady(null, 999)).toBe(CONTENT_READY_IDLE)
+      const state = startedRun()
+      expect(classifyContentReady(state, 999)).toBe(CONTENT_READY_IDLE)
+      expect(classifyContentReady(state, TAB_ID)).toBe(CONTENT_READY_RESUME)
+    })
+  })
+
+  describe('sequence B: AR_START persists the run FIRST, then CONTENT_READY arrives after an SGS reload — resume', () => {
+    it('an active approved run for THIS tab classifies as RESUME, so background re-dispatches PROCESS_CURRENT_PAGE', () => {
+      expect(classifyContentReady(startedRun(), TAB_ID)).toBe(CONTENT_READY_RESUME)
+    })
+
+    it('a run that has already finished (completed/stopped/aborted) never resumes on a later CONTENT_READY', () => {
+      expect(classifyContentReady(applyCompleted(startedRun()), TAB_ID)).toBe(CONTENT_READY_IDLE)
+      expect(classifyContentReady(applyStopped(startedRun()), TAB_ID)).toBe(CONTENT_READY_IDLE)
+      expect(classifyContentReady(applyAbort(startedRun(), 'ห้องเรียนไม่ตรงกัน'), TAB_ID)).toBe(CONTENT_READY_IDLE)
+    })
+
+    it('a run sitting in a manual pause is NOT auto-resumed by a page reload — only an explicit "ดำเนินการต่อ" resumes it', () => {
+      const paused = applyManualPause(startedRun(), { reason: 'no confirmed control', expectedNextPage: 2 })
+      expect(classifyContentReady(paused, TAB_ID)).toBe(CONTENT_READY_IDLE)
+      expect(classifyContentReady(applyResume(paused), TAB_ID)).toBe(CONTENT_READY_RESUME)
+    })
+  })
+
+  describe('sequence C: run persistence fails — no KICKOFF, explicit RUN_STATE_PERSIST_FAILED', () => {
+    it('a readback that returns nothing at all fails the gate, so KICKOFF is never dispatched', () => {
+      expect(isRunStatePersistedCorrectly(null, 'run-live')).toBe(false)
+      expect(isRunStatePersistedCorrectly(undefined, 'run-live')).toBe(false)
+    })
+
+    it('a readback that returns a DIFFERENT run (a stale/overwritten write) fails the gate', () => {
+      const other = createInitialRunState({ ...baseInit(), runId: 'run-other', tabId: TAB_ID, currentPage: 1, totalPages: 4 })
+      expect(isRunStatePersistedCorrectly(other, 'run-live')).toBe(false)
+    })
+
+    it('a readback of the right run but no longer RUNNING fails the gate', () => {
+      const aborted = applyAbort(startedRun(), 'ห้องเรียนไม่ตรงกัน')
+      expect(isRunStatePersistedCorrectly(aborted, aborted.runId)).toBe(false)
+    })
+
+    it('only the exact run just written, still RUNNING, passes the gate', () => {
+      const state = startedRun()
+      expect(isRunStatePersistedCorrectly(state, state.runId)).toBe(true)
+    })
+
+    it('RUN_STATE_PERSIST_FAILED_MESSAGE is the one shared refusal string background.js appends the storage error to', () => {
+      expect(RUN_STATE_PERSIST_FAILED_MESSAGE).toBe('บันทึกสถานะการรันไม่สำเร็จ จึงไม่เริ่มส่งคะแนน')
+    })
   })
 })
 

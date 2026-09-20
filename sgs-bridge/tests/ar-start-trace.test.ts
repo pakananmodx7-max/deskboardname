@@ -231,6 +231,12 @@ describe('TRACE THE EXACT AR_START FAILURE — every checkpoint, in order', () =
       'PING_BEGIN',
       'PING_RESULT',
       'RUN_STATE_CREATED',
+      // STARTUP-ORDER FIX — the run state is persisted AND read back
+      // (verified to be this exact run, still running) before KICKOFF is
+      // ever dispatched, so a content script can never wake to find no
+      // run and silently stop at 0/32.
+      'RUN_STATE_PERSISTED',
+      'RUN_STATE_READBACK_OK',
       'KICKOFF_BEGIN',
       'PROCESS_CURRENT_PAGE_SEND_BEGIN',
       'PROCESS_CURRENT_PAGE_SEND_RESULT',
@@ -397,21 +403,103 @@ describe('content-script PROCESS_CURRENT_PAGE checkpoints reach Section 7', () =
     expect(detail.resolvedTabId).toBe(VERIFIED_TAB_ID)
   })
 
-  it('handleContentReady no longer returns silently when it declines to dispatch — the reason is recorded', async () => {
+  it('STARTUP-ORDER FIX (sequence A): handleContentReady with no run yet records CONTENT_READY_IDLE — still never silent, but informational (a `note`, never an `abortReason`), dispatching no KICKOFF and reporting no failure', async () => {
     const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
     vi.stubGlobal('chrome', harness.stub)
     vi.resetModules()
     await import('../src/background.js')
     const listener = harness.messageListeners[0]
 
-    // No run has been created, so shouldContentScriptProcess is false.
-    await new Promise((resolve) => {
+    // No run has been created, so classifyContentReady is IDLE.
+    const response = await new Promise((resolve) => {
       listener({ type: 'AR_SGS_CONTENT_READY', pageUrl: VERIFIED_PAGE_URL }, { tab: { id: VERIFIED_TAB_ID } }, resolve)
     })
 
     expect(tracedSteps(harness)).toContain('CONTENT_SCRIPT_RECEIVED')
-    expect(tracedSteps(harness)).toContain('CONTENT_READY_NO_ACTIVE_RUN')
-    expect(String(traceDetail(harness, 'CONTENT_READY_NO_ACTIVE_RUN')?.abortReason)).toContain('KICKOFF')
+    expect(tracedSteps(harness)).toContain('CONTENT_READY_IDLE')
+    expect(tracedSteps(harness)).not.toContain('CONTENT_READY_NO_ACTIVE_RUN')
+
+    // An idle content script is NOT a failure: no abortReason, no
+    // kickoff, and an ok response.
+    const detail = traceDetail(harness, 'CONTENT_READY_IDLE')
+    expect(detail?.abortReason).toBeUndefined()
+    expect(String(detail?.note)).toContain('ยังไม่มีการสั่งเริ่มรัน')
+    expect(response).toEqual({ ok: true, idle: true })
+    expect(tracedSteps(harness)).not.toContain('KICKOFF_BEGIN')
+  })
+
+  it('STARTUP-ORDER FIX (sequence A, the live race): an idle CONTENT_READY first does NOT stop the AR_START that follows it from starting page 1', async () => {
+    const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
+    vi.stubGlobal('chrome', harness.stub)
+    vi.resetModules()
+    await import('../src/background.js')
+    const listener = harness.messageListeners[0]
+
+    // 1. CONTENT_READY arrives FIRST, with no run — idle, no error.
+    await new Promise((resolve) => {
+      listener({ type: 'AR_SGS_CONTENT_READY', pageUrl: VERIFIED_PAGE_URL }, { tab: { id: VERIFIED_TAB_ID } }, resolve)
+    })
+    expect(tracedSteps(harness)).toContain('CONTENT_READY_IDLE')
+
+    // 2. The teacher then clicks Full Auto — which must still succeed
+    //    all the way through to a dispatched page-1 kickoff.
+    const response = await runHandleStart(harness.stub, harness, validStartMessage())
+
+    expect(response.ok).toBe(true)
+    const steps = tracedSteps(harness)
+    expect(steps).toContain('RUN_STATE_PERSISTED')
+    expect(steps).toContain('RUN_STATE_READBACK_OK')
+    expect(steps).toContain('KICKOFF_BEGIN')
+    expect(traceDetail(harness, 'PROCESS_CURRENT_PAGE_SEND_RESULT')?.pingResult).toBe('OK')
+    expect(steps).toContain('AR_START_SUCCESS')
+  })
+
+  it('STARTUP-ORDER FIX (sequence B): once a run IS active for the tab, a later CONTENT_READY (an SGS reload/postback) resumes it by dispatching KICKOFF', async () => {
+    const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
+    vi.stubGlobal('chrome', harness.stub)
+    vi.resetModules()
+    await import('../src/background.js')
+    const listener = harness.messageListeners[0]
+
+    await runHandleStart(harness.stub, harness, validStartMessage())
+    harness.broadcasts.length = 0
+
+    const response = await new Promise((resolve) => {
+      listener({ type: 'AR_SGS_CONTENT_READY', pageUrl: VERIFIED_PAGE_URL }, { tab: { id: VERIFIED_TAB_ID } }, resolve)
+    })
+
+    const steps = tracedSteps(harness)
+    expect(steps).toContain('CONTENT_SCRIPT_RECEIVED')
+    expect(steps).toContain('KICKOFF_BEGIN')
+    expect(steps).not.toContain('CONTENT_READY_IDLE')
+    expect(response).toEqual({ ok: true, idle: false })
+  })
+
+  it('STARTUP-ORDER FIX (sequence C): when the persisted run cannot be read back, NO kickoff is dispatched and the refusal names the exact readback detail', async () => {
+    const harness = createChromeStub({ pingResponders: { [VERIFIED_TAB_ID]: { ok: true } } })
+    vi.stubGlobal('chrome', harness.stub)
+    vi.resetModules()
+    await import('../src/background.js')
+
+    // Model a storage layer that accepts the write but hands back
+    // nothing for the run key — the readback gate must catch it.
+    const realGet = harness.stub.storage.session.get
+    harness.stub.storage.session.get = vi.fn(async (key) => {
+      if (key === 'sgsBridgeActiveAutoRun') return {}
+      return realGet(key)
+    })
+
+    const response = await runHandleStart(harness.stub, harness, validStartMessage())
+
+    expect(response.ok).toBe(false)
+    expect(response.errorCode).toBe('RUN_STATE_PERSIST_FAILED')
+    expect(String(response.reason)).toContain('บันทึกสถานะการรันไม่สำเร็จ')
+    expect(String(response.reason)).toContain('readback runId=null')
+    const steps = tracedSteps(harness)
+    expect(steps).toContain('RUN_STATE_PERSISTED')
+    expect(steps).not.toContain('RUN_STATE_READBACK_OK')
+    expect(steps).not.toContain('KICKOFF_BEGIN')
+    expect(steps).not.toContain('AR_START_SUCCESS')
   })
 })
 

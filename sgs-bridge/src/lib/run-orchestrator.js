@@ -60,9 +60,20 @@ export const AR_ERROR_CODE = {
   MESSAGE_PORT_CLOSED: 'MESSAGE_PORT_CLOSED',
   CONTENT_RECEIVER_MISSING: 'CONTENT_RECEIVER_MISSING',
   RUN_STATE_CREATE_FAILED: 'RUN_STATE_CREATE_FAILED',
+  /** STARTUP-ORDER FIX — the run was created but could not be persisted
+   * to, or read back from, chrome.storage.session. Distinct from
+   * RUN_STATE_CREATE_FAILED (which never got as far as a state object). */
+  RUN_STATE_PERSIST_FAILED: 'RUN_STATE_PERSIST_FAILED',
   KICKOFF_SEND_FAILED: 'KICKOFF_SEND_FAILED',
   PAGINATION_INVALID: 'PAGINATION_INVALID',
 }
+
+/** STARTUP-ORDER FIX — shown when a run state was created but could NOT
+ * be read back afterwards. AR_KICKOFF is never dispatched in that case:
+ * a content script that woke up and found no persisted run would do
+ * nothing at all, silently, forever. background.js appends the storage
+ * layer's own error text to this. */
+export const RUN_STATE_PERSIST_FAILED_MESSAGE = 'บันทึกสถานะการรันไม่สำเร็จ จึงไม่เริ่มส่งคะแนน'
 
 export const AUTO_RUN_STATUS = {
   RUNNING: 'running',
@@ -277,6 +288,36 @@ export function runIdFromWatchdogAlarmName(alarmName) {
  * its first AR_PAGE_PROGRESS is simply taking a while and must never be
  * aborted by this watchdog, however long page 1 itself takes.
  */
+/**
+ * STARTUP-ORDER FIX — a content script announcing itself is NEVER an
+ * error on its own. A fresh SGS page load, a reload, or an ASP.NET
+ * postback all fire AR_SGS_CONTENT_READY regardless of whether a run
+ * exists yet, and a teacher who simply opened SGS before ever clicking
+ * "เริ่มส่งครบทั้งห้อง" is the completely normal case — the live trace's
+ * own CONTENT_READY_NO_ACTIVE_RUN/"ไม่ส่ง KICKOFF" wording made that
+ * ordinary idle moment read as a failure. This classifies the two real
+ * outcomes so background.js can record the idle one as purely
+ * informational (never an abort, never a KICKOFF) while still resuming a
+ * genuinely active run after a navigation.
+ */
+export const CONTENT_READY_IDLE = 'idle'
+export const CONTENT_READY_RESUME = 'resume'
+
+export function classifyContentReady(state, tabId) {
+  return shouldContentScriptProcess(state, tabId) ? CONTENT_READY_RESUME : CONTENT_READY_IDLE
+}
+
+/**
+ * STARTUP-ORDER FIX — the readback gate between "persisted the run" and
+ * "dispatched KICKOFF": the state chrome.storage.session hands BACK must
+ * be the very run just written (same runId) and must still be RUNNING.
+ * Anything else means the content script would wake to find no usable
+ * run, so KICKOFF must not be sent at all.
+ */
+export function isRunStatePersistedCorrectly(readBackState, expectedRunId) {
+  return Boolean(readBackState && expectedRunId && readBackState.runId === expectedRunId && readBackState.status === AUTO_RUN_STATUS.RUNNING)
+}
+
 export function shouldAbortForMissingProcessing(state, alarmRunId) {
   return Boolean(state && alarmRunId && state.runId === alarmRunId && state.status === AUTO_RUN_STATUS.RUNNING && !state.hasStartedProcessing)
 }

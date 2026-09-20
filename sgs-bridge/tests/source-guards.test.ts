@@ -1071,7 +1071,8 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     expect(fn).toMatch(
       /if \(!isPaginationHydrationValid\(pagination\)\) \{[\s\S]{0,220}return \{ ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE, errorCode: AR_ERROR_CODE\.PAGINATION_INVALID \}/,
     )
-    expect(source).toContain("isPaginationHydrationValid,\n  PAGINATION_HYDRATION_FAILED_MESSAGE,")
+    expect(source).toContain('isPaginationHydrationValid,')
+    expect(source).toContain('PAGINATION_HYDRATION_FAILED_MESSAGE,')
   })
 
   it('handleStart passes the CALLER\'s own fresh pagination fields straight through to createInitialRunState — never re-deriving or defaulting currentPage/totalPages itself (only the optional totalStudentRows/pageSize fall back to null)', () => {
@@ -1234,14 +1235,17 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
   it('FINAL SGS AUTO-RUN FIX (item 5 — "active run resumes after reload, no popup reopen required"): AR_SGS_CONTENT_READY is routed to handleContentReady, which dispatches AR_KICKOFF ONLY when shouldContentScriptProcess says this run is still approved+active+running for THIS exact tab — never for an unrelated/finished run, and never requiring popup to be open at all (this handler is driven purely by the content script\'s own message, with no popup involved anywhere in its call chain)', () => {
     expect(source).toMatch(/case AR_MESSAGE\.CONTENT_READY:\s*\n\s*void handleContentReady\(senderTabId, message\)\.then\(sendResponse\)/)
     const fn = source.slice(source.indexOf('async function handleContentReady'), source.indexOf('async function handlePendingAdvance'))
-    expect(fn).toContain('shouldContentScriptProcess(state, tabId)')
-    // The gate is unchanged — it still refuses to dispatch for anything
-    // shouldContentScriptProcess rejects. It just no longer returns
-    // SILENTLY: declining now records CONTENT_READY_NO_ACTIVE_RUN first,
-    // so the trace never dead-ends on CONTENT_SCRIPT_RECEIVED with
-    // nothing to explain it.
-    expect(fn).toMatch(/if \(!shouldContentScriptProcess\(state, tabId\)\) \{[\s\S]{0,900}return \{ ok: true \}\s*\n\s*\}/)
-    expect(fn).toContain("recordStartupTrace('CONTENT_READY_NO_ACTIVE_RUN'")
+    expect(fn).toContain('classifyContentReady(state, tabId)')
+    // The gate itself is unchanged — classifyContentReady is a thin pure
+    // wrapper over the SAME shouldContentScriptProcess rule, so anything
+    // that rule rejects still never gets a KICKOFF. Declining is still
+    // never SILENT either; it is simply recorded as the informational
+    // CONTENT_READY_IDLE (a `note`) rather than the old
+    // CONTENT_READY_NO_ACTIVE_RUN/"ไม่ส่ง KICKOFF" abortReason, which made
+    // an ordinary idle moment read as the cause of a failed run.
+    expect(fn).toMatch(/if \(classifyContentReady\(state, tabId\) === CONTENT_READY_IDLE\) \{[\s\S]{0,1400}return \{ ok: true, idle: true \}\s*\n\s*\}/)
+    expect(fn).toContain("recordStartupTrace('CONTENT_READY_IDLE'")
+    expect(fn).not.toContain('CONTENT_READY_NO_ACTIVE_RUN')
     expect(fn).toContain('sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })')
   })
 
@@ -1283,8 +1287,12 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     for (const fnName of ['handleCheckActive', 'handlePendingAdvance', 'handleAdvanceConfirmed', 'handlePageProgress', 'handleDebugEvent', 'handlePageComplete', 'handleManualPause', 'handleAbort', 'handleStopped', 'handleComplete', 'handleContentReady']) {
       const start = source.indexOf(`async function ${fnName}`)
       expect(start).toBeGreaterThan(-1)
-      const fn = source.slice(start, start + 350)
-      expect(fn).toMatch(/state\.tabId (!==|===) tabId|shouldContentScriptProcess\(state, tabId\)/)
+      // Bound each slice at the NEXT function declaration so a handler's
+      // own (sometimes long) inline comments can never push its guard out
+      // of view, and so one handler's guard is never mistaken for another's.
+      const nextFn = source.indexOf('\nasync function ', start + 1)
+      const fn = source.slice(start, nextFn === -1 ? start + 900 : nextFn)
+      expect(fn).toMatch(/state\.tabId (!==|===) tabId|shouldContentScriptProcess\(state, tabId\)|classifyContentReady\(state, tabId\)/)
     }
   })
 

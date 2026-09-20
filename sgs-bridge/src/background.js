@@ -36,11 +36,15 @@ import {
   applyResume,
   applyStopped,
   applyStopRequested,
+  classifyContentReady,
   clearPendingAdvance,
+  CONTENT_READY_IDLE,
   CONTENT_SCRIPT_UNAVAILABLE_MESSAGE,
   createInitialRunState,
   isPaginationHydrationValid,
+  isRunStatePersistedCorrectly,
   PAGINATION_HYDRATION_FAILED_MESSAGE,
+  RUN_STATE_PERSIST_FAILED_MESSAGE,
   runIdFromWatchdogAlarmName,
   shouldAbortForMissingProcessing,
   shouldContentScriptProcess,
@@ -333,8 +337,54 @@ async function handleStart(message) {
     })
     return { ok: false, state: null, reason: abortReason, errorCode: AR_ERROR_CODE.RUN_STATE_CREATE_FAILED }
   }
-  await setState(state)
   await recordStartupTrace('RUN_STATE_CREATED', { suppliedTabId, resolvedTabId: tabId, resolvedPageUrl: resolved.pageUrl, runId: state.runId })
+
+  // STARTUP-ORDER FIX — persist, then READ BACK and verify BEFORE any
+  // KICKOFF. A content script that wakes to find no persisted run does
+  // nothing at all (exactly the live 0/32 shape), so a write that did
+  // not survive must refuse loudly here — with the storage layer's own
+  // error text — rather than hand the teacher a run that can never move.
+  try {
+    await setState(state)
+    await recordStartupTrace('RUN_STATE_PERSISTED', { resolvedTabId: tabId, runId: state.runId })
+  } catch (err) {
+    await recordStartupTrace('AR_START_ABORTED', {
+      resolvedTabId: tabId,
+      runId: state.runId,
+      error: String(err),
+      abortReason: `${AR_ERROR_CODE.RUN_STATE_PERSIST_FAILED}: ${RUN_STATE_PERSIST_FAILED_MESSAGE}`,
+    })
+    return {
+      ok: false,
+      state: null,
+      reason: `${RUN_STATE_PERSIST_FAILED_MESSAGE}: ${String(err)}`,
+      errorCode: AR_ERROR_CODE.RUN_STATE_PERSIST_FAILED,
+    }
+  }
+
+  let readBack = null
+  let readBackError = null
+  try {
+    readBack = await getState()
+  } catch (err) {
+    readBackError = String(err)
+  }
+  if (!isRunStatePersistedCorrectly(readBack, state.runId)) {
+    const detail = readBackError ?? `readback runId=${readBack?.runId ?? 'null'} status=${readBack?.status ?? 'null'}`
+    await recordStartupTrace('AR_START_ABORTED', {
+      resolvedTabId: tabId,
+      runId: state.runId,
+      error: detail,
+      abortReason: `${AR_ERROR_CODE.RUN_STATE_PERSIST_FAILED}: ${RUN_STATE_PERSIST_FAILED_MESSAGE}`,
+    })
+    return {
+      ok: false,
+      state: null,
+      reason: `${RUN_STATE_PERSIST_FAILED_MESSAGE}: ${detail}`,
+      errorCode: AR_ERROR_CODE.RUN_STATE_PERSIST_FAILED,
+    }
+  }
+  await recordStartupTrace('RUN_STATE_READBACK_OK', { resolvedTabId: tabId, runId: state.runId })
 
   await recordStartupTrace('KICKOFF_BEGIN', { resolvedTabId: tabId, runId: state.runId })
   await recordStartupTrace('PROCESS_CURRENT_PAGE_SEND_BEGIN', { resolvedTabId: tabId, runId: state.runId })
@@ -447,26 +497,32 @@ async function handleCheckActive(tabId) {
 async function handleContentReady(tabId, { pageUrl }) {
   await recordStartupTrace('CONTENT_SCRIPT_RECEIVED', { resolvedTabId: tabId, resolvedPageUrl: pageUrl })
   const state = await getState()
-  if (!shouldContentScriptProcess(state, tabId)) {
-    // "Never allow the handler to receive PROCESS_CURRENT_PAGE and then
-    // silently stop" applies to this branch too: it is the very first
-    // statement after CONTENT_SCRIPT_RECEIVED, and it used to return with
-    // no checkpoint at all — leaving the trace stuck on
-    // CONTENT_SCRIPT_RECEIVED with nothing to say why. Declining to
-    // dispatch is a legitimate outcome (no run, a finished run, or a run
-    // belonging to another tab), but it is never silent.
-    await recordStartupTrace('CONTENT_READY_NO_ACTIVE_RUN', {
+  if (classifyContentReady(state, tabId) === CONTENT_READY_IDLE) {
+    // STARTUP-ORDER FIX — a content script announcing itself with no
+    // active run for its tab is the NORMAL case (a teacher opening or
+    // reloading SGS long before clicking "เริ่มส่งครบทั้งห้อง"), never a
+    // failure. It stays fully visible — "declining to dispatch is a
+    // legitimate outcome, but never silent" — yet it is recorded as an
+    // informational `note`, NOT an `abortReason`: the previous
+    // no-active-run wording ("ไม่ส่ง KICKOFF...") made this
+    // ordinary idle moment read as the cause of a failed run. It never
+    // aborts, never dispatches a KICKOFF, and — critically — never
+    // blocks or pre-empts a LATER AR_START, which creates, persists,
+    // verifies and dispatches its own run entirely independently of
+    // this event (see handleStart).
+    await recordStartupTrace('CONTENT_READY_IDLE', {
       resolvedTabId: tabId,
       resolvedPageUrl: pageUrl,
-      abortReason: state
-        ? `ไม่ส่ง KICKOFF: สถานะรัน status=${state.status} approved=${state.approved} active=${state.active} tabId=${state.tabId}`
-        : 'ไม่ส่ง KICKOFF: ยังไม่มีสถานะรันที่บันทึกไว้',
+      note: state
+        ? `ยังไม่เริ่มประมวลผล: สถานะรัน status=${state.status} approved=${state.approved} active=${state.active} tabId=${state.tabId}`
+        : 'ยังไม่มีการสั่งเริ่มรัน (ปกติ) — ตัวเชื่อมหน้าพร้อมแล้ว รอผู้ใช้กดเริ่มส่งครบทั้งห้อง',
     })
-    return { ok: true }
+    return { ok: true, idle: true }
   }
+  await recordStartupTrace('KICKOFF_BEGIN', { resolvedTabId: tabId, runId: state.runId, viaReload: true })
   sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
   await recordStartupTrace('PROCESS_CURRENT_PAGE_SEND_RESULT', { resolvedTabId: tabId, runId: state.runId, pingResult: 'OK', viaReload: true })
-  return { ok: true }
+  return { ok: true, idle: false }
 }
 
 /**
