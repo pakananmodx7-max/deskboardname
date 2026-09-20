@@ -71,6 +71,30 @@ const ASPNET_PAGER_SUFFIX_LIST = [
   { role: PAGINATION_ROLE.LAST, suffix: ASPNET_PAGER_ID_SUFFIXES.LAST },
 ]
 
+/**
+ * LIVE DOM EVIDENCE — the two VALUE controls (never clickable roles, so
+ * they're never part of PAGINATION_ROLE) confirmed on the real page:
+ * `...__CurrentPage` (the current page number input) and
+ * `...__PageSize` (rows-per-page input), sharing the SAME
+ * `TblTranscriptsPagination` namespace/prefix as First/Previous/Next/
+ * Last. Kept separate from ASPNET_PAGER_ID_SUFFIXES since these two are
+ * read directly (content-diagnostic.js's inspectPaginationControls), not
+ * classified into a click role.
+ */
+export const ASPNET_PAGINATION_VALUE_SUFFIXES = {
+  CURRENT_PAGE: 'CurrentPage',
+  PAGE_SIZE: 'PageSize',
+}
+
+const ASPNET_ALL_PAGINATION_SUFFIXES = [
+  { key: 'first', suffix: ASPNET_PAGER_ID_SUFFIXES.FIRST },
+  { key: 'previous', suffix: ASPNET_PAGER_ID_SUFFIXES.PREV },
+  { key: 'next', suffix: ASPNET_PAGER_ID_SUFFIXES.NEXT },
+  { key: 'last', suffix: ASPNET_PAGER_ID_SUFFIXES.LAST },
+  { key: 'currentPage', suffix: ASPNET_PAGINATION_VALUE_SUFFIXES.CURRENT_PAGE },
+  { key: 'pageSize', suffix: ASPNET_PAGINATION_VALUE_SUFFIXES.PAGE_SIZE },
+]
+
 function idEndsWithSuffix(id, suffix) {
   return typeof id === 'string' && id.length >= suffix.length && id.toLowerCase().endsWith(suffix.toLowerCase())
 }
@@ -149,22 +173,10 @@ export function classifyPaginationCandidate(candidate) {
  * @param {Array<{tag: string, id: string|null, name: string|null, type: string|null, text: string, onclick: string|null, href: string|null, disabled: boolean}>} candidates
  * @returns {{control: object|null, confidence: 'high'|'medium'|'low'|'none', reason: string}}
  */
-export function findSgsNextPageControl(candidates) {
-  const confidenceRank = { high: 3, medium: 2, low: 1, none: 0 }
-  let best = null
-  let bestClassification = { role: PAGINATION_ROLE.UNKNOWN, confidence: 'none', reason: 'no candidates given' }
-
-  for (const candidate of candidates) {
-    if (candidate.disabled) continue
-    const classification = classifyPaginationCandidate(candidate)
-    if (classification.role !== PAGINATION_ROLE.NEXT) continue
-    if (!best || confidenceRank[classification.confidence] > confidenceRank[bestClassification.confidence]) {
-      best = candidate
-      bestClassification = classification
-    }
-  }
-
-  return { control: best, confidence: bestClassification.confidence, reason: bestClassification.reason }
+export function findSgsNextPageControl(candidates, currentPageDomOrder) {
+  const set = identifyPaginationControlSet(candidates, currentPageDomOrder)
+  if (set.next) return { control: set.next.control, confidence: set.next.confidence, reason: set.next.reason }
+  return { control: null, confidence: 'none', reason: 'no candidates given' }
 }
 
 /**
@@ -180,17 +192,32 @@ export function isConfidentEnoughToAutoClick(confidence) {
 
 /**
  * FINAL PAGINATION FIX — classifies EVERY candidate into all four roles
- * at once (not just NEXT — see findSgsNextPageControl above for that
- * narrower, unchanged helper), each with its own best-confidence match.
- * This is what the live diagnostic report ("ตรวจปุ่มเปลี่ยนหน้า SGS") and
- * the sibling-id derivation below both build on.
+ * at once (first/previous/next/last), each with its own best-confidence
+ * match — the shared basis for BOTH findSgsNextPageControl above and the
+ * live diagnostic report ("ตรวจปุ่มเปลี่ยนหน้า SGS").
+ *
+ * `currentPageDomOrder` (optional — omitted callers get the exact
+ * pre-existing behavior) enables item 6's DOM-ORDER FALLBACK: when SGS
+ * renders a Next/Last/First/Previous control as a genuinely anonymous
+ * image button (no id, no onclick/postback, no recognizable glyph —
+ * classifyPaginationCandidate's own rules all miss it), the nearest
+ * still-unclassified candidate BEFORE the confirmed CurrentPage
+ * control's own position (in DOCUMENT order — never screen coordinates)
+ * is taken as `previous`, the next-nearest before it as `first`; the
+ * nearest AFTER is `next`, the next-nearest after that is `last`. This
+ * is reported at 'low' confidence — the SAME tier a bare id/name
+ * substring gets — so isConfidentEnoughToAutoClick still refuses to
+ * auto-click it; only an already-classified high/medium match ever
+ * fires the click automatically. A role an exact rule already matched
+ * is never overwritten by this fallback.
  */
-export function identifyPaginationControlSet(candidates) {
+export function identifyPaginationControlSet(candidates, currentPageDomOrder) {
   const confidenceRank = { high: 3, medium: 2, low: 1, none: 0 }
   const roleKey = { FIRST: 'first', PREV: 'previous', NEXT: 'next', LAST: 'last' }
   const result = { first: null, previous: null, next: null, last: null }
+  const list = candidates ?? []
 
-  for (const candidate of candidates ?? []) {
+  for (const candidate of list) {
     if (candidate.disabled) continue
     const classification = classifyPaginationCandidate(candidate)
     const key = roleKey[classification.role]
@@ -200,33 +227,45 @@ export function identifyPaginationControlSet(candidates) {
     }
   }
 
+  if (typeof currentPageDomOrder === 'number' && currentPageDomOrder >= 0) {
+    const unclassified = list.filter(
+      (c) => !c.disabled && typeof c.domOrder === 'number' && classifyPaginationCandidate(c).role === PAGINATION_ROLE.UNKNOWN,
+    )
+    const before = unclassified.filter((c) => c.domOrder < currentPageDomOrder).sort((a, b) => b.domOrder - a.domOrder)
+    const after = unclassified.filter((c) => c.domOrder > currentPageDomOrder).sort((a, b) => a.domOrder - b.domOrder)
+    const fallback = (control, label) => ({ control, confidence: 'low', reason: `nearest unclassified control ${label} CurrentPage in DOM order (no confirmed id/glyph)` })
+    if (!result.previous && before[0]) result.previous = fallback(before[0], 'before')
+    if (!result.first && before[1]) result.first = fallback(before[1], 'second-before')
+    if (!result.next && after[0]) result.next = fallback(after[0], 'after')
+    if (!result.last && after[1]) result.last = fallback(after[1], 'second-after')
+  }
+
   return result
 }
 
 /**
- * FINAL PAGINATION FIX — "search the same DOM namespace": given ANY one
- * confirmed pager control id (e.g. the live-confirmed
- * `ctl00_PageContent_TblTranscriptsPagination__FirstPage`), derives the
- * other three roles' expected ids by substituting the SAME known suffix
- * — a literal, deterministic string operation, never a guess. The
- * caller (content-diagnostic.js) is what actually looks these up via
+ * FINAL PAGINATION FIX — "search the same DOM namespace": given ANY ONE
+ * confirmed pagination control id — a click role
+ * (`...__FirstPage`/`...__PreviousPage`/`...__NextPage`/`...__LastPage`)
+ * OR one of the two live-confirmed VALUE controls
+ * (`...__CurrentPage`/`...__PageSize`) — derives all SIX ids by
+ * substituting the SAME known suffix on the SAME prefix: a literal,
+ * deterministic string operation, never a guess. The caller (content-
+ * diagnostic.js) is what actually looks these up via
  * `document.getElementById`, since this module has no DOM access; this
  * is only the pure id-string derivation, so it's unit-testable without a
  * browser.
  *
- * @returns {{first: string, previous: string, next: string, last: string}|null} null when `id` doesn't end with any known suffix at all
+ * @returns {{first: string, previous: string, next: string, last: string, currentPage: string, pageSize: string}|null} null when `id` doesn't end with any known suffix at all
  */
 export function computeSiblingPagerIds(id) {
   if (typeof id !== 'string' || id.length === 0) return null
-  for (const { suffix } of ASPNET_PAGER_SUFFIX_LIST) {
+  for (const { suffix } of ASPNET_ALL_PAGINATION_SUFFIXES) {
     if (idEndsWithSuffix(id, suffix)) {
       const prefix = id.slice(0, id.length - suffix.length)
-      return {
-        first: prefix + ASPNET_PAGER_ID_SUFFIXES.FIRST,
-        previous: prefix + ASPNET_PAGER_ID_SUFFIXES.PREV,
-        next: prefix + ASPNET_PAGER_ID_SUFFIXES.NEXT,
-        last: prefix + ASPNET_PAGER_ID_SUFFIXES.LAST,
-      }
+      const result = {}
+      for (const { key, suffix: s } of ASPNET_ALL_PAGINATION_SUFFIXES) result[key] = prefix + s
+      return result
     }
   }
   return null
@@ -267,7 +306,7 @@ export function buildPaginationHintsFromInspection(inspection) {
  */
 export function buildPaginationDiagnosticReport(inspection) {
   const hints = buildPaginationHintsFromInspection(inspection)
-  const controlSet = identifyPaginationControlSet(inspection?.candidates ?? [])
+  const controlSet = identifyPaginationControlSet(inspection?.candidates ?? [], inspection?.currentPageDomOrder)
   const describeControl = (entry) => {
     if (!entry) return null
     return entry.control.id || `(${entry.control.tag}, no id: "${entry.control.text || entry.control.value || ''}")`

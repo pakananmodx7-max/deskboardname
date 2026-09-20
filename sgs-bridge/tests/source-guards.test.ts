@@ -342,15 +342,14 @@ describe('BUG FIX — content-diagnostic.js: inspectPaginationControls, read-onl
     expect(source).not.toMatch(/\.checked\s*=(?!=)/)
   })
 
-  it('anchors to the real live-reported "N ของ M" text pattern, never a guessed selector', () => {
+  it('anchors on the real live-reported "N ของ M" text pattern for total pages, never a guessed selector', () => {
     expect(source).toContain('OF_PATTERN')
     expect(source).toContain('ของ')
   })
 
-  it('supports every real ASP.NET control mechanism the spec lists — anchors, buttons, input[type=image], and a plain onclick — never assumes only one', () => {
+  it('supports every real ASP.NET control mechanism the spec lists — anchors, buttons, inputs, images, and a plain onclick — never assumes only one', () => {
     expect(source).toContain('CLICKABLE_SELECTOR')
-    expect(source).toMatch(/input\[type="image"\]/)
-    expect(source).toMatch(/\[onclick\]/)
+    expect(source).toMatch(/'a,button,input,img,\[onclick\]'/)
   })
 
   it('returns the full diagnostic metadata the spec requires: tag, id, name, type, onclick/href, disabled', () => {
@@ -365,19 +364,31 @@ describe('BUG FIX — content-diagnostic.js: inspectPaginationControls, read-onl
     }
   })
 
-  it('FINAL PAGINATION FIX: never requires the current/total page numbers to appear in a single text node — the "of N" anchor carries only the total; the current page comes from a residual <input>', () => {
-    expect(source).not.toMatch(/\(\\d\+\)\\s\*ของ/)
-    expect(source).toContain('PLAIN_INPUT_SELECTOR')
+  it('LIVE DOM EVIDENCE: reads currentPage/pageSize DIRECTLY from the confirmed ...__CurrentPage/...__PageSize ids — never nearby text parsing for these two', () => {
+    expect(source).toMatch(/el\.id\.endsWith\('CurrentPage'\)/)
+    expect(source).toMatch(/el\.id\.endsWith\('PageSize'\)/)
     expect(source).toContain('currentPageValue')
+    expect(source).toContain('pageSizeValue')
   })
 
-  it('FINAL PAGINATION FIX: "search the same DOM namespace" — once any candidate\'s id ends with a confirmed pager suffix, derives and looks up the other three via document.getElementById, never a guess', () => {
-    expect(source).toContain('PAGER_ID_SUFFIXES')
-    expect(source).toMatch(/document\.getElementById\(otherId\)/)
+  it('enumerates the ENTIRE TblTranscriptsPagination namespace FIRST, never filtered by a guessed suffix before that', () => {
+    expect(source).toMatch(/document\.querySelectorAll\(`\[id\*="\$\{NAMESPACE_TOKEN\}"\]`\)/)
+    expect(source).toContain("NAMESPACE_TOKEN = 'TblTranscriptsPagination'")
   })
 
-  it('the current-page value is only ever trusted when exactly ONE plain input is found — more than one is honestly ambiguous, never picked at random', () => {
-    expect(source).toMatch(/if \(plainInputs\.length === 1\) currentPageValue = plainInputs\[0\]\.value/)
+  it('finds the shared pagination container by walking up from the CONFIRMED CurrentPage/PageSize element — never a guessed text anchor first — with a whole-body text-anchor fallback only when no such element exists at all', () => {
+    expect(source).toContain('valueAnchorEl')
+    expect(source).toMatch(/const valueAnchorEl = currentPageEl \|\| pageSizeEl/)
+  })
+
+  it('preserves DOCUMENT ORDER across every collected candidate, and reports which index is CurrentPage — the basis for the DOM-order fallback (item 6), never screen coordinates', () => {
+    expect(source).toContain('currentPageDomOrder')
+    expect(source).not.toMatch(/getBoundingClientRect|clientX|clientY|offsetLeft|offsetTop/)
+  })
+
+  it('total records ("32 รายการ") is read from the container\'s own text first, falling back to a whole-page text presence check only when the container doesn\'t carry it', () => {
+    expect(source).toContain('itemsMatchInContainer')
+    expect(source).toContain('itemsMatchWholePage')
   })
 })
 
@@ -971,7 +982,7 @@ describe('TRUE unattended auto-run — content-script.js: registered only for th
 
   it('item 4: a page-advance is only ever ATTEMPTED at high/medium confidence (isConfidentEnoughToAutoClick) — a low-confidence or absent finding sends AR_MANUAL_PAUSE instead of clicking anything', () => {
     const fn = source.slice(source.indexOf('async function attemptAdvance'), source.indexOf('async function verifyPendingAdvance'))
-    expect(fn).toContain('findSgsNextPageControl(inspection.candidates)')
+    expect(fn).toContain('findSgsNextPageControl(inspection.candidates, inspection.currentPageDomOrder)')
     expect(fn).toMatch(/if \(!nextControlResult\.control \|\| !libs\.pagination\.isConfidentEnoughToAutoClick\(nextControlResult\.confidence\)\) \{[\s\S]{0,300}AR_MESSAGE\.MANUAL_PAUSE/)
   })
 

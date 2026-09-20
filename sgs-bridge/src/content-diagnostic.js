@@ -480,45 +480,39 @@ export function readSingleColumnCellValue(tableIndex, rowIndex, columnIndex) {
 }
 
 /**
- * FINAL PAGINATION FIX — auto-run's page-advance previously only ever
- * looked for a ROW OF PLAIN-TEXT NUMERIC LINKS (the old ASP.NET
- * GridView pager shape), then a single text node combining both page
- * numbers ("1 ของ 4"). Neither shape exists on the real page: its
- * current-page/page-size numbers each live in their OWN `<input>`
- * (never visible to a text-node walk at all), and its Next/Last
- * controls are ASP.NET templated-pager controls identified far more
- * reliably by their own CONFIRMED, stable id suffix
- * (`...__FirstPage`/`...__PreviousPage`/`...__NextPage`/`...__LastPage`)
- * than by a glyph or a generic "contains next" guess.
+ * FINAL PAGINATION FIX — LIVE DOM EVIDENCE now confirms the exact real
+ * ids: `ctl00_PageContent_TblTranscriptsPagination__CurrentPage`
+ * (type=text, the current page number) and
+ * `...__PageSize` (type=text, rows per page). These are read DIRECTLY —
+ * never via nearby text parsing — the same way KNOWN_SGS_FILTER_IDS'
+ * subject/classroom filters already are. Every id sharing the
+ * `TblTranscriptsPagination` namespace token is enumerated FIRST (never
+ * filtered by a guessed suffix before that), so First/Previous/Next/Last
+ * — whatever their real ids turn out to be — are always captured
+ * regardless of naming.
+ *
+ * The shared pagination CONTAINER is found by walking up from the
+ * CONFIRMED CurrentPage element (never a guessed text anchor) until an
+ * ancestor's own text contains the Thai "ของ N" (of N) total-page count
+ * — "32 รายการ" (total records) is then read from that SAME container's
+ * text. A whole-body "ของ N" text anchor is used only as a last-resort
+ * fallback on a page where no CurrentPage element exists at all (an
+ * older/different SGS layout).
  *
  * This function only ever COLLECTS candidates — it never decides which
  * one is "Next"/"Last"/etc (that pure classification, DOM-free and
- * fully unit tested, lives in pagination-control.js). It never touches
+ * fully unit tested, lives in pagination-control.js, including its own
+ * DOM-order fallback for an anonymous image button with no useful id —
+ * see identifyPaginationControlSet's own doc comment). It never touches
  * document.cookie or any browser-side storage, and reads nothing beyond
  * this page-wide pagination widget's own controls. Read-only.
- *
- * Anchored on the Thai "ของ N" (of N) text for the total page count,
- * then walks up a bounded number of ancestor levels to the smallest
- * container that also holds either a clickable-looking control or a
- * plain (non-button-type) `<input>` — the current-page box. A SEPARATE,
- * independent anchor+walk does the same for "หน้า" (the page-size
- * label) and its own residual input, and "รายการ" (the total record
- * count) is read directly from its own plain text — no input involved
- * there at all. Finally, once ANY control's id is found to end with one
- * of the four confirmed suffixes, this derives and looks up the other
- * three by that SAME id namespace (pagination-control.js's
- * computeSiblingPagerIds) — a literal, deterministic `getElementById`
- * lookup, never a guess, and a safety net for a control that a bounded
- * container walk alone might not reach.
  */
 export function inspectPaginationControls() {
+  const NAMESPACE_TOKEN = 'TblTranscriptsPagination'
   const OF_PATTERN = /ของ\s*(\d+)/
   const ITEMS_PATTERN = /(\d+)\s*รายการ/
-  const PAGE_SIZE_LABEL_PATTERN = /หน้า/
-  const CLICKABLE_SELECTOR = 'a,button,input[type="button"],input[type="submit"],input[type="image"],[onclick]'
-  const PLAIN_INPUT_SELECTOR = 'input:not([type="button"]):not([type="submit"]):not([type="image"])'
-  const PAGER_ID_SUFFIXES = ['FirstPage', 'PreviousPage', 'NextPage', 'LastPage']
-  const MAX_ANCESTOR_DEPTH = 6
+  const CLICKABLE_SELECTOR = 'a,button,input,img,[onclick]'
+  const MAX_ANCESTOR_DEPTH = 8
 
   function textOf(el) {
     return el && el.textContent ? el.textContent.trim().replace(/\s+/g, ' ') : ''
@@ -545,89 +539,96 @@ export function inspectPaginationControls() {
     }
   }
 
-  function findTextAnchor(pattern) {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-    let node
-    while ((node = walker.nextNode())) {
-      const text = (node.textContent || '').trim()
-      const match = pattern.exec(text)
-      if (match) return { node, match }
-    }
-    return null
-  }
+  // STEP 1 — enumerate the ENTIRE confirmed namespace, never filtered by
+  // a guessed suffix first: every element the real SGS page's own
+  // TblTranscriptsPagination naming convention touches.
+  const namespaceEls = Array.from(document.querySelectorAll(`[id*="${NAMESPACE_TOKEN}"]`))
 
-  function findContainer(anchorNode, requireSelector) {
-    let container = anchorNode.parentElement
-    for (let depth = 0; depth < MAX_ANCESTOR_DEPTH && container; depth++) {
-      if (container.querySelector(requireSelector)) return container
-      container = container.parentElement
-    }
-    return anchorNode.parentElement
-  }
+  // STEP 2 — read CurrentPage/PageSize DIRECTLY from their own confirmed
+  // id suffix, exactly like KNOWN_SGS_FILTER_IDS' known filter reads —
+  // never nearby text parsing for these two.
+  const currentPageEl = namespaceEls.find((el) => el.id.endsWith('CurrentPage')) || null
+  const pageSizeEl = namespaceEls.find((el) => el.id.endsWith('PageSize')) || null
+  const currentPageValue = currentPageEl ? (currentPageEl.value ?? '') : null
+  const pageSizeValue = pageSizeEl ? (pageSizeEl.value ?? '') : null
 
-  const candidates = []
-  const seenIds = new Set()
-  function addCandidate(el) {
-    if (!el) return
-    if (el.id) {
-      if (seenIds.has(el.id)) return
-      seenIds.add(el.id)
-    }
-    candidates.push(describeCandidate(el))
-  }
-
+  // STEP 3 — the shared pagination container: anchored on the CONFIRMED
+  // CurrentPage (or PageSize) element, walking up until an ancestor's
+  // own text contains "ของ N".
+  let container = null
   let totalPagesText = null
-  let currentPageValue = null
-  const ofAnchor = findTextAnchor(OF_PATTERN)
-  if (ofAnchor) {
-    totalPagesText = ofAnchor.match[1]
-    const container = findContainer(ofAnchor.node, `${CLICKABLE_SELECTOR},${PLAIN_INPUT_SELECTOR}`)
-    Array.from(container.querySelectorAll(CLICKABLE_SELECTOR)).forEach(addCandidate)
-    const plainInputs = Array.from(container.querySelectorAll(PLAIN_INPUT_SELECTOR))
-    plainInputs.forEach(addCandidate)
-    // Never guessed: the current-page value is only ever trusted when
-    // exactly ONE plain input sits in this container — more than one is
-    // honestly ambiguous, never picked at random.
-    if (plainInputs.length === 1) currentPageValue = plainInputs[0].value ?? ''
-  }
-
-  let totalRowsText = null
-  const itemsAnchor = findTextAnchor(ITEMS_PATTERN)
-  if (itemsAnchor) totalRowsText = itemsAnchor.match[1]
-
-  let pageSizeValue = null
-  const pageSizeAnchor = findTextAnchor(PAGE_SIZE_LABEL_PATTERN)
-  if (pageSizeAnchor) {
-    const container = findContainer(pageSizeAnchor.node, PLAIN_INPUT_SELECTOR)
-    const plainInputs = Array.from(container.querySelectorAll(PLAIN_INPUT_SELECTOR))
-    plainInputs.forEach(addCandidate)
-    if (plainInputs.length === 1) pageSizeValue = plainInputs[0].value ?? ''
-  }
-
-  // "Search the same DOM namespace": once any ONE control's id is found
-  // to end with a confirmed pager suffix, derive and look up the other
-  // three by that SAME prefix — even if the container walks above
-  // didn't happen to reach them.
-  for (const candidate of candidates.slice()) {
-    if (!candidate.id) continue
-    const suffix = PAGER_ID_SUFFIXES.find((s) => candidate.id.toLowerCase().endsWith(s.toLowerCase()))
-    if (!suffix) continue
-    const prefix = candidate.id.slice(0, candidate.id.length - suffix.length)
-    for (const otherSuffix of PAGER_ID_SUFFIXES) {
-      if (otherSuffix === suffix) continue
-      const otherId = prefix + otherSuffix
-      if (seenIds.has(otherId)) continue
-      addCandidate(document.getElementById(otherId))
+  const valueAnchorEl = currentPageEl || pageSizeEl
+  if (valueAnchorEl) {
+    let node = valueAnchorEl.parentElement
+    for (let depth = 0; depth < MAX_ANCESTOR_DEPTH && node; depth++) {
+      const match = OF_PATTERN.exec(textOf(node))
+      if (match) {
+        container = node
+        totalPagesText = match[1]
+        break
+      }
+      node = node.parentElement
     }
   }
+
+  // Last-resort fallback ONLY when no CurrentPage/PageSize element
+  // exists at all (a page this confirmed namespace doesn't match) — a
+  // bounded whole-body text anchor, same shape as before.
+  if (!container) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    let textNode
+    while ((textNode = walker.nextNode())) {
+      const match = OF_PATTERN.exec((textNode.textContent || '').trim())
+      if (match) {
+        totalPagesText = match[1]
+        let node = textNode.parentElement
+        for (let depth = 0; depth < 6 && node; depth++) {
+          if (node.querySelector(CLICKABLE_SELECTOR)) {
+            container = node
+            break
+          }
+          node = node.parentElement
+        }
+        if (!container) container = textNode.parentElement
+        break
+      }
+    }
+  }
+
+  const itemsMatchInContainer = container ? ITEMS_PATTERN.exec(textOf(container)) : null
+  // "32 รายการ" sometimes renders just outside the tight button
+  // cluster — a plain whole-page text presence check as a fallback,
+  // never used for anything beyond this ONE number.
+  const itemsMatchWholePage = itemsMatchInContainer ? null : ITEMS_PATTERN.exec(document.body.innerText || document.body.textContent || '')
+  const totalRowsText = itemsMatchInContainer ? itemsMatchInContainer[1] : itemsMatchWholePage ? itemsMatchWholePage[1] : null
+
+  // STEP 4 — collect every candidate control in DOCUMENT ORDER, from
+  // BOTH the confirmed namespace (step 1) and the pagination container
+  // (step 3), deduplicated by identity. Document order is preserved so
+  // identifyPaginationControlSet's DOM-order fallback (an anonymous
+  // image button with no meaningful id) can use position relative to
+  // CurrentPage — never screen coordinates.
+  const orderedEls = []
+  const seen = new Set()
+  function pushEl(el) {
+    if (!el || seen.has(el)) return
+    seen.add(el)
+    orderedEls.push(el)
+  }
+  if (container) Array.from(container.querySelectorAll(CLICKABLE_SELECTOR)).forEach(pushEl)
+  namespaceEls.forEach(pushEl)
+
+  const currentPageDomOrder = currentPageEl ? orderedEls.indexOf(currentPageEl) : -1
+  const candidates = orderedEls.map((el, index) => ({ ...describeCandidate(el), domOrder: index }))
 
   return {
-    found: Boolean(ofAnchor),
+    found: Boolean(currentPageEl || pageSizeEl || totalPagesText !== null),
     totalPagesText,
     totalRowsText,
     currentPageValue,
     pageSizeValue,
-    candidates: candidates.map((c, index) => ({ ...c, domOrder: index })),
+    currentPageDomOrder,
+    candidates,
   }
 }
 

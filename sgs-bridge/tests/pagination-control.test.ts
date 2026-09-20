@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ASPNET_PAGER_ID_SUFFIXES,
+  ASPNET_PAGINATION_VALUE_SUFFIXES,
   buildPaginationDiagnosticReport,
   buildPaginationHintsFromInspection,
   classifyPaginationCandidate,
@@ -15,7 +16,19 @@ import {
   verifyPageAdvance,
 } from '../src/lib/pagination-control.js'
 
-function candidate(overrides: Partial<{ tag: string; id: string | null; name: string | null; type: string | null; text: string; onclick: string | null; href: string | null; disabled: boolean }> = {}) {
+function candidate(
+  overrides: Partial<{
+    tag: string
+    id: string | null
+    name: string | null
+    type: string | null
+    text: string
+    onclick: string | null
+    href: string | null
+    disabled: boolean
+    domOrder: number
+  }> = {},
+) {
   return { tag: 'a', id: null, name: null, type: null, text: '', onclick: null, href: null, disabled: false, ...overrides }
 }
 
@@ -110,17 +123,27 @@ describe('classifyPaginationCandidate — FINAL PAGINATION FIX: the CONFIRMED AS
   })
 })
 
-describe('computeSiblingPagerIds — "search the same DOM namespace": deriving First/Previous/Next/Last from any ONE confirmed id', () => {
-  it('derives all four ids from the live-confirmed FirstPage id', () => {
+describe('computeSiblingPagerIds — "search the same DOM namespace": deriving First/Previous/Next/Last/CurrentPage/PageSize from any ONE confirmed id', () => {
+  it('derives all six ids from the live-confirmed FirstPage id', () => {
     expect(computeSiblingPagerIds('ctl00_PageContent_TblTranscriptsPagination__FirstPage')).toEqual({
       first: 'ctl00_PageContent_TblTranscriptsPagination__FirstPage',
       previous: 'ctl00_PageContent_TblTranscriptsPagination__PreviousPage',
       next: 'ctl00_PageContent_TblTranscriptsPagination__NextPage',
       last: 'ctl00_PageContent_TblTranscriptsPagination__LastPage',
+      currentPage: 'ctl00_PageContent_TblTranscriptsPagination__CurrentPage',
+      pageSize: 'ctl00_PageContent_TblTranscriptsPagination__PageSize',
     })
   })
 
-  it('derives the same four ids starting from ANY one of the four suffixes', () => {
+  it('LIVE DOM EVIDENCE: derives the same six ids starting from the CONFIRMED CurrentPage or PageSize id', () => {
+    const fromCurrentPage = computeSiblingPagerIds('ctl00_PageContent_TblTranscriptsPagination__CurrentPage')
+    const fromPageSize = computeSiblingPagerIds('ctl00_PageContent_TblTranscriptsPagination__PageSize')
+    const fromFirst = computeSiblingPagerIds('ctl00_PageContent_TblTranscriptsPagination__FirstPage')
+    expect(fromCurrentPage).toEqual(fromFirst)
+    expect(fromPageSize).toEqual(fromFirst)
+  })
+
+  it('derives the same six ids starting from ANY one of the four click-role suffixes', () => {
     const fromNext = computeSiblingPagerIds('ctl00_PageContent_TblTranscriptsPagination__NextPage')
     const fromLast = computeSiblingPagerIds('ctl00_PageContent_TblTranscriptsPagination__LastPage')
     expect(fromNext).toEqual(fromLast)
@@ -132,8 +155,12 @@ describe('computeSiblingPagerIds — "search the same DOM namespace": deriving F
     expect(computeSiblingPagerIds('')).toBeNull()
   })
 
-  it('ASPNET_PAGER_ID_SUFFIXES exposes the exact four confirmed suffix strings', () => {
+  it('ASPNET_PAGER_ID_SUFFIXES exposes the exact four confirmed click-role suffix strings', () => {
     expect(ASPNET_PAGER_ID_SUFFIXES).toEqual({ FIRST: 'FirstPage', PREV: 'PreviousPage', NEXT: 'NextPage', LAST: 'LastPage' })
+  })
+
+  it('ASPNET_PAGINATION_VALUE_SUFFIXES exposes the two live-confirmed value suffix strings', () => {
+    expect(ASPNET_PAGINATION_VALUE_SUFFIXES).toEqual({ CURRENT_PAGE: 'CurrentPage', PAGE_SIZE: 'PageSize' })
   })
 })
 
@@ -171,10 +198,106 @@ describe('identifyPaginationControlSet — classifies ALL four roles at once (fi
   })
 })
 
+describe('identifyPaginationControlSet — item 6\'s DOM-ORDER FALLBACK: an anonymous image button with no meaningful id, classified by position relative to CurrentPage', () => {
+  // [first] [previous] [CurrentPage] [next] [last] — none carry a
+  // recognizable id/glyph/postback, only their position around the
+  // confirmed CurrentPage control (domOrder: 2).
+  function anonymousCluster() {
+    return [
+      candidate({ tag: 'img', id: null, domOrder: 0 }),
+      candidate({ tag: 'img', id: null, domOrder: 1 }),
+      candidate({ tag: 'input', type: 'text', id: 'ns__CurrentPage', domOrder: 2 }),
+      candidate({ tag: 'img', id: null, domOrder: 3 }),
+      candidate({ tag: 'img', id: null, domOrder: 4 }),
+    ]
+  }
+
+  it('classifies previous/first (before) and next/last (after) purely by DOM order, at low confidence', () => {
+    const result = identifyPaginationControlSet(anonymousCluster(), 2)
+    expect(result.previous?.control.domOrder).toBe(1)
+    expect(result.first?.control.domOrder).toBe(0)
+    expect(result.next?.control.domOrder).toBe(3)
+    expect(result.last?.control.domOrder).toBe(4)
+    expect(result.previous?.confidence).toBe('low')
+    expect(result.next?.confidence).toBe('low')
+  })
+
+  it('never overwrites a role an exact rule already matched', () => {
+    const candidates = [
+      ...anonymousCluster(),
+      candidate({ tag: 'a', id: 'ns__NextPage', domOrder: 5 }),
+    ]
+    const result = identifyPaginationControlSet(candidates, 2)
+    expect(result.next?.control.id).toBe('ns__NextPage')
+    expect(result.next?.confidence).toBe('high')
+  })
+
+  it('is never applied when currentPageDomOrder is omitted — existing callers keep their exact prior behavior', () => {
+    const result = identifyPaginationControlSet(anonymousCluster())
+    expect(result).toEqual({ first: null, previous: null, next: null, last: null })
+  })
+
+  it('never picks a disabled control via the fallback either', () => {
+    const candidates = [
+      candidate({ tag: 'img', id: null, domOrder: 1, disabled: true }),
+      candidate({ tag: 'input', type: 'text', id: 'ns__CurrentPage', domOrder: 2 }),
+    ]
+    const result = identifyPaginationControlSet(candidates, 2)
+    expect(result.previous).toBeNull()
+  })
+})
+
+describe('findSgsNextPageControl — item 6\'s DOM-order fallback also applies to the real Next-finding used by auto-run itself', () => {
+  it('finds Next via DOM order when currentPageDomOrder is given and nothing else classifies it', () => {
+    const candidates = [
+      candidate({ tag: 'input', type: 'text', id: 'ns__CurrentPage', domOrder: 0 }),
+      candidate({ tag: 'img', id: null, domOrder: 1 }),
+    ]
+    const result = findSgsNextPageControl(candidates, 0)
+    expect(result.control?.domOrder).toBe(1)
+    expect(result.confidence).toBe('low')
+  })
+
+  it('without currentPageDomOrder, behaves exactly as before (no fallback)', () => {
+    const candidates = [
+      candidate({ tag: 'input', type: 'text', id: 'ns__CurrentPage' }),
+      candidate({ tag: 'img', id: null }),
+    ]
+    const result = findSgsNextPageControl(candidates)
+    expect(result.control).toBeNull()
+    expect(result.confidence).toBe('none')
+  })
+})
+
 describe('buildPaginationHintsFromInspection — turns inspectPaginationControls\' raw result into detectPagination\'s expected hints shape', () => {
   it('item 5\'s exact live example: current page 1, "ของ 4", 32 records, page size 10', () => {
     const inspection = { found: true, currentPageValue: '1', totalPagesText: '4', totalRowsText: '32', pageSizeValue: '10', candidates: [] }
     expect(buildPaginationHintsFromInspection(inspection)).toEqual({ currentPage: 1, totalPages: 4, totalStudentRows: 32, pageSize: 10 })
+  })
+
+  it('LIVE DOM EVIDENCE regression fixture: ctl00_PageContent_TblTranscriptsPagination__CurrentPage (value "1") and ...__PageSize (value "10"), plus the shared container\'s own "ของ 4" / "32 รายการ" / "/หน้า" text — exactly what inspectPaginationControls reports for this confirmed real layout', () => {
+    // This mirrors inspectPaginationControls' actual return shape once it
+    // has read ...__CurrentPage.value === '1' and ...__PageSize.value ===
+    // '10' directly by id, and found "ของ 4"/"32 รายการ" in their shared
+    // container's own text — never a single combined "1/4" string.
+    const inspection = {
+      found: true,
+      totalPagesText: '4',
+      totalRowsText: '32',
+      currentPageValue: '1',
+      pageSizeValue: '10',
+      currentPageDomOrder: 2,
+      candidates: [
+        { tag: 'input', id: 'ctl00_PageContent_TblTranscriptsPagination__CurrentPage', type: 'text', value: '1', disabled: false, domOrder: 2 },
+        { tag: 'input', id: 'ctl00_PageContent_TblTranscriptsPagination__PageSize', type: 'text', value: '10', disabled: false, domOrder: 6 },
+      ],
+    }
+    expect(buildPaginationHintsFromInspection(inspection)).toEqual({
+      currentPage: 1,
+      totalPages: 4,
+      totalStudentRows: 32,
+      pageSize: 10,
+    })
   })
 
   it('pages 2, 3, and 4 of 4 — only the current-page value differs', () => {

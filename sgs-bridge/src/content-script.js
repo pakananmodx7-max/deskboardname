@@ -403,7 +403,7 @@
 
     const inspection = libs.diagnostic.inspectPaginationControls()
     const nextControlResult = inspection.found
-      ? libs.pagination.findSgsNextPageControl(inspection.candidates)
+      ? libs.pagination.findSgsNextPageControl(inspection.candidates, inspection.currentPageDomOrder)
       : { control: null, confidence: 'none', reason: 'pagination cluster (the "N ของ M" text) not found on this page' }
 
     if (!nextControlResult.control || !libs.pagination.isConfidentEnoughToAutoClick(nextControlResult.confidence)) {
