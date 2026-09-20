@@ -155,7 +155,14 @@
       }
     }
 
-    const pagination = libs.tableExtraction.detectPagination(facts.tables, candidate, facts.paginationHints)
+    // FINAL PAGINATION FIX: pagination is read via the SAME thorough,
+    // container+id-based inspection used both by the live diagnostic
+    // button and by the actual page-advance click (attemptAdvance below)
+    // — never the old, less reliable text-pattern reading that used to
+    // live inside collectAllTableRowFacts.
+    const inspection = libs.diagnostic.inspectPaginationControls()
+    const hints = libs.pagination.buildPaginationHintsFromInspection(inspection)
+    const pagination = libs.tableExtraction.detectPagination(facts.tables, candidate, hints)
     const column = libs.wholeColumn.locateColumnOnCurrentPage(candidate.writableScoreColumns, columnKey)
     if (!column) {
       return {

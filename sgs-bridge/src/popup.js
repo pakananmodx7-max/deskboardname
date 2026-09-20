@@ -8,6 +8,7 @@ import {
   collectAllTableRowFacts,
   collectRawSgsFacts,
   fillSgsColumnValues,
+  inspectPaginationControls,
   readColumnValues,
   readSingleCellRevalidationState,
 } from './content-diagnostic.js'
@@ -73,6 +74,7 @@ import {
 // and renders whatever state background.js reports, so only these two
 // display-facing helpers are still needed here.
 import { buildAutoRunPreRunSummary, buildAutoRunReport, emptyAutoRunSummary, isPaginationReadyForAutoRun, PAGINATION_UNKNOWN_MESSAGE } from './lib/auto-run.js'
+import { buildPaginationDiagnosticReport, buildPaginationHintsFromInspection } from './lib/pagination-control.js'
 import { AR_MESSAGE } from './lib/run-orchestrator.js'
 
 const DEFAULT_SGS_KEYWORD = 'sgs'
@@ -200,6 +202,8 @@ const wcFailedListEl = document.getElementById('wc-failed-list')
 
 // NEXT PHASE — section 7, safe fully-automatic multi-page run.
 const autoRunWrap = document.getElementById('auto-run-wrap')
+const arInspectPaginationBtn = document.getElementById('ar-inspect-pagination-btn')
+const arPaginationDiagnosticOutputEl = document.getElementById('ar-pagination-diagnostic-output')
 const arStartBtn = document.getElementById('ar-start-btn')
 const arPrerunEl = document.getElementById('ar-prerun')
 const arSubjectEl = document.getElementById('ar-subject')
@@ -734,12 +738,23 @@ async function performLiveGridScan() {
 
   const candidate = pickBestStudentGridCandidate(facts.tables)
   currentGridCandidate = candidate
+
+  // FINAL PAGINATION FIX: pagination is read via a SEPARATE executeScript
+  // call into inspectPaginationControls — the same thorough,
+  // container+id-based inspection the live diagnostic button and
+  // content-script.js's own auto-run detection both use, never the old
+  // text-pattern reading that used to live inside collectAllTableRowFacts.
+  const [paginationInjection] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: inspectPaginationControls,
+  })
+  const hints = buildPaginationHintsFromInspection(paginationInjection.result)
   // LIVE DISCOVERY (item 4): computed as soon as a candidate exists (even
   // one with zero writable columns), so a NOT_FOUND mapping result can
   // honestly say "this student might just be on a different SGS page"
   // instead of implying they aren't in SGS at all — see
   // describeMappingStatusForDisplay below. Never used to navigate pages.
-  currentPagination = detectPagination(facts.tables, candidate, facts.paginationHints)
+  currentPagination = detectPagination(facts.tables, candidate, hints)
   return { facts, candidate }
 }
 
@@ -2001,6 +2016,30 @@ function renderAutoRunFromState(state) {
   }
   renderAutoRunFinalSummary(state)
 }
+
+/**
+ * FINAL PAGINATION FIX — "ตรวจปุ่มเปลี่ยนหน้า SGS": a dedicated, ON-DEMAND
+ * live diagnostic scoped ONLY to the visible pagination area (never a
+ * dump of the whole page) — the ONE place a teacher/developer can see
+ * exactly what this extension currently detects for
+ * currentPage/totalPages/totalRows/pageSize and which real DOM element
+ * (by id, when it has one) it identified as each of FIRST/PREVIOUS/
+ * NEXT/LAST, before ever trusting auto-run to click anything.
+ */
+async function runPaginationDiagnostic() {
+  const tab = await getActiveTab()
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: inspectPaginationControls,
+  })
+  const report = buildPaginationDiagnosticReport(injection.result)
+  arPaginationDiagnosticOutputEl.textContent = JSON.stringify({ ...report, candidates: injection.result.candidates }, null, 2)
+  arPaginationDiagnosticOutputEl.hidden = false
+}
+
+arInspectPaginationBtn.addEventListener('click', () => {
+  void runPaginationDiagnostic()
+})
 
 arStartBtn.addEventListener('click', () => {
   void runAutoRunPreRunPreview()

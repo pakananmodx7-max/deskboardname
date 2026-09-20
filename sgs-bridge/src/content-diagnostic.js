@@ -259,89 +259,18 @@ export function collectAllTableRowFacts() {
     subjectFilter: readKnownFilterInline('ctl00_PageContent_ClassSubjectIDFilter'),
     classroomFilter: readKnownFilterInline('ctl00_PageContent_ClassSectionNoFilter'),
     tables,
-    paginationHints: extractPaginationHintsInline(),
   }
 
-  // BUG FIX — the real SGS page never renders a single "1/4" or "page 1
-  // of 4" string anywhere; a hunt for that literal pattern (this
-  // function's previous implementation) always came back empty on the
-  // live page, silently leaving currentPage/totalPages `null` forever and
-  // getting auto-run stuck showing "หน้า ? / ?" with nothing ever
-  // written. The real layout is a small cluster of SEPARATE elements: an
-  // `<input>` holding the current page number, plain text "ของ 4" (Thai
-  // "of 4") for the total page count, plain text "32 รายการ" for the
-  // total record count, and another `<input>` holding the page size next
-  // to plain text "/หน้า". Reads nothing besides these page-wide widget
-  // controls — no browser-side storage of any kind, and never any OTHER
-  // input's value — only the ones immediately preceding these two
-  // specific label texts (the student grid's own score-cell inputs are
-  // never adjacent to either label, so they can never be mistaken for
-  // the pagination controls).
-  // This function is itself injected via executeScript's `func` and
-  // can't share code with a sibling function once serialized (see the
-  // file header) — it duplicates sgs-table-extraction.js's
-  // parseRealPaginationFragments algorithm exactly (see that function's
-  // own doc comment for why the "input immediately before the anchor
-  // text" rule is what the real page's own confirmed shape requires);
-  // the two must be kept in sync by hand.
-  function extractPaginationHintsInline() {
-    const fragments = []
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
-      acceptNode(node) {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          return node.tagName === 'INPUT' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
-        }
-        const parentTag = node.parentElement ? node.parentElement.tagName : ''
-        if (parentTag === 'SCRIPT' || parentTag === 'STYLE' || parentTag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT
-        return (node.textContent || '').trim() !== '' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
-      },
-    })
-    let node
-    while ((node = walker.nextNode())) {
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        fragments.push({ type: 'input', value: node.value != null ? String(node.value) : '' })
-      } else {
-        fragments.push({ type: 'text', value: (node.textContent || '').trim().replace(/\s+/g, ' ') })
-      }
-    }
-
-    let totalPages = null
-    let currentPage = null
-    let totalStudentRows = null
-    let pageSize = null
-    for (let i = 0; i < fragments.length; i++) {
-      const fragment = fragments[i]
-      if (fragment.type !== 'text') continue
-
-      const ofMatch = totalPages === null ? /ของ\s*(\d+)/.exec(fragment.value) : null
-      if (ofMatch) {
-        totalPages = Number(ofMatch[1])
-        const prev = fragments[i - 1]
-        if (prev && prev.type === 'input') {
-          const parsed = Number(prev.value)
-          if (Number.isFinite(parsed)) currentPage = parsed
-        }
-        continue
-      }
-
-      const itemsMatch = totalStudentRows === null ? /(\d+)\s*รายการ/.exec(fragment.value) : null
-      if (itemsMatch) {
-        totalStudentRows = Number(itemsMatch[1])
-        continue
-      }
-
-      const pageSizeLabelMatch = pageSize === null ? /หน้า/.exec(fragment.value) : null
-      if (pageSizeLabelMatch) {
-        const prev = fragments[i - 1]
-        if (prev && prev.type === 'input') {
-          const parsed = Number(prev.value)
-          if (Number.isFinite(parsed)) pageSize = parsed
-        }
-      }
-    }
-
-    return { totalStudentRows, pageSize, currentPage, totalPages }
-  }
+  // FINAL PAGINATION FIX — pagination is no longer detected here at all.
+  // It never belonged to "collect every table row's facts" in the first
+  // place, and folding it in here meant it could only ever be computed
+  // ONE step behind the actual DOM (this function has no way to also
+  // return live element references for a caller to click). Callers now
+  // get pagination facts from inspectPaginationControls below instead —
+  // ONE single, more thorough implementation, shared by the live
+  // diagnostic button, the real auto-run detection, and the actual
+  // page-advance click, rather than a second, easily-drifting copy of
+  // the same parsing logic living in here.
 
   // Duplicates collectRawSgsFacts's own inline filter-reading logic —
   // this function is itself injected via executeScript's `func` and
@@ -551,27 +480,45 @@ export function readSingleColumnCellValue(tableIndex, rowIndex, columnIndex) {
 }
 
 /**
- * BUG FIX — auto-run's page-advance previously only ever looked for a
- * ROW OF PLAIN-TEXT NUMERIC LINKS (the old ASP.NET GridView pager shape
- * this replaced). The real, now-confirmed SGS pagination is a compact
- * button cluster — "[<<] [<] [1] ของ 4 [>] [>>]" — never a row of bare
- * number links, so that heuristic correctly found nothing and always
- * fell back to manual continue (the SAFE outcome, but not the automatic
- * one this phase adds).
+ * FINAL PAGINATION FIX — auto-run's page-advance previously only ever
+ * looked for a ROW OF PLAIN-TEXT NUMERIC LINKS (the old ASP.NET
+ * GridView pager shape), then a single text node combining both page
+ * numbers ("1 ของ 4"). Neither shape exists on the real page: its
+ * current-page/page-size numbers each live in their OWN `<input>`
+ * (never visible to a text-node walk at all), and its Next/Last
+ * controls are ASP.NET templated-pager controls identified far more
+ * reliably by their own CONFIRMED, stable id suffix
+ * (`...__FirstPage`/`...__PreviousPage`/`...__NextPage`/`...__LastPage`)
+ * than by a glyph or a generic "contains next" guess.
  *
  * This function only ever COLLECTS candidates — it never decides which
- * one is "Next" (that pure classification, DOM-free and fully unit
- * tested, lives in pagination-control.js's findSgsNextPageControl) and
- * never clicks anything. Anchored to the FIRST text node anywhere on the
- * page matching "<number> ของ <number>" (Thai "of") — the exact live-
- * reported pattern — then walks up a bounded number of ancestor levels
- * to the smallest container that also holds at least one clickable-
- * looking element, since a real pager is always a small, compact
- * cluster, never the whole page body. Read-only.
+ * one is "Next"/"Last"/etc (that pure classification, DOM-free and
+ * fully unit tested, lives in pagination-control.js). It never touches
+ * document.cookie or any browser-side storage, and reads nothing beyond
+ * this page-wide pagination widget's own controls. Read-only.
+ *
+ * Anchored on the Thai "ของ N" (of N) text for the total page count,
+ * then walks up a bounded number of ancestor levels to the smallest
+ * container that also holds either a clickable-looking control or a
+ * plain (non-button-type) `<input>` — the current-page box. A SEPARATE,
+ * independent anchor+walk does the same for "หน้า" (the page-size
+ * label) and its own residual input, and "รายการ" (the total record
+ * count) is read directly from its own plain text — no input involved
+ * there at all. Finally, once ANY control's id is found to end with one
+ * of the four confirmed suffixes, this derives and looks up the other
+ * three by that SAME id namespace (pagination-control.js's
+ * computeSiblingPagerIds) — a literal, deterministic `getElementById`
+ * lookup, never a guess, and a safety net for a control that a bounded
+ * container walk alone might not reach.
  */
 export function inspectPaginationControls() {
-  const OF_PATTERN = /(\d+)\s*ของ\s*(\d+)/
+  const OF_PATTERN = /ของ\s*(\d+)/
+  const ITEMS_PATTERN = /(\d+)\s*รายการ/
+  const PAGE_SIZE_LABEL_PATTERN = /หน้า/
   const CLICKABLE_SELECTOR = 'a,button,input[type="button"],input[type="submit"],input[type="image"],[onclick]'
+  const PLAIN_INPUT_SELECTOR = 'input:not([type="button"]):not([type="submit"]):not([type="image"])'
+  const PAGER_ID_SUFFIXES = ['FirstPage', 'PreviousPage', 'NextPage', 'LastPage']
+  const MAX_ANCESTOR_DEPTH = 6
 
   function textOf(el) {
     return el && el.textContent ? el.textContent.trim().replace(/\s+/g, ' ') : ''
@@ -586,44 +533,101 @@ export function inspectPaginationControls() {
       id: el.id || null,
       name: el.getAttribute('name') || null,
       type,
+      value: tag === 'input' ? (el.value ?? '') : null,
+      title: el.getAttribute('title'),
+      src: el.getAttribute('src'),
+      className: el.className || null,
       text: (text || '').trim(),
       onclick: el.getAttribute('onclick'),
       href: el.getAttribute('href'),
       disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true',
+      surroundingText: el.parentElement ? textOf(el.parentElement).slice(0, 120) : '',
     }
   }
 
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-  let anchorNode = null
-  let match = null
-  let node
-  while ((node = walker.nextNode())) {
-    const text = (node.textContent || '').trim()
-    const found = OF_PATTERN.exec(text)
-    if (found) {
-      anchorNode = node
-      match = found
-      break
+  function findTextAnchor(pattern) {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    let node
+    while ((node = walker.nextNode())) {
+      const text = (node.textContent || '').trim()
+      const match = pattern.exec(text)
+      if (match) return { node, match }
     }
+    return null
   }
 
-  if (!anchorNode) {
-    return { found: false, currentPageText: null, totalPagesText: null, candidates: [] }
+  function findContainer(anchorNode, requireSelector) {
+    let container = anchorNode.parentElement
+    for (let depth = 0; depth < MAX_ANCESTOR_DEPTH && container; depth++) {
+      if (container.querySelector(requireSelector)) return container
+      container = container.parentElement
+    }
+    return anchorNode.parentElement
   }
 
-  let container = anchorNode.parentElement
-  let clickableEls = []
-  for (let depth = 0; depth < 5 && container; depth++) {
-    clickableEls = Array.from(container.querySelectorAll(CLICKABLE_SELECTOR))
-    if (clickableEls.length > 0) break
-    container = container.parentElement
+  const candidates = []
+  const seenIds = new Set()
+  function addCandidate(el) {
+    if (!el) return
+    if (el.id) {
+      if (seenIds.has(el.id)) return
+      seenIds.add(el.id)
+    }
+    candidates.push(describeCandidate(el))
+  }
+
+  let totalPagesText = null
+  let currentPageValue = null
+  const ofAnchor = findTextAnchor(OF_PATTERN)
+  if (ofAnchor) {
+    totalPagesText = ofAnchor.match[1]
+    const container = findContainer(ofAnchor.node, `${CLICKABLE_SELECTOR},${PLAIN_INPUT_SELECTOR}`)
+    Array.from(container.querySelectorAll(CLICKABLE_SELECTOR)).forEach(addCandidate)
+    const plainInputs = Array.from(container.querySelectorAll(PLAIN_INPUT_SELECTOR))
+    plainInputs.forEach(addCandidate)
+    // Never guessed: the current-page value is only ever trusted when
+    // exactly ONE plain input sits in this container — more than one is
+    // honestly ambiguous, never picked at random.
+    if (plainInputs.length === 1) currentPageValue = plainInputs[0].value ?? ''
+  }
+
+  let totalRowsText = null
+  const itemsAnchor = findTextAnchor(ITEMS_PATTERN)
+  if (itemsAnchor) totalRowsText = itemsAnchor.match[1]
+
+  let pageSizeValue = null
+  const pageSizeAnchor = findTextAnchor(PAGE_SIZE_LABEL_PATTERN)
+  if (pageSizeAnchor) {
+    const container = findContainer(pageSizeAnchor.node, PLAIN_INPUT_SELECTOR)
+    const plainInputs = Array.from(container.querySelectorAll(PLAIN_INPUT_SELECTOR))
+    plainInputs.forEach(addCandidate)
+    if (plainInputs.length === 1) pageSizeValue = plainInputs[0].value ?? ''
+  }
+
+  // "Search the same DOM namespace": once any ONE control's id is found
+  // to end with a confirmed pager suffix, derive and look up the other
+  // three by that SAME prefix — even if the container walks above
+  // didn't happen to reach them.
+  for (const candidate of candidates.slice()) {
+    if (!candidate.id) continue
+    const suffix = PAGER_ID_SUFFIXES.find((s) => candidate.id.toLowerCase().endsWith(s.toLowerCase()))
+    if (!suffix) continue
+    const prefix = candidate.id.slice(0, candidate.id.length - suffix.length)
+    for (const otherSuffix of PAGER_ID_SUFFIXES) {
+      if (otherSuffix === suffix) continue
+      const otherId = prefix + otherSuffix
+      if (seenIds.has(otherId)) continue
+      addCandidate(document.getElementById(otherId))
+    }
   }
 
   return {
-    found: true,
-    currentPageText: match[1],
-    totalPagesText: match[2],
-    candidates: clickableEls.map(describeCandidate),
+    found: Boolean(ofAnchor),
+    totalPagesText,
+    totalRowsText,
+    currentPageValue,
+    pageSizeValue,
+    candidates: candidates.map((c, index) => ({ ...c, domOrder: index })),
   }
 }
 
@@ -633,16 +637,25 @@ export function inspectPaginationControls() {
  * suppressed first, so an ASP.NET `__doPostBack` (or any other wiring
  * already on the element) fires exactly as it would for a genuine
  * teacher click; this never simulates a postback itself. Re-locates the
- * element FRESH in this SEPARATE
- * executeScript call (an element reference from inspectPaginationControls'
- * own call cannot be reused here — see popup.js's own note on why the
- * two are split into independent calls) — by id when the confirmed
- * descriptor has one (the most stable identity), otherwise by an exact
- * match on every other captured field, never a looser guess that could
- * silently click a different control in the same cluster.
+ * element FRESH in this SEPARATE executeScript call (an element
+ * reference from inspectPaginationControls' own call cannot be reused
+ * here — see popup.js's own note on why the two are split into
+ * independent calls) — by `document.getElementById` when the confirmed
+ * descriptor has an id (a globally unique, stable identity — and now the
+ * PREFERRED way every real pager control here is found in the first
+ * place), otherwise by an exact match on every other captured field
+ * within the pagination cluster, never a looser guess that could
+ * silently click a different control.
  */
 export function clickPaginationControl(descriptor) {
-  const OF_PATTERN = /(\d+)\s*ของ\s*(\d+)/
+  if (descriptor.id) {
+    const byId = document.getElementById(descriptor.id)
+    if (!byId) return { clicked: false }
+    byId.click()
+    return { clicked: true }
+  }
+
+  const OF_PATTERN = /ของ\s*(\d+)/
   const CLICKABLE_SELECTOR = 'a,button,input[type="button"],input[type="submit"],input[type="image"],[onclick]'
 
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
@@ -658,7 +671,7 @@ export function clickPaginationControl(descriptor) {
 
   let container = anchorNode.parentElement
   let elements = []
-  for (let depth = 0; depth < 5 && container; depth++) {
+  for (let depth = 0; depth < 6 && container; depth++) {
     elements = Array.from(container.querySelectorAll(CLICKABLE_SELECTOR))
     if (elements.length > 0) break
     container = container.parentElement
@@ -667,16 +680,13 @@ export function clickPaginationControl(descriptor) {
   function describe(el) {
     const tag = el.tagName.toLowerCase()
     const text = tag === 'input' ? el.value || el.getAttribute('alt') || el.getAttribute('title') || '' : (el.textContent || '').trim()
-    return { tag, id: el.id || null, onclick: el.getAttribute('onclick'), href: el.getAttribute('href'), text: (text || '').trim() }
+    return { tag, onclick: el.getAttribute('onclick'), href: el.getAttribute('href'), text: (text || '').trim() }
   }
 
-  let target = descriptor.id ? elements.find((el) => el.id === descriptor.id) : null
-  if (!target) {
-    target = elements.find((el) => {
-      const d = describe(el)
-      return d.tag === descriptor.tag && d.text === descriptor.text && d.onclick === descriptor.onclick && d.href === descriptor.href
-    })
-  }
+  const target = elements.find((el) => {
+    const d = describe(el)
+    return d.tag === descriptor.tag && d.text === descriptor.text && d.onclick === descriptor.onclick && d.href === descriptor.href
+  })
 
   if (!target) return { clicked: false }
   target.click()

@@ -161,11 +161,12 @@ describe('content-diagnostic.js: collectAllTableRowFacts — the ONLY function t
   })
 
   it('never reads an input cell\'s .value — only whether it HAS an input, and non-input cells\' text', () => {
-    // The known-filter reads (subjectFilter/classroomFilter) and the
-    // pagination-widget reads (extractPaginationHintsInline's current
-    // page/page size controls — never a student's own score cell) are
-    // deliberate, separate, documented exceptions — excluded here.
-    const withoutKnownFilterRead = source.replace(/function extractPaginationHintsInline[\s\S]*$/, '')
+    // The known-filter reads (subjectFilter/classroomFilter) are a
+    // deliberate, separate, documented exception — excluded here.
+    // FINAL PAGINATION FIX: pagination reading (which does read input
+    // values) has moved OUT of this function entirely, into
+    // inspectPaginationControls — see that function's own describe block.
+    const withoutKnownFilterRead = source.replace(/function readKnownFilterInline[\s\S]*$/, '')
     expect(withoutKnownFilterRead).not.toMatch(/\.value\b/)
   })
 
@@ -357,14 +358,36 @@ describe('BUG FIX — content-diagnostic.js: inspectPaginationControls, read-onl
       expect(source).toContain(field)
     }
   })
+
+  it('FINAL PAGINATION FIX: also reports value/title/src/className/surroundingText — the full live-diagnostic metadata "ตรวจปุ่มเปลี่ยนหน้า SGS" needs', () => {
+    for (const field of ['value', 'title', 'src', 'className', 'surroundingText']) {
+      expect(source).toContain(field)
+    }
+  })
+
+  it('FINAL PAGINATION FIX: never requires the current/total page numbers to appear in a single text node — the "of N" anchor carries only the total; the current page comes from a residual <input>', () => {
+    expect(source).not.toMatch(/\(\\d\+\)\\s\*ของ/)
+    expect(source).toContain('PLAIN_INPUT_SELECTOR')
+    expect(source).toContain('currentPageValue')
+  })
+
+  it('FINAL PAGINATION FIX: "search the same DOM namespace" — once any candidate\'s id ends with a confirmed pager suffix, derives and looks up the other three via document.getElementById, never a guess', () => {
+    expect(source).toContain('PAGER_ID_SUFFIXES')
+    expect(source).toMatch(/document\.getElementById\(otherId\)/)
+  })
+
+  it('the current-page value is only ever trusted when exactly ONE plain input is found — more than one is honestly ambiguous, never picked at random', () => {
+    expect(source).toMatch(/if \(plainInputs\.length === 1\) currentPageValue = plainInputs\[0\]\.value/)
+  })
 })
 
 describe('BUG FIX — content-diagnostic.js: clickPaginationControl, the ONLY page-advance click in this whole file', () => {
   const source = sliceFunction(contentDiagnosticSource, 'clickPaginationControl', CONTENT_DIAGNOSTIC_FUNCTIONS)
 
-  it('the ONLY .click() call anywhere in content-diagnostic.js', () => {
+  it('the ONLY .click() calls anywhere in content-diagnostic.js — both live inside clickPaginationControl (the id-based path and the no-id fallback path)', () => {
     const allClicks = [...contentDiagnosticSource.matchAll(/\.click\(\)/g)]
-    expect(allClicks.length).toBe(1)
+    expect(allClicks.length).toBe(2)
+    expect(source).toContain('byId.click()')
     expect(source).toContain('target.click()')
   })
 
@@ -372,8 +395,8 @@ describe('BUG FIX — content-diagnostic.js: clickPaginationControl, the ONLY pa
     expect(contentDiagnosticSource).not.toMatch(/\.preventDefault\(/)
   })
 
-  it('re-locates the element fresh by id first, then by an EXACT match on every other captured field — never a loose/partial match that could click a different control', () => {
-    expect(source).toMatch(/elements\.find\(\(el\) => el\.id === descriptor\.id\)/)
+  it('FINAL PAGINATION FIX: re-locates the element fresh via document.getElementById when the confirmed descriptor has an id (globally unique, the now-PREFERRED path since every real pager control is found by its own id) — falling back to an EXACT match on every other captured field only when there is no id to trust, never a loose/partial match', () => {
+    expect(source).toMatch(/document\.getElementById\(descriptor\.id\)/)
     expect(source).toMatch(/d\.tag === descriptor\.tag && d\.text === descriptor\.text && d\.onclick === descriptor\.onclick && d\.href === descriptor\.href/)
   })
 
@@ -566,6 +589,13 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(source).not.toMatch(/\bpollForConfirmedPageAdvance\b/)
     expect(source).not.toMatch(/\bpersistActiveAutoRunState\b/)
     expect(source).not.toMatch(/\bAUTO_RUN_STORAGE_KEY\b/)
+  })
+
+  it('FINAL PAGINATION FIX: "ตรวจปุ่มเปลี่ยนหน้า SGS" runs a read-only inspection and renders buildPaginationDiagnosticReport\'s output — it never starts, stops, or otherwise touches an active run', () => {
+    const fn = source.slice(source.indexOf('async function runPaginationDiagnostic'), source.indexOf('arInspectPaginationBtn.addEventListener'))
+    expect(fn).toContain('func: inspectPaginationControls')
+    expect(fn).toContain('buildPaginationDiagnosticReport(')
+    expect(fn).not.toMatch(/AR_MESSAGE\.(START|STOP|MANUAL_CONTINUE)/)
   })
 
   it('TRUE unattended auto-run (item 3): "เริ่มส่งครบทั้งห้อง" sends exactly one AR_START message carrying the teacher\'s approval (subject/classroom/targetColumn/payload/overwriteMode/tabId) to background.js — the run itself is never started any other way', () => {

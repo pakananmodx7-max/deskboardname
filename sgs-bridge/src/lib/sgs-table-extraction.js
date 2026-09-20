@@ -540,90 +540,27 @@ export function classifyScoreColumns(tableFacts, run, identifierColumns) {
 // number, plain text "ของ 4" (Thai "of 4") for the total page count,
 // plain text "32 รายการ" for the total record count, and another
 // `<input>` holding the page size next to plain text "/หน้า". There is
-// NO literal "1/4" or "page 1 of 4" string anywhere on the real page —
-// an earlier version of this fix assumed one, which silently left
-// currentPage/totalPages `null` forever on the live page (see
-// parseRealPaginationFragments below for the actual fix). content-
-// diagnostic.js's collectAllTableRowFacts extracts these via the SAME
-// fragment-walk algorithm (never a guessed selector) and hands them here
-// as `hints` — this module never reads the DOM itself. `detected: false`
-// is an honest answer when NEITHER method finds anything, not a claim
-// that the page never paginates.
+// NO literal "1/4" or "page 1 of 4" string anywhere on the real page.
+// FINAL PAGINATION FIX: content-diagnostic.js's inspectPaginationControls
+// now does the real DOM reading — a container-scoped search anchored on
+// each of those three texts, plus a "search the same DOM namespace" id
+// lookup for the actual Next/Last controls (pagination-control.js's
+// computeSiblingPagerIds) — and pagination-control.js's
+// buildPaginationHintsFromInspection turns its result into the `hints`
+// shape this module expects. This module never reads the DOM itself.
+// `detected: false` is an honest answer when NEITHER method finds
+// anything, not a claim that the page never paginates.
 // ==================================================
 
 const PAGE_NUMBER_PATTERN = /^\d{1,3}$/
 
 /**
- * BUG FIX — the real SGS pagination cluster's current-page and page-size
- * numbers each live in their OWN `<input>`, immediately followed by their
- * label as plain text ("ของ 4" for the total page count, "หน้า" for the
- * page-size label) — never concatenated into one string like "1/4" or
- * "page 1 of 4". This is the ONE place that exact, confirmed shape is
- * parsed, and it is fully DOM-free/pure so it can be unit-tested against
- * a fixture matching the real layout without a browser.
- *
- * `fragments` is a linear, DOCUMENT-ORDER list of every non-empty text
- * node and every `<input>` element on the page, collected by content-
- * diagnostic.js's own DOM walk (that file duplicates this exact algorithm
- * inline, since its functions must stay closure-free/self-contained — see
- * that file's own header comment on why) as
- * `{type: 'text', value: string} | {type: 'input', value: string}`.
- *
- * The rule: a number-bearing input is read ONLY when it is the fragment
- * immediately preceding its own label text — the real page's own
- * confirmed shape ("current page input: 1" / "text immediately beside
- * it: ของ 4", and "page size input/value: 10" / "text: /หน้า"). An input
- * anywhere else on the page (e.g. a student's score cell) is never
- * mistaken for either, since it is never immediately adjacent to either
- * label text.
- */
-export function parseRealPaginationFragments(fragments) {
-  let totalPages = null
-  let currentPage = null
-  let totalStudentRows = null
-  let pageSize = null
-
-  for (let i = 0; i < fragments.length; i++) {
-    const fragment = fragments[i]
-    if (fragment.type !== 'text') continue
-
-    const ofMatch = totalPages === null ? /ของ\s*(\d+)/.exec(fragment.value) : null
-    if (ofMatch) {
-      totalPages = Number(ofMatch[1])
-      const prev = fragments[i - 1]
-      if (prev && prev.type === 'input') {
-        const parsed = Number(prev.value)
-        if (Number.isFinite(parsed)) currentPage = parsed
-      }
-      continue
-    }
-
-    const itemsMatch = totalStudentRows === null ? /(\d+)\s*รายการ/.exec(fragment.value) : null
-    if (itemsMatch) {
-      totalStudentRows = Number(itemsMatch[1])
-      continue
-    }
-
-    const pageSizeLabelMatch = pageSize === null ? /หน้า/.exec(fragment.value) : null
-    if (pageSizeLabelMatch) {
-      const prev = fragments[i - 1]
-      if (prev && prev.type === 'input') {
-        const parsed = Number(prev.value)
-        if (Number.isFinite(parsed)) pageSize = parsed
-      }
-    }
-  }
-
-  return { currentPage, totalPages, totalStudentRows, pageSize }
-}
-
-/**
- * The live-confirmed detection path: trusts collectAllTableRowFacts's own
- * fragment-walk extraction (`paginationHints`, built by
- * parseRealPaginationFragments above) whenever it found BOTH a current
- * and a total page number. `totalStudentRows`/`pageSize` are reported
- * when that text/input was found, `null` when it wasn't — never guessed
- * from `visibleStudentRows × totalPages`, since a partial last page would
+ * The live-confirmed detection path: trusts the caller's own DOM-read
+ * `hints` (see the module doc comment above for where they now come
+ * from) whenever it found BOTH a current and a total page number.
+ * `totalStudentRows`/`pageSize` are reported when that text/input was
+ * found, `null` when it wasn't — never guessed from
+ * `visibleStudentRows × totalPages`, since a partial last page would
  * make that arithmetic silently wrong.
  */
 function detectPaginationFromHints(hints, studentRowCount) {

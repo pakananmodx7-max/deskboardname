@@ -43,6 +43,38 @@ export const PAGINATION_ROLE = {
   UNKNOWN: 'UNKNOWN',
 }
 
+/**
+ * FINAL PAGINATION FIX — the CONFIRMED, live-observed id suffix
+ * convention for this exact SGS deployment's pager controls (an
+ * ASP.NET WebForms templated pager, e.g.
+ * `ctl00_PageContent_TblTranscriptsPagination__FirstPage` /
+ * `...__PreviousPage`) — never a generic "id contains next/last"
+ * substring guess (that weaker rule stays below, at 'low' confidence,
+ * for anything that doesn't match this exact suffix). Checked FIRST and
+ * at 'high' confidence: this is the ONE signal actually confirmed live
+ * against this deployment, more certain here than the older
+ * NextPreviousPagerField `Page$Next` postback convention below (which
+ * has never been independently confirmed against this specific
+ * deployment).
+ */
+export const ASPNET_PAGER_ID_SUFFIXES = {
+  FIRST: 'FirstPage',
+  PREV: 'PreviousPage',
+  NEXT: 'NextPage',
+  LAST: 'LastPage',
+}
+
+const ASPNET_PAGER_SUFFIX_LIST = [
+  { role: PAGINATION_ROLE.FIRST, suffix: ASPNET_PAGER_ID_SUFFIXES.FIRST },
+  { role: PAGINATION_ROLE.PREV, suffix: ASPNET_PAGER_ID_SUFFIXES.PREV },
+  { role: PAGINATION_ROLE.NEXT, suffix: ASPNET_PAGER_ID_SUFFIXES.NEXT },
+  { role: PAGINATION_ROLE.LAST, suffix: ASPNET_PAGER_ID_SUFFIXES.LAST },
+]
+
+function idEndsWithSuffix(id, suffix) {
+  return typeof id === 'string' && id.length >= suffix.length && id.toLowerCase().endsWith(suffix.toLowerCase())
+}
+
 const POSTBACK_ROLE_PATTERNS = [
   { role: PAGINATION_ROLE.NEXT, pattern: /page\$next/i },
   { role: PAGINATION_ROLE.PREV, pattern: /page\$prev/i },
@@ -73,6 +105,12 @@ const ID_NAME_ROLE_PATTERNS = [
  * @returns {{role: string, confidence: 'high'|'medium'|'low'|'none', reason: string}}
  */
 export function classifyPaginationCandidate(candidate) {
+  for (const { role, suffix } of ASPNET_PAGER_SUFFIX_LIST) {
+    if (idEndsWithSuffix(candidate.id, suffix)) {
+      return { role, confidence: 'high', reason: `id ends with the confirmed ASP.NET pager control suffix "${suffix}"` }
+    }
+  }
+
   const postback = `${candidate.onclick ?? ''} ${candidate.href ?? ''}`
   for (const { role, pattern } of POSTBACK_ROLE_PATTERNS) {
     if (pattern.test(postback)) {
@@ -138,6 +176,114 @@ export function findSgsNextPageControl(candidates) {
  */
 export function isConfidentEnoughToAutoClick(confidence) {
   return confidence === 'high' || confidence === 'medium'
+}
+
+/**
+ * FINAL PAGINATION FIX — classifies EVERY candidate into all four roles
+ * at once (not just NEXT — see findSgsNextPageControl above for that
+ * narrower, unchanged helper), each with its own best-confidence match.
+ * This is what the live diagnostic report ("ตรวจปุ่มเปลี่ยนหน้า SGS") and
+ * the sibling-id derivation below both build on.
+ */
+export function identifyPaginationControlSet(candidates) {
+  const confidenceRank = { high: 3, medium: 2, low: 1, none: 0 }
+  const roleKey = { FIRST: 'first', PREV: 'previous', NEXT: 'next', LAST: 'last' }
+  const result = { first: null, previous: null, next: null, last: null }
+
+  for (const candidate of candidates ?? []) {
+    if (candidate.disabled) continue
+    const classification = classifyPaginationCandidate(candidate)
+    const key = roleKey[classification.role]
+    if (!key) continue
+    if (!result[key] || confidenceRank[classification.confidence] > confidenceRank[result[key].confidence]) {
+      result[key] = { control: candidate, confidence: classification.confidence, reason: classification.reason }
+    }
+  }
+
+  return result
+}
+
+/**
+ * FINAL PAGINATION FIX — "search the same DOM namespace": given ANY one
+ * confirmed pager control id (e.g. the live-confirmed
+ * `ctl00_PageContent_TblTranscriptsPagination__FirstPage`), derives the
+ * other three roles' expected ids by substituting the SAME known suffix
+ * — a literal, deterministic string operation, never a guess. The
+ * caller (content-diagnostic.js) is what actually looks these up via
+ * `document.getElementById`, since this module has no DOM access; this
+ * is only the pure id-string derivation, so it's unit-testable without a
+ * browser.
+ *
+ * @returns {{first: string, previous: string, next: string, last: string}|null} null when `id` doesn't end with any known suffix at all
+ */
+export function computeSiblingPagerIds(id) {
+  if (typeof id !== 'string' || id.length === 0) return null
+  for (const { suffix } of ASPNET_PAGER_SUFFIX_LIST) {
+    if (idEndsWithSuffix(id, suffix)) {
+      const prefix = id.slice(0, id.length - suffix.length)
+      return {
+        first: prefix + ASPNET_PAGER_ID_SUFFIXES.FIRST,
+        previous: prefix + ASPNET_PAGER_ID_SUFFIXES.PREV,
+        next: prefix + ASPNET_PAGER_ID_SUFFIXES.NEXT,
+        last: prefix + ASPNET_PAGER_ID_SUFFIXES.LAST,
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * FINAL PAGINATION FIX — turns content-diagnostic.js's
+ * inspectPaginationControls() result into the exact `hints` shape
+ * detectPagination/detectPaginationFromHints (sgs-table-extraction.js)
+ * already expect: `{currentPage, totalPages, totalStudentRows,
+ * pageSize}`. Never guesses a value from another — a field this
+ * inspection couldn't confidently read (e.g. an ambiguous or missing
+ * current-page input) stays honestly `null`, which is exactly what makes
+ * `detectPaginationFromHints` correctly report `detected: false` for it.
+ */
+export function buildPaginationHintsFromInspection(inspection) {
+  const toNumber = (raw) => {
+    if (raw === null || raw === undefined || raw === '') return null
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  if (!inspection) return { currentPage: null, totalPages: null, totalStudentRows: null, pageSize: null }
+  return {
+    currentPage: toNumber(inspection.currentPageValue),
+    totalPages: toNumber(inspection.totalPagesText),
+    totalStudentRows: toNumber(inspection.totalRowsText),
+    pageSize: toNumber(inspection.pageSizeValue),
+  }
+}
+
+/**
+ * The exact live diagnostic report shape item 2 of this fix requires —
+ * rendered by the new "ตรวจปุ่มเปลี่ยนหน้า SGS" button so a teacher (or a
+ * developer) can see precisely what this extension currently detects,
+ * never a black box. `controls.*` reports the matched element's id when
+ * it has one (the far more useful, stable identity for a human reading
+ * this report), or a short human description when it doesn't.
+ */
+export function buildPaginationDiagnosticReport(inspection) {
+  const hints = buildPaginationHintsFromInspection(inspection)
+  const controlSet = identifyPaginationControlSet(inspection?.candidates ?? [])
+  const describeControl = (entry) => {
+    if (!entry) return null
+    return entry.control.id || `(${entry.control.tag}, no id: "${entry.control.text || entry.control.value || ''}")`
+  }
+  return {
+    currentPage: hints.currentPage,
+    totalPages: hints.totalPages,
+    totalRows: hints.totalStudentRows,
+    pageSize: hints.pageSize,
+    controls: {
+      first: describeControl(controlSet.first),
+      previous: describeControl(controlSet.previous),
+      next: describeControl(controlSet.next),
+      last: describeControl(controlSet.last),
+    },
+  }
 }
 
 /**
