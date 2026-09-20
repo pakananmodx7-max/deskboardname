@@ -64,6 +64,28 @@ export function planHasAmbiguousWriteCandidate(plan) {
 }
 
 /**
+ * BUG FIX — the real SGS page never renders a "1/4" or "page 1 of 4"
+ * string anywhere; its current/total page numbers live in SEPARATE DOM
+ * elements (an `<input>` for the current page, plain text "ของ 4" for
+ * the total — see sgs-table-extraction.js's parseRealPaginationFragments
+ * for the actual parsing fix). Before this fix, that meant
+ * `pagination.currentPage`/`totalPages` silently stayed `null` forever on
+ * the real page, and auto-run would still start and sit at "หน้า ? / ?"
+ * with 0 students ever processed, never surfacing why. This is the
+ * explicit, honest stop for that state — an unknown page is never a safe
+ * default to guess forward from.
+ */
+export const PAGINATION_UNKNOWN_MESSAGE = 'ยังตรวจไม่พบตัวควบคุมหน้าของ SGS กรุณาตรวจสอบโครงสร้างหน้า'
+
+/** @param {{detected: boolean, currentPage: number|null, totalPages: number|null}|null} pagination */
+export function isPaginationReadyForAutoRun(pagination) {
+  if (!pagination || !pagination.detected) return false
+  if (pagination.currentPage === null || pagination.currentPage === undefined || pagination.currentPage < 1) return false
+  if (pagination.totalPages === null || pagination.totalPages === undefined || pagination.totalPages < pagination.currentPage) return false
+  return true
+}
+
+/**
  * The ONE gate checked before every page's write — the FIRST failing
  * condition stops the entire run immediately (item 5: never a batch of
  * reasons, never a partial continue). Page-advance failures are handled
@@ -75,6 +97,7 @@ export function planHasAmbiguousWriteCandidate(plan) {
  *
  * @param {{
  *   gridFound: boolean,
+ *   paginationReady: boolean,
  *   contextRevalidation: {ok: boolean, reason: string|null},
  *   columnWritableNow: boolean,
  *   headerCheckboxOk: boolean,
@@ -83,6 +106,7 @@ export function planHasAmbiguousWriteCandidate(plan) {
  */
 export function evaluateAutoRunStopCondition({
   gridFound,
+  paginationReady,
   contextRevalidation,
   columnWritableNow,
   headerCheckboxOk,
@@ -90,6 +114,9 @@ export function evaluateAutoRunStopCondition({
 }) {
   if (!gridFound) {
     return { shouldStop: true, reason: 'ไม่พบตารางคะแนนนักเรียนในหน้านี้' }
+  }
+  if (!paginationReady) {
+    return { shouldStop: true, reason: PAGINATION_UNKNOWN_MESSAGE }
   }
   if (!contextRevalidation.ok) {
     return { shouldStop: true, reason: contextRevalidation.reason }

@@ -106,6 +106,7 @@ describe('buildCompactStudentGridReport — the exact shape the spec requires', 
       totalPages: null,
       visibleStudentRows: 3,
       totalStudentRows: null,
+      pageSize: null,
     })
     // Only 3 sample rows here — computeGridConfidence requires >=5 rows
     // for "high," so this small fixture is honestly "medium."

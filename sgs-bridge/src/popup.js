@@ -72,7 +72,7 @@ import {
 // local scan/plan, using the SAME buildAutoRunPreRunSummary as before)
 // and renders whatever state background.js reports, so only these two
 // display-facing helpers are still needed here.
-import { buildAutoRunPreRunSummary, buildAutoRunReport, emptyAutoRunSummary } from './lib/auto-run.js'
+import { buildAutoRunPreRunSummary, buildAutoRunReport, emptyAutoRunSummary, isPaginationReadyForAutoRun, PAGINATION_UNKNOWN_MESSAGE } from './lib/auto-run.js'
 import { AR_MESSAGE } from './lib/run-orchestrator.js'
 
 const DEFAULT_SGS_KEYWORD = 'sgs'
@@ -1845,6 +1845,20 @@ async function runAutoRunPreRunPreview() {
   if (!scan.ok || !loadedPayload) {
     arAbortReasonEl.textContent = scan.reason ?? 'กรุณาโหลด Bridge Payload ก่อน'
     arAbortReasonEl.hidden = false
+    return
+  }
+
+  // BUG FIX (item 3/4): a run must never start against a page whose own
+  // pagination couldn't be confidently read — an unknown current/total
+  // page previously still let the teacher start, ending up stuck showing
+  // "หน้า ? / ?" with nothing ever written. Checked here, BEFORE the
+  // prerun panel/run button ever appear, and re-checked again by
+  // content-script.js itself right before it writes page 1 (in case the
+  // page changed between this preview and the actual click).
+  if (!isPaginationReadyForAutoRun(currentPagination)) {
+    arAbortReasonEl.textContent = PAGINATION_UNKNOWN_MESSAGE
+    arAbortReasonEl.hidden = false
+    arRunBtn.disabled = true
     return
   }
 

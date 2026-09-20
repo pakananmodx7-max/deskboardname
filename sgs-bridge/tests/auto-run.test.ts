@@ -7,7 +7,9 @@ import {
   countReadyRows,
   emptyAutoRunSummary,
   evaluateAutoRunStopCondition,
+  isPaginationReadyForAutoRun,
   mergeAutoRunSummaries,
+  PAGINATION_UNKNOWN_MESSAGE,
   pageFailureExceedsThreshold,
   planHasAmbiguousWriteCandidate,
   summarizeAutoRunPageResult,
@@ -62,10 +64,46 @@ describe('planHasAmbiguousWriteCandidate', () => {
   })
 })
 
+describe('isPaginationReadyForAutoRun — BUG FIX: never a safe default to guess forward from when the real SGS pagination could not be confidently read', () => {
+  it('true for a fully detected, internally consistent pagination', () => {
+    expect(isPaginationReadyForAutoRun({ detected: true, currentPage: 1, totalPages: 4 })).toBe(true)
+  })
+
+  it('false when not detected at all', () => {
+    expect(isPaginationReadyForAutoRun({ detected: false, currentPage: null, totalPages: null })).toBe(false)
+  })
+
+  it('false for a null/undefined pagination value', () => {
+    expect(isPaginationReadyForAutoRun(null)).toBe(false)
+    expect(isPaginationReadyForAutoRun(undefined)).toBe(false)
+  })
+
+  it('false when currentPage is null even though detected is true', () => {
+    expect(isPaginationReadyForAutoRun({ detected: true, currentPage: null, totalPages: 4 })).toBe(false)
+  })
+
+  it('false when totalPages is null even though detected is true', () => {
+    expect(isPaginationReadyForAutoRun({ detected: true, currentPage: 1, totalPages: null })).toBe(false)
+  })
+
+  it('false when currentPage is less than 1 — never a real page number', () => {
+    expect(isPaginationReadyForAutoRun({ detected: true, currentPage: 0, totalPages: 4 })).toBe(false)
+  })
+
+  it('false when totalPages is less than currentPage — internally inconsistent, never trusted', () => {
+    expect(isPaginationReadyForAutoRun({ detected: true, currentPage: 5, totalPages: 4 })).toBe(false)
+  })
+
+  it('true when currentPage equals totalPages (the final page)', () => {
+    expect(isPaginationReadyForAutoRun({ detected: true, currentPage: 4, totalPages: 4 })).toBe(true)
+  })
+})
+
 describe('evaluateAutoRunStopCondition', () => {
   function okInput() {
     return {
       gridFound: true,
+      paginationReady: true,
       contextRevalidation: okRevalidation,
       columnWritableNow: true,
       headerCheckboxOk: true,
@@ -80,6 +118,12 @@ describe('evaluateAutoRunStopCondition', () => {
   it('stops when the grid cannot be found', () => {
     const result = evaluateAutoRunStopCondition({ ...okInput(), gridFound: false })
     expect(result.shouldStop).toBe(true)
+  })
+
+  it('BUG FIX (item 3): stops with the exact required message when pagination could not be confidently read — never starts/continues a run at an unknown page', () => {
+    const result = evaluateAutoRunStopCondition({ ...okInput(), paginationReady: false })
+    expect(result.shouldStop).toBe(true)
+    expect(result.reason).toBe(PAGINATION_UNKNOWN_MESSAGE)
   })
 
   it('stops on a subject/classroom/column revalidation failure — the reason is passed straight through', () => {

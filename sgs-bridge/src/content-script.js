@@ -268,6 +268,7 @@
       const plan = scan.ok ? buildPlanFromScan(libs, runState, scan) : []
       const stop = libs.autoRun.evaluateAutoRunStopCondition({
         gridFound: scan.ok,
+        paginationReady: libs.autoRun.isPaginationReadyForAutoRun(scan.pagination),
         contextRevalidation: gate,
         columnWritableNow: scan.ok ? scan.candidate.writableScoreColumns.some((c) => c.key === scan.column.key) : false,
         headerCheckboxOk: scan.ok ? !scan.column.headerCheckboxPresent || scan.column.headerCheckboxChecked === true : false,

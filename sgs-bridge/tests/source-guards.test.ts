@@ -161,9 +161,11 @@ describe('content-diagnostic.js: collectAllTableRowFacts — the ONLY function t
   })
 
   it('never reads an input cell\'s .value — only whether it HAS an input, and non-input cells\' text', () => {
-    // The known-filter reads (subjectFilter/classroomFilter) are a
-    // deliberate, separate, documented exception — excluded here.
-    const withoutKnownFilterRead = source.replace(/function readKnownFilterInline[\s\S]*$/, '')
+    // The known-filter reads (subjectFilter/classroomFilter) and the
+    // pagination-widget reads (extractPaginationHintsInline's current
+    // page/page size controls — never a student's own score cell) are
+    // deliberate, separate, documented exceptions — excluded here.
+    const withoutKnownFilterRead = source.replace(/function extractPaginationHintsInline[\s\S]*$/, '')
     expect(withoutKnownFilterRead).not.toMatch(/\.value\b/)
   })
 

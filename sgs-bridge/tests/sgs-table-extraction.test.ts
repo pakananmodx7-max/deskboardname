@@ -23,6 +23,7 @@ import {
   looksLikeStudentRowFingerprint,
   matchTargetColumnToRealColumns,
   parseMaxScoreFromHeader,
+  parseRealPaginationFragments,
   pickBestStudentGridCandidate,
   scanScoreColumnState,
   sgsRowIndexFromKey,
@@ -926,6 +927,7 @@ describe('detectPagination — best-effort, never blocking, never auto-changing 
       totalPages: null,
       visibleStudentRows: 10,
       totalStudentRows: null,
+      pageSize: null,
     })
   })
 
@@ -944,6 +946,7 @@ describe('detectPagination — best-effort, never blocking, never auto-changing 
       totalPages: 3,
       visibleStudentRows: 10,
       totalStudentRows: null,
+      pageSize: null,
     })
   })
 
@@ -975,6 +978,7 @@ describe('detectPagination — best-effort, never blocking, never auto-changing 
       totalPages: null,
       visibleStudentRows: 0,
       totalStudentRows: null,
+      pageSize: null,
     })
   })
 
@@ -985,7 +989,7 @@ describe('detectPagination — best-effort, never blocking, never auto-changing 
   })
 })
 
-describe('detectPagination — LIVE DISCOVERY: real SGS pagination is page-wide TEXT ("32 รายการ" / "10 / หน้า" / "page 1 of 4"), not a row of page-number links', () => {
+describe('detectPagination — LIVE DISCOVERY: real SGS pagination is a cluster of SEPARATE elements ("ของ 4" text, "32 รายการ" text, and two <input> values), never a single "1/4" or "page 1 of 4" string', () => {
   function studentGridTableFacts(tableIndex: number, studentCount = 10) {
     const header = [text(''), text(''), text(''), text('ช่อง 1 (15)')]
     const rows = [header]
@@ -995,7 +999,7 @@ describe('detectPagination — LIVE DISCOVERY: real SGS pagination is page-wide 
     return { tableIndex, selectorFingerprint: `table[${tableIndex}]`, rows }
   }
 
-  it('reports the exact shape from the bug report: page 1 of 4, 32 total, 10 visible', () => {
+  it('reports the exact shape from the bug report: current page 1, "ของ 4", 32 total, page size 10', () => {
     const tables = [studentGridTableFacts(0, 10)]
     const candidate = pickBestStudentGridCandidate(tables)
     const hints = { totalStudentRows: 32, pageSize: 10, currentPage: 1, totalPages: 4 }
@@ -1005,6 +1009,7 @@ describe('detectPagination — LIVE DISCOVERY: real SGS pagination is page-wide 
       totalPages: 4,
       visibleStudentRows: 10,
       totalStudentRows: 32,
+      pageSize: 10,
     })
   })
 
@@ -1025,7 +1030,7 @@ describe('detectPagination — LIVE DISCOVERY: real SGS pagination is page-wide 
     const tables = [gridTable, pagerTable]
     const candidate = pickBestStudentGridCandidate(tables)
     const result = detectPagination(tables, candidate, undefined)
-    expect(result).toEqual({ detected: true, currentPage: 2, totalPages: 3, visibleStudentRows: 10, totalStudentRows: null })
+    expect(result).toEqual({ detected: true, currentPage: 2, totalPages: 3, visibleStudentRows: 10, totalStudentRows: null, pageSize: null })
   })
 
   it('falls back when hints exist but are incomplete (e.g. only the item count was found)', () => {
@@ -1034,6 +1039,77 @@ describe('detectPagination — LIVE DISCOVERY: real SGS pagination is page-wide 
     const result = detectPagination(tables, candidate, { totalStudentRows: 32, pageSize: null, currentPage: null, totalPages: null })
     expect(result.detected).toBe(false)
     expect(result.totalStudentRows).toBeNull()
+  })
+})
+
+describe('parseRealPaginationFragments — BUG FIX regression fixture: the real SGS layout ("1" input / "ของ 4" text / "32 รายการ" text / "10" input / "/หน้า" text)', () => {
+  function textFrag(value: string) {
+    return { type: 'text' as const, value }
+  }
+  function inputFrag(value: string) {
+    return { type: 'input' as const, value }
+  }
+
+  it('item 5\'s exact live example: current page 1 of 4, 32 records, page size 10', () => {
+    const fragments = [inputFrag('1'), textFrag('ของ 4'), textFrag('32 รายการ'), inputFrag('10'), textFrag('/หน้า')]
+    expect(parseRealPaginationFragments(fragments)).toEqual({
+      currentPage: 1,
+      totalPages: 4,
+      totalStudentRows: 32,
+      pageSize: 10,
+    })
+  })
+
+  it('page 2 of 4 — only the current-page input differs', () => {
+    const fragments = [inputFrag('2'), textFrag('ของ 4'), textFrag('32 รายการ'), inputFrag('10'), textFrag('/หน้า')]
+    expect(parseRealPaginationFragments(fragments)).toEqual({ currentPage: 2, totalPages: 4, totalStudentRows: 32, pageSize: 10 })
+  })
+
+  it('page 3 of 4', () => {
+    const fragments = [inputFrag('3'), textFrag('ของ 4'), textFrag('32 รายการ'), inputFrag('10'), textFrag('/หน้า')]
+    expect(parseRealPaginationFragments(fragments)).toEqual({ currentPage: 3, totalPages: 4, totalStudentRows: 32, pageSize: 10 })
+  })
+
+  it('page 4 of 4 (the final page)', () => {
+    const fragments = [inputFrag('4'), textFrag('ของ 4'), textFrag('32 รายการ'), inputFrag('10'), textFrag('/หน้า')]
+    expect(parseRealPaginationFragments(fragments)).toEqual({ currentPage: 4, totalPages: 4, totalStudentRows: 32, pageSize: 10 })
+  })
+
+  it('never requires a literal "1/4" or "page 1 of 4" string — unrelated surrounding text/buttons are ignored', () => {
+    const fragments = [
+      textFrag('<<'),
+      textFrag('<'),
+      inputFrag('1'),
+      textFrag('ของ 4'),
+      textFrag('>'),
+      textFrag('>>'),
+      textFrag('32 รายการ'),
+      inputFrag('10'),
+      textFrag('/หน้า'),
+    ]
+    expect(parseRealPaginationFragments(fragments)).toEqual({ currentPage: 1, totalPages: 4, totalStudentRows: 32, pageSize: 10 })
+  })
+
+  it('never mistakes an unrelated input for the current page or page size when it is not immediately before the anchor text', () => {
+    const fragments = [inputFrag('999'), textFrag('some unrelated label'), textFrag('ของ 4'), textFrag('32 รายการ'), textFrag('/หน้า')]
+    const result = parseRealPaginationFragments(fragments)
+    expect(result.currentPage).toBeNull()
+    expect(result.pageSize).toBeNull()
+    expect(result.totalPages).toBe(4)
+    expect(result.totalStudentRows).toBe(32)
+  })
+
+  it('reports every field as null when none of the anchor texts are present at all', () => {
+    expect(parseRealPaginationFragments([textFrag('ไม่มีการแบ่งหน้า')])).toEqual({
+      currentPage: null,
+      totalPages: null,
+      totalStudentRows: null,
+      pageSize: null,
+    })
+  })
+
+  it('is pure — a plain function over plain data, no DOM access', () => {
+    expect(typeof parseRealPaginationFragments).toBe('function')
   })
 })
 

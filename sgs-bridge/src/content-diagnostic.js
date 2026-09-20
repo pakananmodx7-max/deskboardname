@@ -262,29 +262,85 @@ export function collectAllTableRowFacts() {
     paginationHints: extractPaginationHintsInline(),
   }
 
-  // LIVE DISCOVERY: the real SGS page's pagination is plain page-wide
-  // TEXT ("32 รายการ", "10 / หน้า", "page 1 of 4") — not a row of
-  // clickable page-number links inside the student table (the shape
-  // detectPagination in sgs-table-extraction.js originally assumed, and
-  // still falls back to if these patterns aren't found). Reads only
-  // `document.body.innerText` (never an input's current entry, never a
-  // student's own cell text) and extracts ONLY the three small numbers
-  // these patterns name — never the surrounding text itself, so nothing
-  // beyond a page-size/item-count/page-number is ever collected. This
-  // function is itself injected via executeScript's `func` and can't
-  // share code with a sibling function once serialized (see the file
-  // header).
+  // BUG FIX — the real SGS page never renders a single "1/4" or "page 1
+  // of 4" string anywhere; a hunt for that literal pattern (this
+  // function's previous implementation) always came back empty on the
+  // live page, silently leaving currentPage/totalPages `null` forever and
+  // getting auto-run stuck showing "หน้า ? / ?" with nothing ever
+  // written. The real layout is a small cluster of SEPARATE elements: an
+  // `<input>` holding the current page number, plain text "ของ 4" (Thai
+  // "of 4") for the total page count, plain text "32 รายการ" for the
+  // total record count, and another `<input>` holding the page size next
+  // to plain text "/หน้า". Reads nothing besides these page-wide widget
+  // controls — no browser-side storage of any kind, and never any OTHER
+  // input's value — only the ones immediately preceding these two
+  // specific label texts (the student grid's own score-cell inputs are
+  // never adjacent to either label, so they can never be mistaken for
+  // the pagination controls).
+  // This function is itself injected via executeScript's `func` and
+  // can't share code with a sibling function once serialized (see the
+  // file header) — it duplicates sgs-table-extraction.js's
+  // parseRealPaginationFragments algorithm exactly (see that function's
+  // own doc comment for why the "input immediately before the anchor
+  // text" rule is what the real page's own confirmed shape requires);
+  // the two must be kept in sync by hand.
   function extractPaginationHintsInline() {
-    const bodyText = document.body.innerText || document.body.textContent || ''
-    const totalMatch = bodyText.match(/(\d+)\s*รายการ/)
-    const pageSizeMatch = bodyText.match(/(\d+)\s*\/\s*หน้า/)
-    const pageOfMatch = bodyText.match(/page\s+(\d+)\s+of\s+(\d+)/i)
-    return {
-      totalStudentRows: totalMatch ? Number(totalMatch[1]) : null,
-      pageSize: pageSizeMatch ? Number(pageSizeMatch[1]) : null,
-      currentPage: pageOfMatch ? Number(pageOfMatch[1]) : null,
-      totalPages: pageOfMatch ? Number(pageOfMatch[2]) : null,
+    const fragments = []
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode(node) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          return node.tagName === 'INPUT' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+        }
+        const parentTag = node.parentElement ? node.parentElement.tagName : ''
+        if (parentTag === 'SCRIPT' || parentTag === 'STYLE' || parentTag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT
+        return (node.textContent || '').trim() !== '' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+      },
+    })
+    let node
+    while ((node = walker.nextNode())) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        fragments.push({ type: 'input', value: node.value != null ? String(node.value) : '' })
+      } else {
+        fragments.push({ type: 'text', value: (node.textContent || '').trim().replace(/\s+/g, ' ') })
+      }
     }
+
+    let totalPages = null
+    let currentPage = null
+    let totalStudentRows = null
+    let pageSize = null
+    for (let i = 0; i < fragments.length; i++) {
+      const fragment = fragments[i]
+      if (fragment.type !== 'text') continue
+
+      const ofMatch = totalPages === null ? /ของ\s*(\d+)/.exec(fragment.value) : null
+      if (ofMatch) {
+        totalPages = Number(ofMatch[1])
+        const prev = fragments[i - 1]
+        if (prev && prev.type === 'input') {
+          const parsed = Number(prev.value)
+          if (Number.isFinite(parsed)) currentPage = parsed
+        }
+        continue
+      }
+
+      const itemsMatch = totalStudentRows === null ? /(\d+)\s*รายการ/.exec(fragment.value) : null
+      if (itemsMatch) {
+        totalStudentRows = Number(itemsMatch[1])
+        continue
+      }
+
+      const pageSizeLabelMatch = pageSize === null ? /หน้า/.exec(fragment.value) : null
+      if (pageSizeLabelMatch) {
+        const prev = fragments[i - 1]
+        if (prev && prev.type === 'input') {
+          const parsed = Number(prev.value)
+          if (Number.isFinite(parsed)) pageSize = parsed
+        }
+      }
+    }
+
+    return { totalStudentRows, pageSize, currentPage, totalPages }
   }
 
   // Duplicates collectRawSgsFacts's own inline filter-reading logic —
