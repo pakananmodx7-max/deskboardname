@@ -39,27 +39,40 @@ without much narrower, explicitly-confirmed control. Two changes follow:
 2. **Bulk real fill has been removed.** Section 4 of the popup is now
    detection + student mapping + a READ-ONLY preview (existing SGS value
    vs. proposed value) — it never writes anything. In its place, section
-   5 scaffolds a much narrower **"ทดสอบ 1 คน" (test one student)** mode:
-   pick exactly one student and one column, see current/proposed values,
-   and a write path that can only ever touch that ONE cell
+   5 is a **CONTROLLED LIVE TEST — "ทดสอบ 1 คน" (test one student)**
+   mode: pick exactly one student and one column, see current/proposed
+   values, and a write path that can only ever touch that ONE cell
    (`buildSingleCellTestPlan` in `src/lib/single-cell-test.js` guarantees
    `writesByOffset` never contains more than one entry). Its confirm
-   button and checkbox ship **permanently disabled with no click
-   listener at all** — intentionally not wired up yet, pending detection
-   being revalidated against the live page.
+   checkbox and write button ARE wired up, but the checkbox only becomes
+   checkable once `evaluateSingleCellTestPreconditions` passes (student
+   grid found, detection confidence `"high"`, exactly one student and
+   one `writableScoreColumn` selected, the SGS header checkbox already
+   checked by the teacher, exactly one visible/enabled input in that
+   row, and a valid proposed score within the column's max) and the
+   write button only enables once the teacher also ticks that checkbox
+   (`canEnableSingleCellTestWrite`). Immediately before writing,
+   `readSingleCellRevalidationState` re-reads the same cell and
+   `revalidateSingleCellTestContext` aborts on ANY drift from the
+   preview (a different subject/classroom filter, a different student
+   at that row, the column changing, or the input becoming hidden/
+   disabled/multi-valued) — see "GUARD AGAINST STALE DOM" in
+   `src/lib/single-cell-test.js`. There is still no bulk fill of any
+   kind.
 
 ## What this extension does NOT do
 
 - Does not ask for, store, or transmit an SGS username/password.
 - Does not read or store SGS session cookies.
 - Does not connect to any database directly (SGS's or KrunameClass's).
-- Does not perform any automatic write to the live SGS page in this
-  phase — see "LIVE DISCOVERY" above. Section 4's preview only ever
-  READS existing values; section 5's single-cell test mode is built but
-  its write button stays disabled and unwired.
+- Does not perform any BULK write to the live SGS page in this phase —
+  see "LIVE DISCOVERY" above. Section 4's preview only ever READS
+  existing values. Section 5's single-cell test mode CAN write, but only
+  ever exactly one (student, column) cell per explicit, checkbox-
+  confirmed click — never a range, never a whole column.
 - Never clicks or toggles a Save/Submit button, or an SGS header
-  checkbox — the one thing this prototype could someday write (a single
-  confirmed cell) only ever sets that cell's value and dispatches
+  checkbox — the only thing this prototype can write (one confirmed
+  cell, one at a time) only ever sets that cell's value and dispatches
   `input`/`change` events; nothing here ever looks for, or clicks, any
   other control on the page.
 - Does not write to more than one SGS score column per operation, and
@@ -269,16 +282,25 @@ grid:
    derived/activatable column that merely happened to be displayed) —
    but per the LIVE DISCOVERY above, **nothing in this preview ever
    writes anything**; there is no bulk fill button anymore.
-10. **"ทดสอบ 1 คน" single-cell test (section 5, scaffolded but inert)** —
+10. **"ทดสอบ 1 คน" single-cell test (section 5, a CONTROLLED LIVE TEST)** —
     once the preview above succeeds, pickers for ONE student and ONE
     writable column are populated; clicking "แสดงตัวอย่าง 1 ช่อง" reads
-    that ONE cell's current value (`readColumnValues` with `runLength: 1`
-    at the student's row offset — never a range) and builds a plan via
-    `buildSingleCellTestPlan`, which guarantees `writesByOffset` can never
-    contain more than the one requested offset. The actual "ยืนยันทดลอง
-    เขียน 1 ช่อง" button and its confirmation checkbox are **permanently
-    disabled with no click listener wired up in popup.js at all** — by
-    design, until detection has been revalidated against the live page.
+    that ONE cell's current value AND its live visible/enabled state
+    (`readSingleCellRevalidationState`, at the student's row offset —
+    never a range) and builds a plan via `buildSingleCellTestPlan`,
+    which guarantees `writesByOffset` can never contain more than the
+    one requested offset. Only once every precondition in
+    `evaluateSingleCellTestPreconditions` passes does the "ฉันเข้าใจว่า
+    คะแนนจะถูกบันทึกจริงใน SGS" checkbox become checkable; only once the
+    teacher also checks it does "ยืนยัน ทดสอบ 1 คน" enable
+    (`canEnableSingleCellTestWrite`). Clicking it re-reads the same cell
+    one more time and aborts on any drift (`revalidateSingleCellTestContext`)
+    before calling `fillSgsColumnValues` — the SAME single-column write
+    primitive item 4 above never uses for a bulk fill. The result
+    (student/column/previous/new/success-or-failure) is reported in the
+    popup; changing the student/column selection, or completing a write,
+    always requires a fresh "แสดงตัวอย่าง 1 ช่อง" click before another
+    write can be confirmed.
 
 ### Pagination (best-effort, never automatic)
 
@@ -375,7 +397,7 @@ as-is.
 3. Under "5. ตรวจสอบโครงสร้างหน้า SGS", click the button.
 4. Click "คัดลอกผลลัพธ์" and paste the JSON back for cataloging.
 
-## Running the real-page inspection (detection + read-only preview only)
+## Running the real-page inspection (detection + read-only preview, plus the single-cell test)
 
 1. Load a bridge payload (section 1).
 2. Open the real SGS score-entry page for the matching subject/classroom
@@ -387,14 +409,17 @@ as-is.
    succeed). If the intended column shows up under "ยังไม่ได้เปิดใช้งานใน
    SGS" instead, manually check that column's header checkbox in SGS,
    then click "สแกนใหม่".
-5. Review the read-only preview table — **this is where it stops.** There
-   is no bulk fill button. Per the LIVE DISCOVERY above, SGS auto-saves
-   with no Save button, so this prototype does not perform any automatic
-   write to the live page yet.
-6. Section 5 ("ทดสอบ 1 คน") lets you pick one student and one column and
-   preview a single cell's current/proposed value, but its write-confirm
-   button is intentionally disabled and has no click handler wired up —
-   it is scaffolding for a future phase, not a usable action yet.
+5. Review the read-only preview table — **there is still no bulk fill
+   button.** Per the LIVE DISCOVERY above, SGS auto-saves with no Save
+   button, so this prototype never writes more than one cell at a time.
+6. Section 5 ("ทดสอบ 1 คน") — pick one student and one column, click
+   "แสดงตัวอย่าง 1 ช่อง". If every safety precondition passes, the
+   consent checkbox becomes checkable; check it and "ยืนยัน ทดสอบ 1 คน"
+   becomes clickable. Clicking it writes exactly that one cell on the
+   LIVE SGS page immediately (SGS auto-saves — there is no undo step)
+   and reports the result. If anything about the page changed since the
+   preview (subject/classroom filter, that row's student, the column, or
+   the input itself), the write aborts instead of proceeding.
 
 ## Tests
 
@@ -419,10 +444,17 @@ runtime dependencies and is a fully separate Node package.
   reviews SGS → final SGS Save." That assumed a Save step existed to
   review against; the real page auto-saves with no Save button, so that
   plan is no longer the target architecture.
-- Next actual step: validate the header-checkbox/visible-input detection
-  above against a real SGS page (via "ตรวจสอบโครงสร้างหน้า SGS"), THEN
-  deliberately enable the single-cell test mode's write button (section
-  5) — one explicit, reviewed change, never bundled with an unrelated
-  fix. Only once that single-cell path has been proven safe on a real
-  page should a much more conservative bulk-fill design (if any) be
-  reconsidered — never a return to the old "fill the whole column" flow.
+- **Done:** the single-cell test mode's write button (section 5) is now
+  enabled, gated behind `evaluateSingleCellTestPreconditions` +
+  `canEnableSingleCellTestWrite` + a write-time
+  `revalidateSingleCellTestContext` re-check — see item 10 above and
+  "CONTROLLED LIVE TEST" in `src/lib/single-cell-test.js`.
+- Next actual step: exercise this single-cell path against a REAL SGS
+  page for real (not just source/unit tests) across a representative
+  sample of the ~18 expected subject/classroom pages, confirming the
+  precondition gate and stale-DOM revalidation behave correctly live.
+  Only once that has been done for real should "ส่งทั้งคอลัมน์" (a much
+  more conservative bulk-fill design, if any) be reconsidered — never a
+  return to the old "fill the whole column in one shot" flow, and never
+  skipping the per-cell ownership/visibility checks this phase
+  established.

@@ -4,7 +4,13 @@ import {
   formatSgsExistingScoreDisplay,
   formatSgsNewValueDisplay,
 } from './lib/column-fill.js'
-import { collectAllTableRowFacts, collectRawSgsFacts, readColumnValues } from './content-diagnostic.js'
+import {
+  collectAllTableRowFacts,
+  collectRawSgsFacts,
+  fillSgsColumnValues,
+  readColumnValues,
+  readSingleCellRevalidationState,
+} from './content-diagnostic.js'
 import {
   buildCompactStudentGridReport,
   buildDiagnosticReport,
@@ -18,10 +24,17 @@ import {
   formatSgsExistingScoreDisplay as formatRealExistingScoreDisplay,
   formatSgsNewValueDisplay as formatRealNewValueDisplay,
 } from './lib/sgs-real-fill.js'
-// Item 5's "ทดสอบ 1 คน" (test one student) plan builder — see its own
-// doc comment for why the write button it feeds stays permanently
-// unwired in this phase (never a click listener, never enabled).
-import { buildSingleCellTestPlan, formatSingleCellTestSummary } from './lib/single-cell-test.js'
+// Item 5's "ทดสอบ 1 คน" (test one student) plan builder plus the
+// CONTROLLED LIVE TEST gate functions — see single-cell-test.js's own
+// doc comment for the full precondition list and why the write button
+// only ever enables once every one of them holds.
+import {
+  buildSingleCellTestPlan,
+  canEnableSingleCellTestWrite,
+  evaluateSingleCellTestPreconditions,
+  formatSingleCellTestSummary,
+  revalidateSingleCellTestContext,
+} from './lib/single-cell-test.js'
 import {
   buildGridWarnings,
   buildSgsRowKey,
@@ -82,17 +95,41 @@ const realDerivedColumnsEl = document.getElementById('real-derived-columns')
 const realFillPreviewWrap = document.getElementById('real-fill-preview-wrap')
 const realFillPreviewBody = document.getElementById('real-fill-preview-body')
 
-// Item 5's single-cell test scaffolding — see the module doc comment on
-// single-cell-test.js for why sctWriteBtn/sctConfirm never get a click
-// handler or their `disabled` attribute removed in this phase.
+// Item 5's single-cell test — CONTROLLED LIVE TEST: sctWriteBtn/sctConfirm
+// are wired up (see updateSingleCellTestGate/runSingleCellTestWrite below),
+// but the write button only ever enables once evaluateSingleCellTestPreconditions
+// passes AND the teacher's own consent checkbox is checked — see
+// single-cell-test.js's module doc comment for the full precondition list.
 const singleCellTestWrap = document.getElementById('single-cell-test-wrap')
 const sctStudentSelect = document.getElementById('sct-student')
 const sctColumnSelect = document.getElementById('sct-column')
 const sctPreviewBtn = document.getElementById('sct-preview-btn')
 const sctPreviewEl = document.getElementById('sct-preview')
+const sctStudentNameEl = document.getElementById('sct-student-name')
+const sctStudentNumberEl = document.getElementById('sct-student-number')
+const sctStudentCodeEl = document.getElementById('sct-student-code')
 const sctColumnLabelEl = document.getElementById('sct-column-label')
 const sctCurrentValueEl = document.getElementById('sct-current-value')
 const sctNewValueEl = document.getElementById('sct-new-value')
+const sctGateReasonEl = document.getElementById('sct-gate-reason')
+const sctWriteWarningEl = document.getElementById('sct-write-warning')
+const sctConfirmCheckbox = document.getElementById('sct-confirm')
+const sctWriteBtn = document.getElementById('sct-write-btn')
+const sctResultEl = document.getElementById('sct-result')
+const sctResultStudentEl = document.getElementById('sct-result-student')
+const sctResultColumnEl = document.getElementById('sct-result-column')
+const sctResultPreviousEl = document.getElementById('sct-result-previous')
+const sctResultNewEl = document.getElementById('sct-result-new')
+const sctResultStatusEl = document.getElementById('sct-result-status')
+
+/** The exact context the teacher's last successful single-cell preview
+ * confirmed — captured by runSingleCellTestPreview(), consumed by
+ * runSingleCellTestWrite() as the "known good" side of
+ * revalidateSingleCellTestContext's stale-DOM comparison. Cleared
+ * whenever the student/column selection changes (see the change
+ * listeners below) so a write can never be confirmed against a preview
+ * that no longer matches the teacher's current selection. */
+let confirmedSingleCellContext = null
 
 /** The raw facts collectAllTableRowFacts returned for the CURRENT
  * inspection — kept only so runColumnPreview() can read row text
@@ -279,16 +316,25 @@ function resetRealInspectionState() {
 }
 
 /**
- * Item 5's scaffolding, kept hidden until a writable-column preview
- * exists to populate it from. sctWriteBtn/sctConfirm are never touched
- * here (or anywhere else) — they stay exactly as HTML declared them
- * (disabled, no listener) for the whole lifetime of this phase.
+ * Item 5, kept hidden until a writable-column preview exists to populate
+ * it from. Always returns sctConfirmCheckbox/sctWriteBtn to their SAFE
+ * default (disabled, unchecked) — this is the one function every path
+ * that invalidates the current single-cell context (a fresh inspection,
+ * a changed student/column selection, a completed write) calls, so
+ * there is exactly one place that ever re-arms them to "not yet safe."
  */
 function resetSingleCellTestState() {
   singleCellTestWrap.hidden = true
   sctStudentSelect.replaceChildren()
   sctColumnSelect.replaceChildren()
   sctPreviewEl.hidden = true
+  sctGateReasonEl.hidden = true
+  sctWriteWarningEl.hidden = true
+  sctResultEl.hidden = true
+  confirmedSingleCellContext = null
+  sctConfirmCheckbox.checked = false
+  sctConfirmCheckbox.disabled = true
+  sctWriteBtn.disabled = true
 }
 
 async function loadPayloadFromFile(file) {
@@ -624,14 +670,15 @@ function renderRealFillPreview(plan) {
 }
 
 /**
- * Item 5 scaffolding: populates the "ทดสอบ 1 คน" student/column pickers
- * once a real column preview exists. Only MATCHED students with a real
- * KrunameClass score are offered (nothing else could ever produce a
- * valid single-cell plan — see buildSingleCellTestPlan), and only
- * writableNow columns are offered (never a derived/activatable one —
- * the same rule isConfirmedColumnWritable enforces for the main flow).
- * This only shows the section; it never enables or wires up the actual
- * write button (see the module doc comment on single-cell-test.js).
+ * Item 5: populates the "ทดสอบ 1 คน" student/column pickers once a real
+ * column preview exists. Only MATCHED students with a real KrunameClass
+ * score are offered (nothing else could ever produce a valid single-cell
+ * plan — see buildSingleCellTestPlan), and only writableScoreColumns are
+ * offered (never a derived/activatable one — the same rule
+ * isConfirmedColumnWritable enforces for the main flow). This only shows
+ * the section and its pickers; the write button/checkbox stay disabled
+ * (resetSingleCellTestState's safe default) until the teacher clicks
+ * "แสดงตัวอย่าง 1 ช่อง" and every precondition passes.
  */
 function populateSingleCellTestPickers(plan, candidate) {
   const testableRows = plan
@@ -660,6 +707,13 @@ function populateSingleCellTestPickers(plan, candidate) {
     }),
   )
   sctPreviewEl.hidden = true
+  sctGateReasonEl.hidden = true
+  sctWriteWarningEl.hidden = true
+  sctResultEl.hidden = true
+  confirmedSingleCellContext = null
+  sctConfirmCheckbox.checked = false
+  sctConfirmCheckbox.disabled = true
+  sctWriteBtn.disabled = true
   singleCellTestWrap.hidden = false
 }
 
@@ -670,7 +724,9 @@ function populateSingleCellTestPickers(plan, candidate) {
  * ever performs the actual write.
  */
 async function runSingleCellTestPreview() {
-  if (!realPlan || !currentGridCandidate) return
+  if (!realPlan || !currentGridCandidate || !currentGridFacts) return
+  resetSingleCellTestGateOnly()
+
   const rowIndex = Number(sctStudentSelect.value)
   const columnIndex = Number(sctColumnSelect.value)
   const planRow = realPlan[rowIndex]
@@ -680,29 +736,210 @@ async function runSingleCellTestPreview() {
   const sgsRowOffset = sgsRowIndexFromKey(planRow.matchedSgsRowKey)
   if (sgsRowOffset === null) return
 
-  const { tableIndex, run } = currentGridCandidate
+  const { tableIndex, run, identifierColumns } = currentGridCandidate
+  const absoluteRowIndex = run.startIndex + sgsRowOffset
   const tab = await getActiveTab()
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: readColumnValues,
-    // Exactly ONE row (runLength: 1), exactly ONE column — never a range.
-    args: [tableIndex, run.startIndex + sgsRowOffset, 1, columnIndex],
+    func: readSingleCellRevalidationState,
+    // Exactly ONE row, exactly ONE column — never a range, and the SAME
+    // atomic read used again immediately before write (see
+    // runSingleCellTestWrite) so "current value" and "is this cell
+    // actually writable right now" always come from the same instant.
+    args: [tableIndex, absoluteRowIndex, columnIndex, identifierColumns],
   })
-  const result = injection.result
-  const currentValue = result.found ? (result.values[0] ?? null) : null
+  const fresh = injection.result
 
   const plan = buildSingleCellTestPlan({
     sgsRowOffset,
     columnIndex,
     columnKey: column.key,
-    currentValue,
+    currentValue: fresh.currentValue,
     newValue: planRow.krunameScore,
   })
 
+  sctStudentNameEl.textContent = fresh.studentName || planRow.fullName
+  sctStudentNumberEl.textContent = fresh.studentNumber === null ? '-' : String(fresh.studentNumber)
+  sctStudentCodeEl.textContent = fresh.studentCode ?? '-'
   sctColumnLabelEl.textContent = column.label
   sctCurrentValueEl.textContent = plan.valid ? (plan.currentValue === null ? 'ว่าง' : String(plan.currentValue)) : '—'
   sctNewValueEl.textContent = plan.valid ? String(plan.newValue) : formatSingleCellTestSummary(plan)
   sctPreviewEl.hidden = false
+
+  if (!plan.valid) {
+    sctGateReasonEl.textContent = 'ไม่สามารถสร้างแผนทดลองเขียนได้ (ค่าคะแนนไม่ถูกต้อง)'
+    sctGateReasonEl.hidden = false
+    return
+  }
+
+  const preconditions = evaluateSingleCellTestPreconditions({
+    studentGridFound: currentGridCandidate !== null,
+    confidence: computeGridConfidence(currentGridCandidate),
+    selectedStudentCount: sctStudentSelect.value ? 1 : 0,
+    selectedColumnCount: sctColumnSelect.value ? 1 : 0,
+    // `column` above was found via .find() over writableScoreColumns
+    // itself, so this is always true once execution reaches here — kept
+    // as an explicit re-check (rather than a hardcoded `true`) so this
+    // stays correct even if a future change ever populates sctColumnSelect
+    // from a wider list.
+    columnIsWritable: currentGridCandidate.writableScoreColumns.some((c) => c.columnIndex === columnIndex),
+    headerCheckboxOk: !column.headerCheckboxPresent || column.headerCheckboxChecked === true,
+    cellInputState: { visible: fresh.cellVisible, enabled: fresh.cellEnabled, visibleInputCount: fresh.visibleInputCount },
+    proposedScore: plan.newValue,
+    maxScore: column.maxScore,
+  })
+
+  if (!preconditions.ok) {
+    sctGateReasonEl.textContent = preconditions.reason
+    sctGateReasonEl.hidden = false
+    return
+  }
+
+  // Every precondition holds — the ONE moment sctConfirmCheckbox is
+  // allowed out of its safe default. It still starts UNCHECKED; the
+  // teacher's own tick is what evaluateSingleCellTestPreconditions +
+  // canEnableSingleCellTestWrite's consent half requires before
+  // sctWriteBtn itself can enable (see the checkbox's change listener).
+  confirmedSingleCellContext = {
+    tableIndex,
+    rowIndex: absoluteRowIndex,
+    columnIndex,
+    columnKey: column.key,
+    columnLabel: column.label,
+    maxScore: column.maxScore,
+    identifierColumns,
+    subjectFilterText: currentGridFacts.subjectFilter?.selectedText ?? null,
+    classroomFilterText: currentGridFacts.classroomFilter?.selectedText ?? null,
+    studentNumber: fresh.studentNumber,
+    studentCode: fresh.studentCode,
+    studentName: fresh.studentName,
+    proposedScore: plan.newValue,
+  }
+  sctWriteWarningEl.hidden = false
+  sctConfirmCheckbox.disabled = false
+  updateSingleCellWriteButtonState()
+}
+
+/** Clears only the gate/result UI (never the pickers themselves) —
+ * called at the start of every fresh preview so a stale "ready to write"
+ * state from a PREVIOUS preview can never linger while a new one is
+ * still loading. */
+function resetSingleCellTestGateOnly() {
+  sctGateReasonEl.hidden = true
+  sctWriteWarningEl.hidden = true
+  sctResultEl.hidden = true
+  confirmedSingleCellContext = null
+  sctConfirmCheckbox.checked = false
+  sctConfirmCheckbox.disabled = true
+  sctWriteBtn.disabled = true
+}
+
+/** The write button's own gate — re-evaluated on every checkbox toggle,
+ * never assumed from the precondition pass alone (see
+ * canEnableSingleCellTestWrite's own doc comment on ordering). */
+function updateSingleCellWriteButtonState() {
+  sctWriteBtn.disabled = !canEnableSingleCellTestWrite(confirmedSingleCellContext !== null, sctConfirmCheckbox.checked)
+}
+
+/** Returns sctConfirmCheckbox/sctWriteBtn/confirmedSingleCellContext to
+ * their safe "not yet previewed" state after a write attempt (success,
+ * abort, or error) — deliberately never touches sctGateReasonEl or
+ * sctResultEl, since the caller has just set one of those to explain
+ * what happened and this must not erase it. A fresh
+ * "แสดงตัวอย่าง 1 ช่อง" click is required before another write, whatever
+ * this attempt's outcome — there is no "confirm again" shortcut. */
+function disarmSingleCellTestWrite() {
+  confirmedSingleCellContext = null
+  sctConfirmCheckbox.checked = false
+  sctConfirmCheckbox.disabled = true
+  sctWriteBtn.disabled = true
+}
+
+/**
+ * CONTROLLED LIVE TEST: the one and only write path in this phase.
+ * Re-reads the SAME single cell one more time (readSingleCellRevalidationState)
+ * and refuses to proceed on ANY drift from confirmedSingleCellContext —
+ * subject/classroom filter, student identity, column, or input
+ * structure — per the GUARD AGAINST STALE DOM requirement. Only once
+ * that fresh read still matches does it call fillSgsColumnValues with a
+ * writesByOffset guaranteed (by buildSingleCellTestPlan) to contain
+ * exactly the one confirmed offset. Never clicks Save, never touches the
+ * SGS header checkbox, never navigates, never touches any other cell.
+ */
+async function runSingleCellTestWrite() {
+  if (!confirmedSingleCellContext) return
+  if (!canEnableSingleCellTestWrite(true, sctConfirmCheckbox.checked)) return
+  const context = confirmedSingleCellContext
+  sctWriteBtn.disabled = true
+
+  const tab = await getActiveTab()
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: readSingleCellRevalidationState,
+    args: [context.tableIndex, context.rowIndex, context.columnIndex, context.identifierColumns],
+  })
+  const fresh = injection.result
+
+  const revalidation = revalidateSingleCellTestContext(
+    {
+      subjectFilterText: context.subjectFilterText,
+      classroomFilterText: context.classroomFilterText,
+      studentNumber: context.studentNumber,
+      studentCode: context.studentCode,
+      studentName: context.studentName,
+      columnKey: context.columnKey,
+    },
+    {
+      subjectFilterText: fresh.subjectFilterText,
+      classroomFilterText: fresh.classroomFilterText,
+      studentNumber: fresh.studentNumber,
+      studentCode: fresh.studentCode,
+      studentName: fresh.studentName,
+      columnKey: context.columnKey,
+      cellVisible: fresh.cellVisible,
+      cellEnabled: fresh.cellEnabled,
+      visibleInputCount: fresh.visibleInputCount,
+    },
+  )
+
+  if (!revalidation.ok) {
+    sctGateReasonEl.textContent = `ยกเลิกการเขียน: ${revalidation.reason}`
+    sctGateReasonEl.hidden = false
+    disarmSingleCellTestWrite()
+    return
+  }
+
+  const sgsRowOffset = context.rowIndex - currentGridCandidate.run.startIndex
+  const plan = buildSingleCellTestPlan({
+    sgsRowOffset,
+    columnIndex: context.columnIndex,
+    columnKey: context.columnKey,
+    currentValue: fresh.currentValue,
+    newValue: context.proposedScore,
+  })
+  if (!plan.valid) {
+    sctGateReasonEl.textContent = 'ยกเลิกการเขียน: ไม่สามารถสร้างแผนทดลองเขียนได้อีกครั้งก่อนบันทึกจริง'
+    sctGateReasonEl.hidden = false
+    disarmSingleCellTestWrite()
+    return
+  }
+
+  const [writeInjection] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: fillSgsColumnValues,
+    args: [context.tableIndex, currentGridCandidate.run.startIndex, context.columnIndex, plan.writesByOffset],
+  })
+  const writeResult = writeInjection.result
+  const success = writeResult.found && writeResult.writtenCount === 1 && writeResult.missingOffsets.length === 0
+
+  sctResultStudentEl.textContent = `${context.studentNumber ?? '-'} ${context.studentName}`
+  sctResultColumnEl.textContent = context.columnLabel
+  sctResultPreviousEl.textContent = fresh.currentValue === null ? 'ว่าง' : String(fresh.currentValue)
+  sctResultNewEl.textContent = String(context.proposedScore)
+  sctResultStatusEl.textContent = success ? 'สำเร็จ' : 'ไม่สำเร็จ — ไม่พบช่องกรอกที่เขียนได้อีกต่อไป'
+  sctResultEl.hidden = false
+  sctGateReasonEl.hidden = true
+  disarmSingleCellTestWrite()
 }
 
 fileInput.addEventListener('change', () => {
@@ -798,10 +1035,36 @@ sctPreviewBtn.addEventListener('click', () => {
   void runSingleCellTestPreview()
 })
 
-// Item 5: sct-write-btn and sct-confirm are DELIBERATELY never wired up
-// here — no click listener, no `.disabled = false` anywhere in this
-// file. They stay exactly as popup.html declared them (disabled) until
-// detection has been revalidated against the live SGS page.
+// Changing either picker invalidates whatever the last preview
+// confirmed — a stale confirmedSingleCellContext could otherwise point
+// at a student/column the teacher is no longer looking at. The teacher
+// must click "แสดงตัวอย่าง 1 ช่อง" again to re-arm the checkbox/button.
+sctStudentSelect.addEventListener('change', () => {
+  resetSingleCellTestGateOnly()
+  sctPreviewEl.hidden = true
+})
+sctColumnSelect.addEventListener('change', () => {
+  resetSingleCellTestGateOnly()
+  sctPreviewEl.hidden = true
+})
+
+// CONTROLLED LIVE TEST: sctConfirmCheckbox only ever becomes checkable
+// once runSingleCellTestPreview has confirmed every OTHER precondition
+// (see evaluateSingleCellTestPreconditions) — this listener is the ONLY
+// place its own change re-evaluates sctWriteBtn's enabled state, per
+// canEnableSingleCellTestWrite's "preconditions AND explicit consent"
+// rule.
+sctConfirmCheckbox.addEventListener('change', () => {
+  updateSingleCellWriteButtonState()
+})
+
+// The one and only live-write action in this phase — gated behind every
+// precondition in evaluateSingleCellTestPreconditions PLUS this explicit
+// click, and itself re-validated against a fresh DOM read immediately
+// before writing (see runSingleCellTestWrite's own doc comment).
+sctWriteBtn.addEventListener('click', () => {
+  void runSingleCellTestWrite()
+})
 
 async function restoreSessionPayload() {
   const stored = await chrome.storage.session.get(SESSION_PAYLOAD_KEY)

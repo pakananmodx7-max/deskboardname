@@ -323,9 +323,11 @@ export function readColumnValues(tableIndex, runStartIndex, runLength, columnInd
  * let alone clicking, any Save/Submit control.
  *
  * `writesByOffset`: a plain object `{ [offset]: value }` — the caller
- * (popup.js, via buildSgsRealWriteInstructions) already decided exactly
- * which rows get a value and what it is; this function only ever writes
- * what it's told, into the ONE column it's told.
+ * (popup.js, via buildSingleCellTestPlan) already decided exactly which
+ * row(s) get a value and what it is; this function only ever writes what
+ * it's told, into the ONE column it's told. In this phase the ONLY
+ * caller is the single-cell test write path, and buildSingleCellTestPlan
+ * guarantees `writesByOffset` can never contain more than one entry.
  */
 export function fillSgsColumnValues(tableIndex, runStartIndex, columnIndex, writesByOffset) {
   const table = document.querySelectorAll('table')[tableIndex]
@@ -366,4 +368,77 @@ export function fillSgsColumnValues(tableIndex, runStartIndex, columnIndex, writ
   }
 
   return { found: true, writtenCount, missingOffsets }
+}
+
+/**
+ * The single-cell test's "guard against stale DOM" read: everything
+ * revalidateSingleCellTestContext (single-cell-test.js) needs to decide
+ * whether it is still safe to write, gathered in ONE atomic pass right
+ * before the write — never a separate round-trip per fact, which would
+ * leave a window for the page to change between reads. Read-only: this
+ * never sets a value, never dispatches an event, never touches the SGS
+ * header checkbox.
+ *
+ * `identifierColumns`: `{numberColumnIndex, codeColumnIndex,
+ * nameColumnIndex}` from the SAME confirmed grid candidate the teacher's
+ * preview was built from — this function only ever reads those columns
+ * at the ONE requested row, never scans for them itself.
+ */
+export function readSingleCellRevalidationState(tableIndex, rowIndex, columnIndex, identifierColumns) {
+  // Duplicates the known-filter read in collectAllTableRowFacts above —
+  // this function is itself injected via executeScript's `func` and
+  // can't share code with a sibling function once serialized (see the
+  // file header).
+  function readKnownFilterInline(id) {
+    const el = document.getElementById(id)
+    if (!el) return null
+    const selectedOption = el.options ? el.options[el.selectedIndex] : null
+    return (selectedOption ? selectedOption.text.trim() : el.value || null) || null
+  }
+  function textOf(el) {
+    return el && el.textContent ? el.textContent.trim().replace(/\s+/g, ' ').slice(0, 80) : ''
+  }
+
+  const subjectFilterText = readKnownFilterInline('ctl00_PageContent_ClassSubjectIDFilter')
+  const classroomFilterText = readKnownFilterInline('ctl00_PageContent_ClassSectionNoFilter')
+
+  const table = document.querySelectorAll('table')[tableIndex]
+  const row = table ? Array.from(table.rows)[rowIndex] : null
+  if (!row) {
+    return {
+      subjectFilterText,
+      classroomFilterText,
+      studentNumber: null,
+      studentCode: null,
+      studentName: '',
+      cellVisible: false,
+      cellEnabled: false,
+      visibleInputCount: 0,
+      currentValue: null,
+    }
+  }
+
+  const numberText = row.cells[identifierColumns.numberColumnIndex] ? textOf(row.cells[identifierColumns.numberColumnIndex]) : ''
+  const parsedNumber = numberText === '' ? null : Number(numberText)
+  const codeText = row.cells[identifierColumns.codeColumnIndex] ? textOf(row.cells[identifierColumns.codeColumnIndex]) : null
+  const nameText = row.cells[identifierColumns.nameColumnIndex] ? textOf(row.cells[identifierColumns.nameColumnIndex]) : ''
+
+  const cell = row.cells[columnIndex] || null
+  const candidates = cell ? Array.from(cell.querySelectorAll('input,select')) : []
+  const visibleCandidates = candidates.filter((el) => el.offsetParent !== null)
+  const chosen = visibleCandidates[0] || null
+  const rawValue = chosen ? chosen.value : ''
+  const parsedValue = rawValue === '' ? null : Number(rawValue)
+
+  return {
+    subjectFilterText,
+    classroomFilterText,
+    studentNumber: Number.isFinite(parsedNumber) ? parsedNumber : null,
+    studentCode: codeText || null,
+    studentName: nameText,
+    cellVisible: visibleCandidates.length > 0,
+    cellEnabled: chosen ? chosen.disabled !== true : false,
+    visibleInputCount: visibleCandidates.length,
+    currentValue: Number.isFinite(parsedValue) ? parsedValue : null,
+  }
 }

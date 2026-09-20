@@ -39,7 +39,13 @@ describe('manifest.json — minimal permissions, no host_permissions, no remote 
 })
 
 const contentDiagnosticSource = read('../src/content-diagnostic.js')
-const CONTENT_DIAGNOSTIC_FUNCTIONS = ['collectRawSgsFacts', 'collectAllTableRowFacts', 'readColumnValues', 'fillSgsColumnValues']
+const CONTENT_DIAGNOSTIC_FUNCTIONS = [
+  'collectRawSgsFacts',
+  'collectAllTableRowFacts',
+  'readColumnValues',
+  'fillSgsColumnValues',
+  'readSingleCellRevalidationState',
+]
 
 describe('BUG FIX — known filter ids, never a CSS selector string passed to getElementById', () => {
   it('KNOWN_SGS_FILTER_IDS holds bare element ids, never a CSS selector fragment', () => {
@@ -215,6 +221,41 @@ describe('content-diagnostic.js: fillSgsColumnValues — writes ONLY the request
   })
 })
 
+describe('content-diagnostic.js: readSingleCellRevalidationState — the GUARD AGAINST STALE DOM read, entirely read-only', () => {
+  const source = sliceFunction(contentDiagnosticSource, 'readSingleCellRevalidationState', CONTENT_DIAGNOSTIC_FUNCTIONS)
+
+  it('never writes to .value, never calls .click(), never toggles a checkbox — read-only', () => {
+    expect(source).not.toMatch(/\.value\s*=(?!=)/)
+    expect(source).not.toMatch(/\.click\(\)/)
+    expect(source).not.toMatch(/\.checked\s*=(?!=)/)
+  })
+
+  it('locates the table by the CONFIRMED tableIndex argument, never a re-run heuristic guess', () => {
+    expect(source).toContain("document.querySelectorAll('table')[tableIndex]")
+  })
+
+  it('reads the two known subject/classroom filters — the SAME "same subject, same classroom" facts the write-time revalidation compares against', () => {
+    expect(source).toContain("readKnownFilterInline('ctl00_PageContent_ClassSubjectIDFilter')")
+    expect(source).toContain("readKnownFilterInline('ctl00_PageContent_ClassSectionNoFilter')")
+  })
+
+  it('reads the identifier columns (number/code/name) at the ONE requested row — never a scan of the whole run', () => {
+    expect(source).toContain('identifierColumns.numberColumnIndex')
+    expect(source).toContain('identifierColumns.codeColumnIndex')
+    expect(source).toContain('identifierColumns.nameColumnIndex')
+  })
+
+  it('reports the target cell\'s visible/enabled state and visible input COUNT — the exact facts evaluateSingleCellTestPreconditions/revalidateSingleCellTestContext need to refuse an unsafe cell', () => {
+    expect(source).toContain('cellVisible')
+    expect(source).toContain('cellEnabled')
+    expect(source).toContain('visibleInputCount')
+  })
+
+  it('prefers the VISIBLE control the same way fillSgsColumnValues/readColumnValues do, never trusting the first DOM-order match blindly', () => {
+    expect(source).toContain('el.offsetParent !== null')
+  })
+})
+
 describe('popup.js — never sends the loaded payload or diagnostic report anywhere except local chrome.storage', () => {
   const source = read('../src/popup.js')
 
@@ -240,22 +281,47 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(source).toContain("sctPreviewBtn.addEventListener('click'")
   })
 
-  it('LIVE DISCOVERY item 4/5: the single-cell test write button and its confirmation checkbox NEVER get a click listener or a `.disabled = false` — they stay permanently unwired in this phase', () => {
-    expect(source).not.toMatch(/sctWriteBtn\.addEventListener/)
-    expect(source).not.toMatch(/sctConfirm\.addEventListener/)
-    expect(source).not.toMatch(/sctWriteBtn\.disabled\s*=\s*false/)
-    expect(source).not.toMatch(/sctConfirm\.disabled\s*=\s*false/)
-    // Never even referenced by id — nothing to accidentally wire up.
-    expect(source).not.toContain("getElementById('sct-write-btn')")
-    expect(source).not.toContain("getElementById('sct-confirm')")
+  it('CONTROLLED LIVE TEST: sctWriteBtn and sctConfirmCheckbox ARE wired up — exactly one click listener, exactly one change listener, and both are referenced by id', () => {
+    expect(source).toContain("getElementById('sct-write-btn')")
+    expect(source).toContain("getElementById('sct-confirm')")
+    const writeBtnClicks = [...source.matchAll(/sctWriteBtn\.addEventListener\('click'/g)]
+    expect(writeBtnClicks.length).toBe(1)
+    const confirmChanges = [...source.matchAll(/sctConfirmCheckbox\.addEventListener\('change'/g)]
+    expect(confirmChanges.length).toBe(1)
   })
 
-  it('LIVE DISCOVERY item 4: no bulk real-write path exists at all — fillSgsColumnValues is never imported or called from popup.js', () => {
-    expect(source).not.toMatch(/fillSgsColumnValues/)
+  it('CONTROLLED LIVE TEST: sctWriteBtn is NEVER enabled by a bare `.disabled = false` — only updateSingleCellWriteButtonState (itself driven by canEnableSingleCellTestWrite) ever touches it; sctConfirmCheckbox has exactly ONE such assignment, gated behind a passing evaluateSingleCellTestPreconditions call', () => {
+    expect(source).not.toMatch(/sctWriteBtn\.disabled\s*=\s*false/)
+    const confirmEnableCalls = [...source.matchAll(/sctConfirmCheckbox\.disabled\s*=\s*false/g)]
+    expect(confirmEnableCalls.length).toBe(1)
+    const fn = source.slice(source.indexOf('async function runSingleCellTestPreview'), source.indexOf('function resetSingleCellTestGateOnly'))
+    expect(fn).toContain('sctConfirmCheckbox.disabled = false')
+    expect(fn.indexOf('preconditions.ok')).toBeLessThan(fn.indexOf('sctConfirmCheckbox.disabled = false'))
+    expect(source).toContain('canEnableSingleCellTestWrite')
+    expect(source).toContain('evaluateSingleCellTestPreconditions')
+    expect(source).toContain('revalidateSingleCellTestContext')
+  })
+
+  it('CONTROLLED LIVE TEST: every path that finds a reason to refuse (invalid plan, failed precondition, failed revalidation) DISABLES the write button and checkbox — never merely skips enabling them', () => {
+    const fn = source.slice(source.indexOf('async function runSingleCellTestWrite'), source.indexOf('fileInput.addEventListener'))
+    expect(fn).toContain('disarmSingleCellTestWrite()')
+    expect(fn).toMatch(/if \(!revalidation\.ok\)[\s\S]{0,300}disarmSingleCellTestWrite\(\)/)
+    expect(fn).toMatch(/if \(!plan\.valid\)[\s\S]{0,300}disarmSingleCellTestWrite\(\)/)
+  })
+
+  it('LIVE DISCOVERY item 4, now superseded for the single-cell path only: fillSgsColumnValues IS imported and called, but exactly once, and never with a bulk instruction builder — buildSgsRealWriteInstructions/summarizeSgsRealFillPlan (whole-column tools) are still never used from popup.js', () => {
+    expect(source).toContain('fillSgsColumnValues')
+    const fillCalls = [...source.matchAll(/func:\s*fillSgsColumnValues,/g)]
+    expect(fillCalls.length).toBe(1)
     expect(source).not.toMatch(/buildSgsRealWriteInstructions/)
     expect(source).not.toMatch(/summarizeSgsRealFillPlan/)
     expect(source).not.toContain('runFillSelectedColumn')
     expect(source).not.toContain("getElementById('fill-selected-column')")
+  })
+
+  it('the single write call passes writesByOffset straight from buildSingleCellTestPlan — never a hand-built object that could contain more than one offset', () => {
+    const fn = source.slice(source.indexOf('async function runSingleCellTestWrite'), source.indexOf('fileInput.addEventListener'))
+    expect(fn).toMatch(/func:\s*fillSgsColumnValues,\s*\n\s*args:\s*\[context\.tableIndex, currentGridCandidate\.run\.startIndex, context\.columnIndex, plan\.writesByOffset\]/)
   })
 
   it('the SGS-candidate list passed into the placeholder mapping-dry-run is empty — no invented selector-based extraction there', () => {
@@ -276,13 +342,21 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(source).not.toMatch(/computeSgsColumnFillPlan\([^)]*'overwrite_selected_column'/)
   })
 
-  it('readColumnValues is invoked twice: once for the confirmed column\'s whole run (preview), once for a single-cell test\'s exactly ONE row/column', () => {
+  it('readColumnValues is invoked exactly once: the confirmed column\'s whole run, for the READ-ONLY bulk preview — the single-cell path uses its own atomic read instead (see below)', () => {
     const allCalls = [...source.matchAll(/func:\s*readColumnValues,[\s\S]*?args:\s*\[([^\]]*)\]/g)]
-    expect(allCalls.length).toBe(2)
+    expect(allCalls.length).toBe(1)
     expect(allCalls[0][1]).toMatch(/tableIndex, run\.startIndex, run\.length, confirmedRealColumn\.columnIndex/)
-    // The single-cell call reads exactly one row (runLength 1) at an
-    // OFFSET row, never the confirmed column and never a range.
-    expect(allCalls[1][1]).toMatch(/tableIndex, run\.startIndex \+ sgsRowOffset, 1, columnIndex/)
+  })
+
+  it('readSingleCellRevalidationState is invoked exactly twice: once for the single-cell preview, once as the write-time stale-DOM revalidation — never a range, always the SAME one row/column', () => {
+    const allCalls = [...source.matchAll(/func:\s*readSingleCellRevalidationState,[\s\S]*?args:\s*\[([^\]]*)\]/g)]
+    expect(allCalls.length).toBe(2)
+    // The preview call reads the offset row within the confirmed run —
+    // never a range, never the confirmed bulk column.
+    expect(allCalls[0][1]).toMatch(/tableIndex, absoluteRowIndex, columnIndex, identifierColumns/)
+    // The write-time call re-reads the EXACT same cell the preview
+    // confirmed (context.*), never re-deriving it from a fresh scan.
+    expect(allCalls[1][1]).toMatch(/context\.tableIndex, context\.rowIndex, context\.columnIndex, context\.identifierColumns/)
   })
 
   it('SGS Score Workspace payload: loading and restoring a payload both dispatch by `kind` via validateAnySgsBridgePayload, never the single-kind validator', () => {
@@ -353,17 +427,59 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     }
   })
 
-  it('item 3: this file never clicks or toggles an SGS header checkbox — its only `.checked =` assignment is the (unrelated) radio-picker selection state', () => {
-    const checkedAssignments = [...source.matchAll(/\.checked\s*=\s*([^\n]+)/g)]
-    expect(checkedAssignments.length).toBe(1)
-    expect(checkedAssignments[0][1]).toMatch(/^matchResult\.column/)
+  it('item 3: this file never clicks or toggles an SGS header checkbox — every `.checked =` assignment is either the (unrelated) radio-picker selection state, or sctConfirmCheckbox (the extension\'s OWN local popup consent toggle, never anything read from or written into the SGS page itself)', () => {
+    const checkedAssignments = [...source.matchAll(/(\w+)\.checked\s*=\s*([^\n]+)/g)]
+    expect(checkedAssignments.length).toBeGreaterThan(0)
+    for (const [, target, rhs] of checkedAssignments) {
+      expect(target === 'input' || target === 'sctConfirmCheckbox').toBe(true)
+      if (target === 'input') expect(rhs).toMatch(/^matchResult\.column/)
+      if (target === 'sctConfirmCheckbox') expect(rhs.trim()).toBe('false')
+    }
     expect(source).not.toMatch(/headerCheckbox.*\.click\(\)/)
+    // sctConfirmCheckbox is never passed into an injected content-script
+    // function — it can only ever be read/set from this extension's own
+    // popup DOM, never forwarded into (or read back from) the SGS page.
+    // Bounded to a plausible single executeScript({...}) call's length
+    // (never unbounded — this codebase has no semicolons, so an
+    // unbounded [^;]* would scan past the end of the call entirely).
+    expect(source).not.toMatch(/executeScript\([\s\S]{0,300}sctConfirmCheckbox/)
   })
 
   it('LIVE DISCOVERY: a persistent auto-save warning banner is present in the HTML — the extension never claims a Save button exists', () => {
     const html = read('../src/popup.html')
     expect(html).toMatch(/auto-save-warning/)
     expect(html).toMatch(/Auto-Save/)
+  })
+
+  it('CONTROLLED LIVE TEST: the single-cell preview shows นักเรียน/เลขที่/รหัส/ช่อง SGS/คะแนนเดิม SGS/คะแนนใหม่ — the full preview the task requires, not just column/current/new', () => {
+    const html = read('../src/popup.html')
+    const section = html.slice(html.indexOf('id="single-cell-test-wrap"'), html.indexOf('<script'))
+    for (const id of ['sct-student-name', 'sct-student-number', 'sct-student-code', 'sct-column-label', 'sct-current-value', 'sct-new-value']) {
+      expect(section).toContain(`id="${id}"`)
+    }
+  })
+
+  it('CONTROLLED LIVE TEST: the exact required warning string and consent checkbox label are present verbatim', () => {
+    const html = read('../src/popup.html')
+    const section = html.slice(html.indexOf('id="single-cell-test-wrap"'), html.indexOf('<script'))
+    expect(section).toContain('SGS บันทึกอัตโนมัติ การยืนยันจะเปลี่ยนข้อมูลจริงทันที')
+    expect(section).toContain('ฉันเข้าใจว่าคะแนนจะถูกบันทึกจริงใน SGS')
+  })
+
+  it('CONTROLLED LIVE TEST: sctConfirmCheckbox and sctWriteBtn ship `disabled` in the HTML itself — the safe default holds even before popup.js runs', () => {
+    const html = read('../src/popup.html')
+    const checkboxTag = html.slice(html.indexOf('id="sct-confirm"') - 40, html.indexOf('id="sct-confirm"') + 40)
+    const buttonTag = html.slice(html.indexOf('id="sct-write-btn"') - 40, html.indexOf('id="sct-write-btn"') + 60)
+    expect(checkboxTag).toContain('disabled')
+    expect(buttonTag).toContain('disabled')
+  })
+
+  it('CONTROLLED LIVE TEST: a result panel (student/column/previous/new/status) exists for reporting the outcome of a write', () => {
+    const html = read('../src/popup.html')
+    const section = html.slice(html.indexOf('id="single-cell-test-wrap"'), html.indexOf('<script'))
+    for (const id of ['sct-result', 'sct-result-student', 'sct-result-column', 'sct-result-previous', 'sct-result-new', 'sct-result-status']) {
+      expect(section).toContain(`id="${id}"`)
+    }
   })
 
   it('never invents a student grid — always derives it via pickBestStudentGridCandidate over collectAllTableRowFacts\'s real output', () => {
