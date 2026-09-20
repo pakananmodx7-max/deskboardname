@@ -68,6 +68,8 @@
     ABORT: 'AR_ABORT',
     STOPPED: 'AR_STOPPED',
     COMPLETE: 'AR_COMPLETE',
+    DEBUG_EVENT: 'AR_DEBUG_EVENT',
+    PING: 'AR_PING',
     KICKOFF: 'AR_KICKOFF',
     RESUME: 'AR_RESUME',
   }
@@ -102,6 +104,17 @@
       // reply just see `null` and stop this page's pipeline quietly.
       return null
     }
+  }
+
+  /** FINAL AUTO-RUN EXECUTION BUG FIX (item 4) — one of the five
+   * pipeline checkpoints this turn's "message trace" spec asks for
+   * (PAGE_SCAN_OK/PAGE_PLAN_READY/CELL_WRITE_START/PAGE_DONE/
+   * NEXT_PAGE_REQUESTED — the other four, AR_START received/RUN_CREATED/
+   * PROCESS_CURRENT_PAGE sent/CONTENT_SCRIPT_RECEIVED, are background.js's
+   * own). Fire-and-forget: never awaited, never lets a background hiccup
+   * slow down or interrupt the real pipeline it is only observing. */
+  function debugEvent(event, detail) {
+    void sendMessage({ type: AR_MESSAGE.DEBUG_EVENT, event, detail })
   }
 
   let libsPromise = null
@@ -268,11 +281,13 @@
     processing = true
     try {
       const scan = scanCurrentPage(libs, runState.targetColumn.key)
+      if (scan.ok) debugEvent('PAGE_SCAN_OK', { page: scan.pagination?.currentPage ?? null })
       const confirmedContext = runState.confirmedContext
 
       const gate = evaluatePageGate(libs, runState, scan, confirmedContext)
 
       const plan = scan.ok ? buildPlanFromScan(libs, runState, scan) : []
+      if (scan.ok) debugEvent('PAGE_PLAN_READY', { planLength: plan.length })
       const stop = libs.autoRun.evaluateAutoRunStopCondition({
         gridFound: scan.ok,
         paginationReady: libs.autoRun.isPaginationReadyForAutoRun(scan.pagination),
@@ -308,6 +323,7 @@
       let pageThresholdExceeded = false
       let stoppedMidPage = false
 
+      debugEvent('CELL_WRITE_START', { readyCount: plan.filter((r) => r.status === 'READY').length })
       for (const baseRow of plan) {
         const stateCheck = await sendMessage({ type: AR_MESSAGE.GET_STATE })
         if (stateCheck?.state?.stopRequested) stoppedMidPage = true
@@ -354,6 +370,7 @@
 
       const pageSummary = libs.autoRun.summarizeAutoRunPageResult(verifiedRows)
       const failedStudents = libs.wholeColumn.collectFailedStudents(verifiedRows)
+      debugEvent('PAGE_DONE', { page: scan.pagination?.currentPage ?? null, written: pageSummary.written })
       await sendMessage({
         type: AR_MESSAGE.PAGE_COMPLETE,
         pageNumber: scan.pagination?.currentPage ?? null,
@@ -421,6 +438,8 @@
 
     const beforeFingerprint = libs.diagnostic.readGridFingerprint(candidate.tableIndex, candidate.run.startIndex, candidate.run.length)
     const pendingAdvance = { expectedNextPage, beforeFingerprint, confirmedContext, targetColumnKey: column.key }
+
+    debugEvent('NEXT_PAGE_REQUESTED', { expectedNextPage })
 
     // item 4/5: persisted BEFORE navigating — the click below may trigger
     // a full ASP.NET postback that destroys this script instance.
@@ -517,6 +536,14 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    // FINAL AUTO-RUN EXECUTION BUG FIX (item 2) — answered synchronously,
+    // BEFORE loadLibs() — background.js's ensureContentScriptReady uses
+    // this as its ONLY proof a content script is actually listening in a
+    // tab, before it will ever create a run for that tab.
+    if (message?.type === AR_MESSAGE.PING) {
+      sendResponse({ ok: true, ready: true })
+      return false
+    }
     if (message?.type === AR_MESSAGE.KICKOFF) {
       sendResponse({ ok: true })
       void loadLibs().then(async (libs) => {

@@ -39,8 +39,8 @@ function sliceFunction(source: string, name: string, nextNames: string[]): strin
 describe('manifest.json — minimal permissions, ONE SGS-only host permission, no remote code', () => {
   const manifest = JSON.parse(read('../manifest.json'))
 
-  it('requests only activeTab/scripting/storage — never "tabs"/"cookies" or any other broad API permission', () => {
-    expect(manifest.permissions.sort()).toEqual(['activeTab', 'scripting', 'storage'])
+  it('requests only activeTab/scripting/storage/alarms — never "tabs"/"cookies" or any other broad API permission. FINAL AUTO-RUN EXECUTION BUG FIX: "alarms" is the ONE addition, needed only for the item-6 watchdog (chrome.alarms, unlike setTimeout, survives service worker suspension) — never a background poller/tracker', () => {
+    expect(manifest.permissions.sort()).toEqual(['activeTab', 'alarms', 'scripting', 'storage'])
   })
 
   it('TRUE unattended auto-run: the ONLY host permission is the real SGS domain, scoped to its /sgs/ path — never <all_urls>, never a bare origin, never a second host', () => {
@@ -948,6 +948,65 @@ describe('TRUE unattended auto-run — background.js: the ONE place run state li
     expect(fn).toContain('pageSize: pagination.pageSize ?? null,')
   })
 
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 2): handleStart confirms the content script is reachable (ensureContentScriptReady) BEFORE ever calling createInitialRunState — pagination succeeding is never itself treated as proof the tab can be messaged', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
+    const readyIndex = fn.indexOf('ensureContentScriptReady(tabId)')
+    const createIndex = fn.indexOf('createInitialRunState(')
+    expect(readyIndex).toBeGreaterThan(-1)
+    expect(createIndex).toBeGreaterThan(readyIndex)
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 2/6 — "missing content script aborts clearly"): when ensureContentScriptReady fails, handleStart returns ok:false with CONTENT_SCRIPT_UNAVAILABLE_MESSAGE and NEVER reaches createInitialRunState/setState at all — no run is ever left dangling at 0/32 for a tab this file could never even reach', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
+    expect(fn).toMatch(/if \(!\(await ensureContentScriptReady\(tabId\)\)\) \{\s*\n\s*debugLog\([^)]*\)\s*\n\s*return \{ ok: false, state: null, reason: CONTENT_SCRIPT_UNAVAILABLE_MESSAGE \}/)
+    const guardIndex = fn.indexOf('ensureContentScriptReady(tabId)')
+    const setStateIndex = fn.indexOf('await setState(state)')
+    expect(setStateIndex).toBeGreaterThan(guardIndex)
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 1 — "start page 1 immediately"): once both guards pass, AR_KICKOFF is dispatched in the SAME handleStart call, right after persisting the new run — never deferred to a navigation/reload event', () => {
+    const fn = source.slice(source.indexOf('async function handleStart'), source.indexOf('async function handleWatchdogAlarm'))
+    const setStateIndex = fn.indexOf('await setState(state)')
+    const kickoffIndex = fn.indexOf('sendToTab(tabId, { type: AR_MESSAGE.KICKOFF')
+    expect(setStateIndex).toBeGreaterThan(-1)
+    expect(kickoffIndex).toBeGreaterThan(setStateIndex)
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 2): ensureContentScriptReady pings first, and ONLY on a failed ping tries exactly one (re-)injection via chrome.scripting.executeScript before pinging again — never injecting unconditionally on every start (which would risk a double pipeline in a tab that already has a working content script)', () => {
+    const fn = source.slice(source.indexOf('async function ensureContentScriptReady'), source.indexOf('async function handleStart'))
+    expect(fn).toMatch(/if \(await pingContentScript\(tabId\)\) return true/)
+    expect(fn).toContain("chrome.scripting.executeScript({ target: { tabId }, files: ['src/content-script.js'] })")
+    const pingCalls = [...fn.matchAll(/pingContentScript\(tabId\)/g)]
+    expect(pingCalls.length).toBe(2)
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 3 — service worker lifecycle): the watchdog is scheduled via chrome.alarms, which keeps firing even after this service worker is suspended — NEVER via setTimeout/setInterval, which do not survive suspension and would silently never fire', () => {
+    expect(source).toContain('chrome.alarms.create(watchdogAlarmName(state.runId)')
+    expect(source).toContain('chrome.alarms.onAlarm.addListener(')
+    expect(source).not.toMatch(/\bsetInterval\(/)
+    expect(source).not.toMatch(/\bsetTimeout\(/)
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 6 — "never leave a dead run"): handleWatchdogAlarm re-reads the PERSISTED state fresh (never a module-level variable this worker could have lost across a suspension) and applies the pure shouldAbortForMissingProcessing/applyAbort pair, never inlining its own ad hoc condition', () => {
+    const fn = source.slice(source.indexOf('async function handleWatchdogAlarm'), source.indexOf('chrome.alarms.onAlarm.addListener'))
+    expect(fn).toContain('runIdFromWatchdogAlarmName(alarmName)')
+    expect(fn).toContain('await getState()')
+    expect(fn).toContain('shouldAbortForMissingProcessing(state, alarmRunId)')
+    expect(fn).toContain('applyAbort(state, CONTENT_SCRIPT_UNAVAILABLE_MESSAGE)')
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 6): the FIRST AR_PAGE_PROGRESS for a run clears its own watchdog alarm — a run that proved it started processing can never be aborted by a stale timer', () => {
+    const fn = source.slice(source.indexOf('async function handlePageProgress'), source.indexOf('async function handleDebugEvent'))
+    expect(fn).toContain('applyPageProgress(state,')
+    expect(fn).toMatch(/chrome\.alarms\.clear\(watchdogAlarmName\(state\.runId\)\)/)
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 4): AR_DEBUG_EVENT is routed to handleDebugEvent, which only ever appends to the run\'s own debugLog (appendDebugEvent) — never a state field any gate/transition reads back', () => {
+    expect(source).toMatch(/case AR_MESSAGE\.DEBUG_EVENT:\s*\n\s*void handleDebugEvent\(senderTabId, message\)\.then\(sendResponse\)/)
+    const fn = source.slice(source.indexOf('async function handleDebugEvent'), source.indexOf('async function handlePageComplete'))
+    expect(fn).toContain('appendDebugEvent(state, { event, detail })')
+  })
+
   it('item 6: AR_STOP only ever sets a flag (applyStopRequested) — it never itself aborts/completes a run, and a popup on an unrelated tab can neither see nor stop this tab\'s run (stateForTab)', () => {
     const fn = source.slice(source.indexOf('async function handleStop'), source.indexOf('async function handleManualContinue'))
     expect(fn).toContain('stateForTab(')
@@ -1076,5 +1135,44 @@ describe('TRUE unattended auto-run — content-script.js: registered only for th
   it('item 4: on every fresh page load, main() asks background.js whether an approved run is active for THIS tab (AR_CHECK_ACTIVE) — the teacher never needs to reopen the popup for page 2/3/4 to proceed', () => {
     expect(source).toMatch(/async function main\(\) \{[\s\S]{0,200}AR_MESSAGE\.CHECK_ACTIVE/)
     expect(source).toMatch(/void main\(\)\s*\n\s*\}\)\(\)/)
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 2 — "verify content script is available"): AR_PING is answered SYNCHRONOUSLY and FIRST, before the KICKOFF/RESUME branches and before loadLibs() is ever called — background.js\'s ensureContentScriptReady must never be blocked on this file\'s own (possibly slow) library loading', () => {
+    const listenerBody = source.slice(source.indexOf('chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {'))
+    const pingIndex = listenerBody.indexOf('AR_MESSAGE.PING')
+    const kickoffIndex = listenerBody.indexOf('AR_MESSAGE.KICKOFF')
+    expect(pingIndex).toBeGreaterThan(-1)
+    expect(pingIndex).toBeLessThan(kickoffIndex)
+    const pingBranch = listenerBody.slice(pingIndex - 40, kickoffIndex)
+    expect(pingBranch).toContain('sendResponse({ ok: true, ready: true })')
+    expect(pingBranch).not.toContain('loadLibs()')
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 4 — "message trace"): every one of PAGE_SCAN_OK/PAGE_PLAN_READY/CELL_WRITE_START/PAGE_DONE/NEXT_PAGE_REQUESTED is sent via the shared fire-and-forget debugEvent helper, in that same pipeline order, and debugEvent itself never awaits/blocks on background.js\'s reply', () => {
+    const debugEventFn = source.slice(source.indexOf('function debugEvent('), source.indexOf('function debugEvent(') + 200)
+    expect(debugEventFn).toContain('void sendMessage({ type: AR_MESSAGE.DEBUG_EVENT')
+
+    const processFn = source.slice(source.indexOf('async function processCurrentPage'), source.indexOf('async function attemptAdvance'))
+    const scanIndex = processFn.indexOf("debugEvent('PAGE_SCAN_OK'")
+    const planIndex = processFn.indexOf("debugEvent('PAGE_PLAN_READY'")
+    const writeStartIndex = processFn.indexOf("debugEvent('CELL_WRITE_START'")
+    const doneIndex = processFn.indexOf("debugEvent('PAGE_DONE'")
+    expect(scanIndex).toBeGreaterThan(-1)
+    expect(planIndex).toBeGreaterThan(scanIndex)
+    expect(writeStartIndex).toBeGreaterThan(planIndex)
+    expect(doneIndex).toBeGreaterThan(writeStartIndex)
+
+    const advanceFn = source.slice(source.indexOf('async function attemptAdvance'), source.indexOf('async function verifyPendingAdvance'))
+    expect(advanceFn).toContain("debugEvent('NEXT_PAGE_REQUESTED'")
+  })
+
+  it('FINAL AUTO-RUN EXECUTION BUG FIX (item 5 — "page 1 must process before any NextPage click"): CELL_WRITE_START/PAGE_DONE (this page\'s own writes) both occur, in processCurrentPage, strictly BEFORE attemptAdvance is ever called — a page\'s writes always finish before this file even considers clicking Next', () => {
+    const processFn = source.slice(source.indexOf('async function processCurrentPage'), source.indexOf('async function attemptAdvance'))
+    const writeStartIndex = processFn.indexOf("debugEvent('CELL_WRITE_START'")
+    const doneIndex = processFn.indexOf("debugEvent('PAGE_DONE'")
+    const advanceCallIndex = processFn.indexOf('await attemptAdvance(libs, lastPageContext)')
+    expect(writeStartIndex).toBeGreaterThan(-1)
+    expect(doneIndex).toBeGreaterThan(writeStartIndex)
+    expect(advanceCallIndex).toBeGreaterThan(doneIndex)
   })
 })

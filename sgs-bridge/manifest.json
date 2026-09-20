@@ -8,7 +8,7 @@
     "default_title": "SGS Bridge (Dry Run)"
   },
   "options_page": "src/options.html",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "permissions": ["activeTab", "scripting", "storage", "alarms"],
   "host_permissions": ["https://sgs.bopp-obec.info/sgs/*"],
   "background": {
     "service_worker": "src/background.js",

@@ -31,6 +31,15 @@ import { emptyAutoRunSummary, mergeAutoRunSummaries } from './auto-run.js'
  * the other's wording. */
 export const PAGINATION_HYDRATION_FAILED_MESSAGE = 'ยังอ่านข้อมูลหน้าของ SGS ไม่สำเร็จ'
 
+/** FINAL AUTO-RUN EXECUTION BUG FIX — shown when background.js cannot
+ * confirm (via AR_PING, see background.js's ensureContentScriptReady)
+ * that a content script is actually listening in the run's tab BEFORE a
+ * run is ever created (item 2's guard), and reused as the watchdog's own
+ * abort reason (item 6) if a run somehow still went "running" without
+ * page-1 processing ever starting. One shared string so both refusals
+ * read identically to the teacher. */
+export const CONTENT_SCRIPT_UNAVAILABLE_MESSAGE = 'ไม่พบตัวเชื่อมหน้า SGS กรุณารีเฟรชหน้า SGS แล้วลองใหม่'
+
 export const AUTO_RUN_STATUS = {
   RUNNING: 'running',
   PAUSED_MANUAL: 'paused_manual',
@@ -59,6 +68,14 @@ export const AR_MESSAGE = {
   ABORT: 'AR_ABORT',
   STOPPED: 'AR_STOPPED',
   COMPLETE: 'AR_COMPLETE',
+  // FINAL AUTO-RUN EXECUTION BUG FIX (item 4): a content script's own
+  // debug checkpoint during one page's pipeline — never itself a state
+  // transition, only appended to state.debugLog (see appendDebugEvent).
+  DEBUG_EVENT: 'AR_DEBUG_EVENT',
+  // background <-> content-script: a content script availability
+  // handshake, sent BEFORE a run is ever created (item 2) — a content
+  // script answers it immediately, without waiting for loadLibs().
+  PING: 'AR_PING',
   // background -> content-script
   KICKOFF: 'AR_KICKOFF',
   RESUME: 'AR_RESUME',
@@ -132,7 +149,29 @@ export function createInitialRunState({
     confirmedContext: null,
     expectedNextPage: initialCurrentPage,
     pendingAdvance: null,
+    // FINAL AUTO-RUN EXECUTION BUG FIX (item 6) — set true by
+    // applyPageProgress the FIRST time content-script.js reports it has
+    // actually begun scanning/processing a page. The watchdog alarm (see
+    // shouldAbortForMissingProcessing below) only ever aborts a run for
+    // which this is STILL false by the time it fires — never a run that
+    // is merely taking a while to finish a page it already started.
+    hasStartedProcessing: false,
+    debugLog: [],
   }
+}
+
+/** FINAL AUTO-RUN EXECUTION BUG FIX (item 4) — appends one {ts, event,
+ * detail} entry to the run's own debugLog, capped at the most recent
+ * DEBUG_LOG_MAX_ENTRIES so a long run's state never grows unbounded.
+ * Pure, so both background.js's own checkpoints and content-script.js's
+ * (relayed via AR_DEBUG_EVENT) go through the exact same accumulation
+ * rule. */
+export const DEBUG_LOG_MAX_ENTRIES = 20
+
+export function appendDebugEvent(state, { event, detail }) {
+  if (!state) return state
+  const entry = { ts: Date.now(), event, detail: detail ?? null }
+  return { ...state, debugLog: [...state.debugLog, entry].slice(-DEBUG_LOG_MAX_ENTRIES) }
 }
 
 /**
@@ -152,6 +191,40 @@ export function isPaginationHydrationValid(pagination) {
       pagination.totalPages !== null &&
       pagination.totalPages !== undefined,
   )
+}
+
+/**
+ * FINAL AUTO-RUN EXECUTION BUG FIX (item 6) — the watchdog alarm's own
+ * name for a given run, namespaced by runId so a PREVIOUS run's already-
+ * fired/already-cleared alarm can never be mistaken for the CURRENT run's
+ * one (chrome.alarms has no per-run isolation of its own — every alarm in
+ * the extension shares one flat namespace). Kept as a pure pair
+ * (name <-> runId) so background.js's chrome.alarms.create/onAlarm code
+ * and this module's own regression tests always agree on the exact
+ * string shape.
+ */
+const WATCHDOG_ALARM_PREFIX = 'sgsBridgeAutoRunWatchdog:'
+
+export function watchdogAlarmName(runId) {
+  return `${WATCHDOG_ALARM_PREFIX}${runId}`
+}
+
+export function runIdFromWatchdogAlarmName(alarmName) {
+  return typeof alarmName === 'string' && alarmName.startsWith(WATCHDOG_ALARM_PREFIX) ? alarmName.slice(WATCHDOG_ALARM_PREFIX.length) : null
+}
+
+/**
+ * FINAL AUTO-RUN EXECUTION BUG FIX (item 6's "never leave a dead run") —
+ * the ONE decision background.js's chrome.alarms.onAlarm listener makes:
+ * abort ONLY a run that (a) the firing alarm actually belongs to (never a
+ * stale alarm from an already-finished/already-replaced run), (b) is
+ * still nominally "running", and (c) has NEVER once confirmed it began
+ * processing a page (hasStartedProcessing) — a run that already reported
+ * its first AR_PAGE_PROGRESS is simply taking a while and must never be
+ * aborted by this watchdog, however long page 1 itself takes.
+ */
+export function shouldAbortForMissingProcessing(state, alarmRunId) {
+  return Boolean(state && alarmRunId && state.runId === alarmRunId && state.status === AUTO_RUN_STATUS.RUNNING && !state.hasStartedProcessing)
 }
 
 /** item 6: only ever sets a flag — never itself stops anything in
@@ -181,6 +254,12 @@ export function applyPageProgress(state, { pageNumber, totalPages, totalStudentR
     pageSize: pageSize ?? state.pageSize,
     summary: runningSummary ?? state.summary,
     status: AUTO_RUN_STATUS.RUNNING,
+    // FINAL AUTO-RUN EXECUTION BUG FIX (item 6) — the FIRST AR_PAGE_PROGRESS
+    // for ANY page is content-script.js's own confirmation that it has
+    // begun scanning/processing that page (sent right after the page gate
+    // passes, well before any cell write) — proof positive execution
+    // actually started, which is exactly what the watchdog alarm checks.
+    hasStartedProcessing: true,
   }
 }
 

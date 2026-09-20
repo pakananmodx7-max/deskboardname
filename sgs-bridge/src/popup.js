@@ -229,6 +229,7 @@ const arProgressSkipExistingEl = document.getElementById('ar-progress-skip-exist
 const arProgressNotFoundEl = document.getElementById('ar-progress-not-found')
 const arProgressAmbiguousEl = document.getElementById('ar-progress-ambiguous')
 const arProgressFailedEl = document.getElementById('ar-progress-failed')
+const arProgressDebugEl = document.getElementById('ar-progress-debug')
 const arStopBtn = document.getElementById('ar-stop-btn')
 const arManualContinueWrap = document.getElementById('ar-manual-continue')
 const arManualContinueMessageEl = document.getElementById('ar-manual-continue-message')
@@ -1915,7 +1916,22 @@ function updateAutoRunConfirmGate() {
   arRunBtn.disabled = !(arConfirmSubjectClassroomCheckbox.checked && arConfirmAutosaveCheckbox.checked)
 }
 
-function renderAutoRunLiveProgress(currentPageNumber, totalPages, processedCount, rosterCount, runningSummary) {
+/**
+ * FINAL AUTO-RUN EXECUTION BUG FIX (item 4) — "expose this in Section 7
+ * as a small debug/status line": renders the MOST RECENT entry of
+ * state.debugLog (background.js's own AR_START received/RUN_CREATED/
+ * PROCESS_CURRENT_PAGE sent/CONTENT_SCRIPT_RECEIVED checkpoints, plus
+ * content-script.js's PAGE_SCAN_OK/PAGE_PLAN_READY/CELL_WRITE_START/
+ * PAGE_DONE/NEXT_PAGE_REQUESTED ones, relayed via AR_DEBUG_EVENT) — so a
+ * teacher/developer can see exactly where a stuck run's execution
+ * actually stopped, without opening the service worker's own console.
+ */
+function renderAutoRunDebugLine(debugLog) {
+  const latest = debugLog && debugLog.length > 0 ? debugLog[debugLog.length - 1] : null
+  arProgressDebugEl.textContent = latest ? `[debug] ${latest.event}` : ''
+}
+
+function renderAutoRunLiveProgress(currentPageNumber, totalPages, processedCount, rosterCount, runningSummary, debugLog) {
   arProgressPageEl.textContent = `หน้า ${currentPageNumber ?? '?'} / ${totalPages ?? '?'}`
   arProgressStudentsEl.textContent = `นักเรียนที่ประมวลผล ${processedCount} / ${rosterCount}`
   arProgressWrittenEl.textContent = String(runningSummary.written)
@@ -1924,6 +1940,7 @@ function renderAutoRunLiveProgress(currentPageNumber, totalPages, processedCount
   arProgressNotFoundEl.textContent = String(runningSummary.notFound)
   arProgressAmbiguousEl.textContent = String(runningSummary.ambiguous)
   arProgressFailedEl.textContent = String(runningSummary.failed)
+  renderAutoRunDebugLine(debugLog)
 }
 
 /** item 7's final summary + the downloadable/copyable run report — built
@@ -1984,7 +2001,7 @@ function renderAutoRunFromState(state) {
     arFinalSummaryEl.hidden = true
     arProgressEl.hidden = false
     arStopBtn.disabled = false
-    renderAutoRunLiveProgress(state.currentPage, state.totalPages, processedCount, rosterCount, runningSummary)
+    renderAutoRunLiveProgress(state.currentPage, state.totalPages, processedCount, rosterCount, runningSummary, state.debugLog)
     return
   }
 
@@ -1994,7 +2011,7 @@ function renderAutoRunFromState(state) {
     arFinalSummaryEl.hidden = true
     arProgressEl.hidden = false
     arStopBtn.disabled = false
-    renderAutoRunLiveProgress(state.currentPage, state.totalPages, processedCount, rosterCount, runningSummary)
+    renderAutoRunLiveProgress(state.currentPage, state.totalPages, processedCount, rosterCount, runningSummary, state.debugLog)
     arManualContinueMessageEl.textContent = `หน้าที่ ${state.currentPage ?? '?'} เสร็จแล้ว กรุณาเปิดหน้าที่ ${state.expectedNextPage ?? '?'} แล้วกด "ดำเนินการต่อ" (${state.pauseReason ?? ''})`
     arManualContinueWrap.hidden = false
     return

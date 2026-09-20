@@ -25,6 +25,7 @@
  */
 
 import {
+  appendDebugEvent,
   AR_MESSAGE,
   applyAbort,
   applyCompleted,
@@ -35,13 +36,36 @@ import {
   applyStopped,
   applyStopRequested,
   clearPendingAdvance,
+  CONTENT_SCRIPT_UNAVAILABLE_MESSAGE,
   createInitialRunState,
   isPaginationHydrationValid,
   PAGINATION_HYDRATION_FAILED_MESSAGE,
+  runIdFromWatchdogAlarmName,
+  shouldAbortForMissingProcessing,
   shouldContentScriptProcess,
+  watchdogAlarmName,
   withConfirmedContext,
   withPendingAdvance,
 } from './lib/run-orchestrator.js'
+
+/** FINAL AUTO-RUN EXECUTION BUG FIX (item 6) — the practical floor for a
+ * one-shot chrome.alarms delay (chrome.alarms, unlike setTimeout/
+ * setInterval, keeps firing even if this service worker was suspended in
+ * the meantime — see this file's own header on item 3's lifecycle rule).
+ * 30 seconds is easily enough for a real page-1 scan/plan/first-write to
+ * report its own AR_PAGE_PROGRESS (which clears this alarm — see
+ * handlePageProgress) — this only ever fires for a run that TRULY never
+ * got that far. */
+const WATCHDOG_DELAY_MINUTES = 0.5
+
+/** Every checkpoint this file logs is ALSO visible directly in the
+ * service worker's own devtools console (chrome://extensions -> "service
+ * worker") for local debugging (item 4) — a run's own persisted
+ * debugLog (see appendDebugEvent) is the teacher-facing subset a reopened
+ * popup can render live, starting only once a run actually exists. */
+function debugLog(event, detail) {
+  console.debug('[SGS Bridge]', event, detail ?? '')
+}
 
 const RUN_STORAGE_KEY = 'sgsBridgeActiveAutoRun'
 
@@ -73,22 +97,75 @@ function sendToTab(tabId, message) {
   chrome.tabs.sendMessage(tabId, message).catch(() => {})
 }
 
+/** FINAL AUTO-RUN EXECUTION BUG FIX (item 2) — a bare handshake, answered
+ * by content-script.js immediately (before it even loads its own libs),
+ * so this never blocks on anything the content script itself might be
+ * slow at. A rejected/timed-out promise (no listener in that tab at all)
+ * is the normal, expected shape of "no content script there" — never
+ * itself logged as an error. */
+async function pingContentScript(tabId) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { type: AR_MESSAGE.PING })
+    return Boolean(response?.ready)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * FINAL AUTO-RUN EXECUTION BUG FIX (item 2) — "verify content script is
+ * available... inject/reload content script safely if architecture
+ * permits." A failed first ping tries exactly ONE (re-)injection (covers
+ * the common case: the SGS tab was already open before this extension's
+ * content script ever got a chance to auto-inject into it) and pings
+ * again. content-script.js's own top-of-file already-loaded guard makes
+ * re-injecting into a tab that already has a WORKING content script a
+ * safe no-op — this never risks a second overlapping pipeline in the
+ * same tab.
+ */
+async function ensureContentScriptReady(tabId) {
+  if (await pingContentScript(tabId)) return true
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content-script.js'] })
+  } catch {
+    return false
+  }
+  return pingContentScript(tabId)
+}
+
 /**
  * FINAL AUTO-RUN STATE BUG FIX (item 2/6) — this is the SECOND of the
- * two required guards (popup.js's own AR_START click handler is the
- * first): even if popup somehow sent a START with missing/incomplete
- * pagination, a run is NEVER created from it. `pagination` here is
- * popup.js's OWN fresh, just-taken inspection (never this file re-doing
- * or trusting any earlier/cached read) — createInitialRunState is only
- * ever called once this guard has already passed, so a state with
- * `status: 'running'` can never exist with `currentPage`/`totalPages`
- * still `null`.
+ * two required pagination guards (popup.js's own AR_START click handler
+ * is the first): even if popup somehow sent a START with missing/
+ * incomplete pagination, a run is NEVER created from it. `pagination`
+ * here is popup.js's OWN fresh, just-taken inspection (never this file
+ * re-doing or trusting any earlier/cached read).
+ *
+ * FINAL AUTO-RUN EXECUTION BUG FIX (item 1/2/6) — a run is ALSO never
+ * created unless ensureContentScriptReady already confirmed a listener
+ * exists in this exact tab: pagination detection succeeding is no proof
+ * the content script itself is reachable (that is exactly the bug this
+ * turn fixes — a run that reached "running"/0/32 forever because the
+ * AR_KICKOFF below was silently swallowed by sendToTab's own best-effort
+ * `.catch`, with nothing ever noticing). Once both guards pass,
+ * createInitialRunState is called, AR_KICKOFF is dispatched immediately
+ * (never waiting for a navigation/reload — item 1), and a watchdog alarm
+ * is armed as the last-resort safety net (item 6) in case page-1
+ * processing still somehow never begins.
  */
 async function handleStart(message) {
+  debugLog('AR_START received', { tabId: message.tabId })
   const { tabId, subject, classroom, targetColumn, payload, overwriteMode, pagination } = message
   if (!isPaginationHydrationValid(pagination)) {
     return { ok: false, state: null, reason: PAGINATION_HYDRATION_FAILED_MESSAGE }
   }
+
+  if (!(await ensureContentScriptReady(tabId))) {
+    debugLog('content script unavailable — refusing to start a run', { tabId })
+    return { ok: false, state: null, reason: CONTENT_SCRIPT_UNAVAILABLE_MESSAGE }
+  }
+  debugLog('CONTENT_SCRIPT_RECEIVED', { tabId })
+
   const state = createInitialRunState({
     runId: crypto.randomUUID(),
     tabId,
@@ -103,9 +180,36 @@ async function handleStart(message) {
     pageSize: pagination.pageSize ?? null,
   })
   await setState(state)
+  debugLog('RUN_CREATED', { runId: state.runId })
+
   sendToTab(tabId, { type: AR_MESSAGE.KICKOFF, runId: state.runId })
+  debugLog('PROCESS_CURRENT_PAGE sent', { runId: state.runId })
+
+  await chrome.alarms.create(watchdogAlarmName(state.runId), { delayInMinutes: WATCHDOG_DELAY_MINUTES })
+
   return { ok: true, state }
 }
+
+/**
+ * FINAL AUTO-RUN EXECUTION BUG FIX (item 6) — "never leave a dead run":
+ * fires once, WATCHDOG_DELAY_MINUTES after AR_START, only for the exact
+ * run it was armed for (runIdFromWatchdogAlarmName/shouldAbortForMissing
+ * Processing — a pure decision, see run-orchestrator.js). A run that
+ * already reported ANY page-1 progress by then is left completely alone,
+ * however long it goes on to take.
+ */
+async function handleWatchdogAlarm(alarmName) {
+  const alarmRunId = runIdFromWatchdogAlarmName(alarmName)
+  if (!alarmRunId) return
+  const state = await getState()
+  if (!shouldAbortForMissingProcessing(state, alarmRunId)) return
+  debugLog('watchdog: page-1 processing never started — aborting', { runId: alarmRunId })
+  await setState(applyAbort(state, CONTENT_SCRIPT_UNAVAILABLE_MESSAGE))
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  void handleWatchdogAlarm(alarm.name)
+})
 
 /**
  * `requestingTabId` is popup.js's own currently-active tab (see
@@ -172,6 +276,23 @@ async function handlePageProgress(tabId, { pageNumber, totalPages, totalStudentR
   let next = applyPageProgress(state, { pageNumber, totalPages, totalStudentRows, pageSize, runningSummary })
   if (confirmedContext) next = withConfirmedContext(next, confirmedContext)
   await setState(next)
+  // FINAL AUTO-RUN EXECUTION BUG FIX (item 6) — this is proof page
+  // processing began, so the watchdog armed in handleStart (or after any
+  // later page's own advance) no longer has anything to guard against.
+  // A no-op, safely, once the alarm has already fired/been cleared.
+  await chrome.alarms.clear(watchdogAlarmName(state.runId)).catch(() => {})
+  return { ok: true }
+}
+
+/** FINAL AUTO-RUN EXECUTION BUG FIX (item 4) — relays one of content-
+ * script.js's own pipeline checkpoints (PAGE_SCAN_OK/PAGE_PLAN_READY/
+ * CELL_WRITE_START/PAGE_DONE/NEXT_PAGE_REQUESTED) into the run's own
+ * debugLog, purely for visibility — never itself a state transition a
+ * later gate depends on. */
+async function handleDebugEvent(tabId, { event, detail }) {
+  const state = await getState()
+  if (!state || state.tabId !== tabId) return { ok: false }
+  await setState(appendDebugEvent(state, { event, detail }))
   return { ok: true }
 }
 
@@ -255,7 +376,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case AR_MESSAGE.COMPLETE:
       void handleComplete(senderTabId).then(sendResponse)
       return true
+    case AR_MESSAGE.DEBUG_EVENT:
+      void handleDebugEvent(senderTabId, message).then(sendResponse)
+      return true
     default:
+      // AR_MESSAGE.PING is never handled here — it is answered by
+      // content-script.js itself (see ensureContentScriptReady's own doc
+      // comment), never routed through this background worker.
       return false
   }
 })
