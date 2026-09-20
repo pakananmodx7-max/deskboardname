@@ -480,24 +480,28 @@ export function readSingleColumnCellValue(tableIndex, rowIndex, columnIndex) {
 }
 
 /**
- * FINAL PAGINATION FIX — LIVE DOM EVIDENCE now confirms the exact real
+ * FINAL PAGINATION FIX — LIVE DOM EVIDENCE now confirms ALL FOUR value
  * ids: `ctl00_PageContent_TblTranscriptsPagination__CurrentPage`
- * (type=text, the current page number) and
- * `...__PageSize` (type=text, rows per page). These are read DIRECTLY —
- * never via nearby text parsing — the same way KNOWN_SGS_FILTER_IDS'
- * subject/classroom filters already are. Every id sharing the
- * `TblTranscriptsPagination` namespace token is enumerated FIRST (never
- * filtered by a guessed suffix before that), so First/Previous/Next/Last
- * — whatever their real ids turn out to be — are always captured
- * regardless of naming.
+ * (type=text, current page), `...__PageSize` (type=text, rows per
+ * page), `...__TotalPages` (text, e.g. "4"), and `...__TotalItems`
+ * (text, e.g. "32"). Every one of these is now read DIRECTLY from its
+ * OWN element — never by regex over a shared container's concatenated
+ * text. That concatenation is exactly what previously produced
+ * `totalPages: 432`/`totalRows: 432`: when "ของ" is immediately
+ * followed by the TotalPages element's own "4" and then, with no
+ * separating whitespace in the rendered markup, the TotalItems
+ * element's "32", a single `/ของ\s*(\d+)/` match's greedy `\d+`
+ * silently swallowed both numbers into one "432". Reading each element
+ * by its own confirmed id makes that concatenation structurally
+ * impossible.
  *
- * The shared pagination CONTAINER is found by walking up from the
- * CONFIRMED CurrentPage element (never a guessed text anchor) until an
- * ancestor's own text contains the Thai "ของ N" (of N) total-page count
- * — "32 รายการ" (total records) is then read from that SAME container's
- * text. A whole-body "ของ N" text anchor is used only as a last-resort
- * fallback on a page where no CurrentPage element exists at all (an
- * older/different SGS layout).
+ * Every id sharing the `TblTranscriptsPagination` namespace token is
+ * enumerated FIRST (never filtered by a guessed suffix before that), so
+ * First/Previous/Next/Last/CurrentPage/PageSize/TotalPages/TotalItems —
+ * whatever a future deployment's real ids turn out to be — are always
+ * captured regardless of naming. Generic "ของ N"/"รายการ" text parsing
+ * is used ONLY as a fallback when the confirmed TotalPages/TotalItems
+ * ids are absent (an older/different SGS layout).
  *
  * This function only ever COLLECTS candidates — it never decides which
  * one is "Next"/"Last"/etc (that pure classification, DOM-free and
@@ -511,6 +515,7 @@ export function inspectPaginationControls() {
   const NAMESPACE_TOKEN = 'TblTranscriptsPagination'
   const OF_PATTERN = /ของ\s*(\d+)/
   const ITEMS_PATTERN = /(\d+)\s*รายการ/
+  const NUMBER_PATTERN = /(\d+)/
   const CLICKABLE_SELECTOR = 'a,button,input,img,[onclick]'
   const MAX_ANCESTOR_DEPTH = 8
 
@@ -539,48 +544,58 @@ export function inspectPaginationControls() {
     }
   }
 
+  // Reads exactly ONE element's own number — never anything beyond that
+  // single element's own text/value, so it can never accidentally
+  // absorb a sibling element's digits the way a shared-container regex
+  // could.
+  function readOwnNumber(el) {
+    if (!el) return null
+    const raw = el.tagName.toLowerCase() === 'input' ? (el.value ?? '') : textOf(el)
+    const match = NUMBER_PATTERN.exec(raw)
+    return match ? match[1] : null
+  }
+
   // STEP 1 — enumerate the ENTIRE confirmed namespace, never filtered by
   // a guessed suffix first: every element the real SGS page's own
   // TblTranscriptsPagination naming convention touches.
   const namespaceEls = Array.from(document.querySelectorAll(`[id*="${NAMESPACE_TOKEN}"]`))
+  function findBySuffix(suffix) {
+    return namespaceEls.find((el) => el.id.toLowerCase().endsWith(suffix.toLowerCase())) || null
+  }
 
-  // STEP 2 — read CurrentPage/PageSize DIRECTLY from their own confirmed
-  // id suffix, exactly like KNOWN_SGS_FILTER_IDS' known filter reads —
-  // never nearby text parsing for these two.
-  const currentPageEl = namespaceEls.find((el) => el.id.endsWith('CurrentPage')) || null
-  const pageSizeEl = namespaceEls.find((el) => el.id.endsWith('PageSize')) || null
+  // STEP 2 — read every confirmed VALUE directly from its own id,
+  // exactly like KNOWN_SGS_FILTER_IDS' known filter reads — never
+  // nearby/shared text parsing for any of these four.
+  const currentPageEl = findBySuffix('CurrentPage')
+  const pageSizeEl = findBySuffix('PageSize')
+  const totalPagesEl = findBySuffix('TotalPages')
+  const totalItemsEl = findBySuffix('TotalItems')
   const currentPageValue = currentPageEl ? (currentPageEl.value ?? '') : null
   const pageSizeValue = pageSizeEl ? (pageSizeEl.value ?? '') : null
+  let totalPagesText = readOwnNumber(totalPagesEl)
+  let totalRowsText = readOwnNumber(totalItemsEl)
 
-  // STEP 3 — the shared pagination container: anchored on the CONFIRMED
-  // CurrentPage (or PageSize) element, walking up until an ancestor's
-  // own text contains "ของ N".
+  // STEP 3 — the shared pagination container, needed ONLY as a fallback
+  // anchor for the whole-page control collection below (step 4) — and,
+  // if TotalPages/TotalItems weren't found by id at all, as the LAST
+  // RESORT source for "ของ N"/"รายการ" text parsing.
   let container = null
-  let totalPagesText = null
   const valueAnchorEl = currentPageEl || pageSizeEl
   if (valueAnchorEl) {
     let node = valueAnchorEl.parentElement
     for (let depth = 0; depth < MAX_ANCESTOR_DEPTH && node; depth++) {
-      const match = OF_PATTERN.exec(textOf(node))
-      if (match) {
+      if (OF_PATTERN.test(textOf(node))) {
         container = node
-        totalPagesText = match[1]
         break
       }
       node = node.parentElement
     }
   }
-
-  // Last-resort fallback ONLY when no CurrentPage/PageSize element
-  // exists at all (a page this confirmed namespace doesn't match) — a
-  // bounded whole-body text anchor, same shape as before.
   if (!container) {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
     let textNode
     while ((textNode = walker.nextNode())) {
-      const match = OF_PATTERN.exec((textNode.textContent || '').trim())
-      if (match) {
-        totalPagesText = match[1]
+      if (OF_PATTERN.test((textNode.textContent || '').trim())) {
         let node = textNode.parentElement
         for (let depth = 0; depth < 6 && node; depth++) {
           if (node.querySelector(CLICKABLE_SELECTOR)) {
@@ -595,12 +610,18 @@ export function inspectPaginationControls() {
     }
   }
 
-  const itemsMatchInContainer = container ? ITEMS_PATTERN.exec(textOf(container)) : null
-  // "32 รายการ" sometimes renders just outside the tight button
-  // cluster — a plain whole-page text presence check as a fallback,
-  // never used for anything beyond this ONE number.
-  const itemsMatchWholePage = itemsMatchInContainer ? null : ITEMS_PATTERN.exec(document.body.innerText || document.body.textContent || '')
-  const totalRowsText = itemsMatchInContainer ? itemsMatchInContainer[1] : itemsMatchWholePage ? itemsMatchWholePage[1] : null
+  // Fallback text parsing — ONLY when the confirmed ids above were
+  // absent. Deliberately never re-derives a value the confirmed id
+  // already supplied.
+  if (totalPagesText === null && container) {
+    const match = OF_PATTERN.exec(textOf(container))
+    if (match) totalPagesText = match[1]
+  }
+  if (totalRowsText === null) {
+    const inContainer = container ? ITEMS_PATTERN.exec(textOf(container)) : null
+    const wholePage = inContainer ? null : ITEMS_PATTERN.exec(document.body.innerText || document.body.textContent || '')
+    totalRowsText = inContainer ? inContainer[1] : wholePage ? wholePage[1] : null
+  }
 
   // STEP 4 — collect every candidate control in DOCUMENT ORDER, from
   // BOTH the confirmed namespace (step 1) and the pagination container
@@ -622,7 +643,7 @@ export function inspectPaginationControls() {
   const candidates = orderedEls.map((el, index) => ({ ...describeCandidate(el), domOrder: index }))
 
   return {
-    found: Boolean(currentPageEl || pageSizeEl || totalPagesText !== null),
+    found: Boolean(currentPageEl || pageSizeEl || totalPagesEl || totalPagesText !== null),
     totalPagesText,
     totalRowsText,
     currentPageValue,

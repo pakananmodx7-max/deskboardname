@@ -364,11 +364,21 @@ describe('BUG FIX — content-diagnostic.js: inspectPaginationControls, read-onl
     }
   })
 
-  it('LIVE DOM EVIDENCE: reads currentPage/pageSize DIRECTLY from the confirmed ...__CurrentPage/...__PageSize ids — never nearby text parsing for these two', () => {
-    expect(source).toMatch(/el\.id\.endsWith\('CurrentPage'\)/)
-    expect(source).toMatch(/el\.id\.endsWith\('PageSize'\)/)
+  it('LIVE DOM EVIDENCE: reads currentPage/pageSize/totalPages/totalRows DIRECTLY from their own confirmed ids (findBySuffix) — never nearby/shared text parsing for any of the four', () => {
+    expect(source).toContain('findBySuffix')
+    expect(source).toMatch(/findBySuffix\('CurrentPage'\)/)
+    expect(source).toMatch(/findBySuffix\('PageSize'\)/)
+    expect(source).toMatch(/findBySuffix\('TotalPages'\)/)
+    expect(source).toMatch(/findBySuffix\('TotalItems'\)/)
     expect(source).toContain('currentPageValue')
     expect(source).toContain('pageSizeValue')
+    expect(source).toContain('readOwnNumber')
+  })
+
+  it('BUG FIX: never regexes over a SHARED container\'s concatenated text for totalPages/totalRows — the exact bug that turned "4" + "32" into "432" when the two numbers rendered with no separating whitespace', () => {
+    expect(source).toMatch(/if \(totalPagesText === null && container\)/)
+    const readOwnNumberFn = source.slice(source.indexOf('function readOwnNumber'), source.indexOf('function readOwnNumber') + 300)
+    expect(readOwnNumberFn).not.toMatch(/textOf\(container\)/)
   })
 
   it('enumerates the ENTIRE TblTranscriptsPagination namespace FIRST, never filtered by a guessed suffix before that', () => {
@@ -386,9 +396,10 @@ describe('BUG FIX — content-diagnostic.js: inspectPaginationControls, read-onl
     expect(source).not.toMatch(/getBoundingClientRect|clientX|clientY|offsetLeft|offsetTop/)
   })
 
-  it('total records ("32 รายการ") is read from the container\'s own text first, falling back to a whole-page text presence check only when the container doesn\'t carry it', () => {
-    expect(source).toContain('itemsMatchInContainer')
-    expect(source).toContain('itemsMatchWholePage')
+  it('total pages/records text-parsing fallback only ever runs when the confirmed TotalPages/TotalItems ids were absent', () => {
+    expect(source).toMatch(/if \(totalRowsText === null\) \{/)
+    expect(source).toContain('inContainer')
+    expect(source).toContain('wholePage')
   })
 })
 

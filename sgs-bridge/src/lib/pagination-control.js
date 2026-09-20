@@ -165,17 +165,25 @@ export function classifyPaginationCandidate(candidate) {
 /**
  * Finds the single-step NEXT control among a page's collected pagination
  * candidates — NEVER Last, whatever position it happens to render in.
- * Disabled candidates (already on the last page, or a disabled Next
- * button) are never returned, since clicking them would do nothing or
- * behave unpredictably. Ties are broken by preferring the higher
- * confidence classification.
+ * Identification itself (identifyPaginationControlSet, above/below) never
+ * skips a disabled candidate — a disabled Next control is still
+ * correctly IDENTIFIED, with its real id — but THIS function, the one
+ * caller actually decides whether to click from, refuses to ever return
+ * a disabled control, since clicking it would do nothing or behave
+ * unpredictably. Ties are broken by preferring the higher confidence
+ * classification.
  *
  * @param {Array<{tag: string, id: string|null, name: string|null, type: string|null, text: string, onclick: string|null, href: string|null, disabled: boolean}>} candidates
  * @returns {{control: object|null, confidence: 'high'|'medium'|'low'|'none', reason: string}}
  */
 export function findSgsNextPageControl(candidates, currentPageDomOrder) {
   const set = identifyPaginationControlSet(candidates, currentPageDomOrder)
-  if (set.next) return { control: set.next.control, confidence: set.next.confidence, reason: set.next.reason }
+  if (set.next && !set.next.control.disabled) {
+    return { control: set.next.control, confidence: set.next.confidence, reason: set.next.reason }
+  }
+  if (set.next) {
+    return { control: null, confidence: 'none', reason: 'the confirmed Next control is currently disabled' }
+  }
   return { control: null, confidence: 'none', reason: 'no candidates given' }
 }
 
@@ -196,20 +204,33 @@ export function isConfidentEnoughToAutoClick(confidence) {
  * match — the shared basis for BOTH findSgsNextPageControl above and the
  * live diagnostic report ("ตรวจปุ่มเปลี่ยนหน้า SGS").
  *
+ * BUG FIX — this exact-match phase never skips a `disabled` candidate:
+ * a real First/Previous control is disabled on page 1 (nowhere to go
+ * back to), but it is still the REAL control, with its real, confirmed
+ * id — reporting it honestly (disabled and all) is far more useful, and
+ * far less wrong, than silently skipping it and letting the DOM-order
+ * fallback below misidentify some OTHER, id-less neighbor instead (the
+ * exact "(img, no id)" bug the live diagnostic used to show for
+ * First/Previous on page 1, even though the real element's id was
+ * plainly present in the raw candidate list). Disabled state is instead
+ * enforced at the one place it actually matters — findSgsNextPageControl
+ * below, immediately before a click would ever be attempted.
+ *
  * `currentPageDomOrder` (optional — omitted callers get the exact
  * pre-existing behavior) enables item 6's DOM-ORDER FALLBACK: when SGS
  * renders a Next/Last/First/Previous control as a genuinely anonymous
  * image button (no id, no onclick/postback, no recognizable glyph —
  * classifyPaginationCandidate's own rules all miss it), the nearest
- * still-unclassified candidate BEFORE the confirmed CurrentPage
- * control's own position (in DOCUMENT order — never screen coordinates)
- * is taken as `previous`, the next-nearest before it as `first`; the
- * nearest AFTER is `next`, the next-nearest after that is `last`. This
- * is reported at 'low' confidence — the SAME tier a bare id/name
- * substring gets — so isConfidentEnoughToAutoClick still refuses to
- * auto-click it; only an already-classified high/medium match ever
- * fires the click automatically. A role an exact rule already matched
- * is never overwritten by this fallback.
+ * still-unclassified, non-disabled candidate BEFORE the confirmed
+ * CurrentPage control's own position (in DOCUMENT order — never screen
+ * coordinates) is taken as `previous`, the next-nearest before it as
+ * `first`; the nearest AFTER is `next`, the next-nearest after that is
+ * `last`. This is reported at 'low' confidence — the SAME tier a bare
+ * id/name substring gets — so isConfidentEnoughToAutoClick still
+ * refuses to auto-click it; only an already-classified high/medium
+ * match ever fires the click automatically. A role an exact rule
+ * already matched (disabled or not) is never overwritten by this
+ * fallback.
  */
 export function identifyPaginationControlSet(candidates, currentPageDomOrder) {
   const confidenceRank = { high: 3, medium: 2, low: 1, none: 0 }
@@ -218,7 +239,6 @@ export function identifyPaginationControlSet(candidates, currentPageDomOrder) {
   const list = candidates ?? []
 
   for (const candidate of list) {
-    if (candidate.disabled) continue
     const classification = classifyPaginationCandidate(candidate)
     const key = roleKey[classification.role]
     if (!key) continue

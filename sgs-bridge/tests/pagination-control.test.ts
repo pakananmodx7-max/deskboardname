@@ -188,9 +188,10 @@ describe('identifyPaginationControlSet — classifies ALL four roles at once (fi
     expect(result.last).toBeNull()
   })
 
-  it('never returns a disabled control for any role', () => {
+  it('BUG FIX: STILL identifies a disabled control by its confirmed id (e.g. First/Previous, naturally disabled on page 1) — silently skipping it used to let the DOM-order fallback misidentify some other, id-less neighbor instead', () => {
     const result = identifyPaginationControlSet([candidate({ id: 'ns__NextPage', disabled: true })])
-    expect(result.next).toBeNull()
+    expect(result.next?.control.id).toBe('ns__NextPage')
+    expect(result.next?.control.disabled).toBe(true)
   })
 
   it('an empty candidate list reports every role as null', () => {
@@ -275,11 +276,13 @@ describe('buildPaginationHintsFromInspection — turns inspectPaginationControls
     expect(buildPaginationHintsFromInspection(inspection)).toEqual({ currentPage: 1, totalPages: 4, totalStudentRows: 32, pageSize: 10 })
   })
 
-  it('LIVE DOM EVIDENCE regression fixture: ctl00_PageContent_TblTranscriptsPagination__CurrentPage (value "1") and ...__PageSize (value "10"), plus the shared container\'s own "ของ 4" / "32 รายการ" / "/หน้า" text — exactly what inspectPaginationControls reports for this confirmed real layout', () => {
+  it('LIVE DOM EVIDENCE regression fixture: ALL EIGHT confirmed ids (CurrentPage/TotalPages/TotalItems/PageSize/First/Previous/Next/Last), each read from its OWN element — exactly what inspectPaginationControls reports for this confirmed real layout', () => {
     // This mirrors inspectPaginationControls' actual return shape once it
-    // has read ...__CurrentPage.value === '1' and ...__PageSize.value ===
-    // '10' directly by id, and found "ของ 4"/"32 รายการ" in their shared
-    // container's own text — never a single combined "1/4" string.
+    // has read ...__CurrentPage.value === '1', ...__TotalPages.text ===
+    // '4', ...__TotalItems.text === '32', and ...__PageSize.value ===
+    // '10' directly by id — never a shared-container regex that could
+    // concatenate "4" and "32" into "432" (the exact bug this fixture
+    // regression-tests against).
     const inspection = {
       found: true,
       totalPagesText: '4',
@@ -288,16 +291,74 @@ describe('buildPaginationHintsFromInspection — turns inspectPaginationControls
       pageSizeValue: '10',
       currentPageDomOrder: 2,
       candidates: [
+        { tag: 'img', id: 'ctl00_PageContent_TblTranscriptsPagination__FirstPage', type: null, value: null, disabled: true, domOrder: 0 },
+        { tag: 'img', id: 'ctl00_PageContent_TblTranscriptsPagination__PreviousPage', type: null, value: null, disabled: true, domOrder: 1 },
         { tag: 'input', id: 'ctl00_PageContent_TblTranscriptsPagination__CurrentPage', type: 'text', value: '1', disabled: false, domOrder: 2 },
-        { tag: 'input', id: 'ctl00_PageContent_TblTranscriptsPagination__PageSize', type: 'text', value: '10', disabled: false, domOrder: 6 },
+        { tag: 'span', id: 'ctl00_PageContent_TblTranscriptsPagination__TotalPages', type: null, value: null, text: '4', disabled: false, domOrder: 3 },
+        { tag: 'img', id: 'ctl00_PageContent_TblTranscriptsPagination__NextPage', type: null, value: null, disabled: false, domOrder: 4 },
+        { tag: 'img', id: 'ctl00_PageContent_TblTranscriptsPagination__LastPage', type: null, value: null, disabled: false, domOrder: 5 },
+        { tag: 'span', id: 'ctl00_PageContent_TblTranscriptsPagination__TotalItems', type: null, value: null, text: '32', disabled: false, domOrder: 6 },
+        { tag: 'input', id: 'ctl00_PageContent_TblTranscriptsPagination__PageSize', type: 'text', value: '10', disabled: false, domOrder: 7 },
       ],
     }
+
     expect(buildPaginationHintsFromInspection(inspection)).toEqual({
       currentPage: 1,
       totalPages: 4,
       totalStudentRows: 32,
       pageSize: 10,
     })
+
+    // The regression this whole fixture guards against: totalPages/
+    // totalRows must NEVER come out as "432" (a concatenation of "4"
+    // and "32").
+    expect(buildPaginationHintsFromInspection(inspection).totalPages).not.toBe(432)
+    expect(buildPaginationHintsFromInspection(inspection).totalStudentRows).not.toBe(432)
+
+    // First/Previous are correctly identified by their real, confirmed
+    // id even though disabled (page 1 has nowhere to go back to) —
+    // never reported as "(img, no id)".
+    const controlSet = identifyPaginationControlSet(inspection.candidates, inspection.currentPageDomOrder)
+    expect(controlSet.first?.control.id).toBe('ctl00_PageContent_TblTranscriptsPagination__FirstPage')
+    expect(controlSet.previous?.control.id).toBe('ctl00_PageContent_TblTranscriptsPagination__PreviousPage')
+
+    // Next/Last are found and enabled — auto-run can safely advance.
+    const nextResult = findSgsNextPageControl(inspection.candidates, inspection.currentPageDomOrder)
+    expect(nextResult.control?.id).toBe('ctl00_PageContent_TblTranscriptsPagination__NextPage')
+    expect(nextResult.confidence).toBe('high')
+    expect(isConfidentEnoughToAutoClick(nextResult.confidence)).toBe(true)
+  })
+
+  it('LIVE DOM EVIDENCE: the diagnostic report shows First/Previous\' real confirmed ids, never "(img, no id)", even though they are disabled on page 1', () => {
+    const inspection = {
+      found: true,
+      totalPagesText: '4',
+      totalRowsText: '32',
+      currentPageValue: '1',
+      pageSizeValue: '10',
+      currentPageDomOrder: 2,
+      candidates: [
+        { tag: 'img', id: 'ns__FirstPage', type: null, value: null, disabled: true, domOrder: 0 },
+        { tag: 'img', id: 'ns__PreviousPage', type: null, value: null, disabled: true, domOrder: 1 },
+        { tag: 'input', id: 'ns__CurrentPage', type: 'text', value: '1', disabled: false, domOrder: 2 },
+        { tag: 'img', id: 'ns__NextPage', type: null, value: null, disabled: false, domOrder: 3 },
+        { tag: 'img', id: 'ns__LastPage', type: null, value: null, disabled: false, domOrder: 4 },
+      ],
+    }
+    const report = buildPaginationDiagnosticReport(inspection)
+    expect(report.controls.first).toBe('ns__FirstPage')
+    expect(report.controls.previous).toBe('ns__PreviousPage')
+    expect(report.controls.first).not.toContain('no id')
+    expect(report.controls.previous).not.toContain('no id')
+  })
+
+  it('LIVE DOM EVIDENCE: a full 4-page run — shouldAttemptPageAdvance is true on pages 1-3 and false once currentPage reaches totalPages (page 4), matching "on page 4, do not click NextPage, finish run"', () => {
+    for (const page of [1, 2, 3]) {
+      const pagination = { detected: true, currentPage: page, totalPages: 4, visibleStudentRows: 10, totalStudentRows: 32, pageSize: 10 }
+      expect(shouldAttemptPageAdvance(pagination)).toBe(true)
+    }
+    const finalPage = { detected: true, currentPage: 4, totalPages: 4, visibleStudentRows: 2, totalStudentRows: 32, pageSize: 10 }
+    expect(shouldAttemptPageAdvance(finalPage)).toBe(false)
   })
 
   it('pages 2, 3, and 4 of 4 — only the current-page value differs', () => {
