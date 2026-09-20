@@ -204,6 +204,10 @@ const wcFailedListEl = document.getElementById('wc-failed-list')
 const autoRunWrap = document.getElementById('auto-run-wrap')
 const arInspectPaginationBtn = document.getElementById('ar-inspect-pagination-btn')
 const arPaginationDiagnosticOutputEl = document.getElementById('ar-pagination-diagnostic-output')
+const arCheckConnectionBtn = document.getElementById('ar-check-connection-btn')
+const arConnectionStatusEl = document.getElementById('ar-connection-status')
+const arConnectionPageUrlEl = document.getElementById('ar-connection-page-url')
+const arConnectionTabIdEl = document.getElementById('ar-connection-tab-id')
 const arStartBtn = document.getElementById('ar-start-btn')
 const arPrerunEl = document.getElementById('ar-prerun')
 const arSubjectEl = document.getElementById('ar-subject')
@@ -2057,6 +2061,30 @@ async function runPaginationDiagnostic() {
 
 arInspectPaginationBtn.addEventListener('click', () => {
   void runPaginationDiagnostic()
+})
+
+/**
+ * FINAL SGS CONTENT SCRIPT FIX (item 5) — a standalone, ON-DEMAND
+ * diagnostic completely independent of the AR_START flow: pings whatever
+ * tab is currently active and reports CONNECTED/NOT CONNECTED plus the
+ * exact pageUrl/tabId a content script itself reported (never a value
+ * this popup merely assumes) — so a teacher/developer can check whether
+ * the persistent content script is reachable in a tab BEFORE ever
+ * attempting to start a run, and see immediately why a start might fail.
+ */
+async function checkContentScriptConnection() {
+  const tab = await getActiveTab()
+  const response = await chrome.tabs.sendMessage(tab?.id, { type: AR_MESSAGE.PING }).catch(() => null)
+  const connected = Boolean(response?.ready)
+  arConnectionStatusEl.textContent = connected ? 'CONNECTED' : 'NOT CONNECTED'
+  arConnectionStatusEl.classList.toggle('status-connected', connected)
+  arConnectionStatusEl.classList.toggle('status-disconnected', !connected)
+  arConnectionPageUrlEl.textContent = response?.pageUrl ?? '-'
+  arConnectionTabIdEl.textContent = tab?.id !== undefined && tab?.id !== null ? String(tab.id) : '-'
+}
+
+arCheckConnectionBtn.addEventListener('click', () => {
+  void checkContentScriptConnection()
 })
 
 arStartBtn.addEventListener('click', () => {

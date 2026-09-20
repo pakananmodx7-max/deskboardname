@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
@@ -65,6 +65,18 @@ describe('manifest.json — minimal permissions, ONE SGS-only host permission, n
   it('FINAL SGS AUTO-RUN FIX (item 1 — "verify static content script registration"): loads automatically at document_idle on every matching page load/reload/postback — this is what re-populates a fresh, working content script after an ASP.NET postback, never something this extension must trigger itself', () => {
     const [entry] = manifest.content_scripts
     expect(entry.run_at).toBe('document_idle')
+  })
+
+  it('FINAL SGS CONTENT SCRIPT FIX (item 1/2/3, exact literal check): the ONE content_scripts entry matches the precise object the fix spec requires, host_permissions grants the SAME pattern, and the referenced js file actually exists on disk at that exact path relative to manifest.json', () => {
+    expect(manifest.content_scripts).toEqual([
+      {
+        matches: ['https://sgs.bopp-obec.info/sgs/*'],
+        js: ['src/content-script.js'],
+        run_at: 'document_idle',
+      },
+    ])
+    expect(manifest.host_permissions).toContain('https://sgs.bopp-obec.info/sgs/*')
+    expect(existsSync(new URL(`../${manifest.content_scripts[0].js[0]}`, import.meta.url))).toBe(true)
   })
 
   it('TRUE unattended auto-run: web_accessible_resources (needed for content-script.js\'s dynamic import of the pure lib modules) are scoped to the SAME SGS host only — never exposed to any other site. Chrome requires a web_accessible_resources match pattern\'s path to be exactly /* (it rejects the narrower /sgs/* the host permission and content script use), so this one match is intentionally broader than those two, while staying on the SAME host — never a different domain, never <all_urls>', () => {
@@ -623,6 +635,19 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
     expect(fn).toContain('func: inspectPaginationControls')
     expect(fn).toContain('buildPaginationDiagnosticReport(')
     expect(fn).not.toMatch(/AR_MESSAGE\.(START|STOP|MANUAL_CONTINUE)/)
+  })
+
+  it('FINAL SGS CONTENT SCRIPT FIX (item 5): "ตรวจสอบการเชื่อมต่อ Content Script" is a standalone, on-demand diagnostic — pings the ACTIVE tab directly (never assuming a run\'s own stored tabId, since this check must work even before any run exists) and renders CONNECTED/NOT CONNECTED plus the content script\'s own reported pageUrl and the tab\'s own id — never a value merely assumed', () => {
+    const fn = source.slice(source.indexOf('async function checkContentScriptConnection'), source.indexOf('arCheckConnectionBtn.addEventListener') + 100)
+    expect(fn).toContain('AR_MESSAGE.PING')
+    expect(fn).toContain("connected ? 'CONNECTED' : 'NOT CONNECTED'")
+    expect(fn).toContain('arConnectionPageUrlEl.textContent = response?.pageUrl')
+    expect(fn).toContain('arConnectionTabIdEl.textContent')
+    expect(fn).not.toMatch(/AR_MESSAGE\.(START|STOP|MANUAL_CONTINUE)/)
+  })
+
+  it('FINAL SGS CONTENT SCRIPT FIX (item 5): the connection check only ever runs from an explicit button click — never automatically on popup open (the SAME "no diagnostic runs without a click" rule every other on-demand check in this file follows)', () => {
+    expect(source).toMatch(/arCheckConnectionBtn\.addEventListener\('click', \(\) => \{\s*\n\s*void checkContentScriptConnection\(\)/)
   })
 
   it('TRUE unattended auto-run (item 3): "เริ่มส่งครบทั้งห้อง" sends exactly one AR_START message carrying the teacher\'s approval (subject/classroom/targetColumn/payload/overwriteMode/tabId) to background.js — the run itself is never started any other way', () => {

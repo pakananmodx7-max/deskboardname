@@ -57,6 +57,16 @@ section:last-child {
   color: #b3261e;
 }
 
+.status-connected {
+  color: #1e8e3e;
+  font-weight: bold;
+}
+
+.status-disconnected {
+  color: #b3261e;
+  font-weight: bold;
+}
+
 .error {
   color: #b3261e;
   font-size: 12px;
