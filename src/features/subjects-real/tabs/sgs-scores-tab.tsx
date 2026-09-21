@@ -1,4 +1,4 @@
-import { Plus, Send, Trash2 } from 'lucide-react'
+import { Calculator, Plus, Send, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
+import { ScoreCalculationModal } from '@/features/subjects-real/score-calculation-modal'
 import { parseScoreInput } from '@/services/assignment-service'
 import {
   buildSgsScoreWorkspaceMultiPayload,
@@ -75,6 +76,13 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
    * (and the payload builder) works with.
    */
   const [deselectedExportColumnIds, setDeselectedExportColumnIds] = useState<string[]>([])
+
+  /** SGS Score Calculator — a SAME-PAGE modal only (see
+   * score-calculation-modal.tsx's own doc comment). Opening/closing it
+   * never navigates away from this tab; it only reads assignment scores
+   * and, once approved, writes into `calcColumn`'s own sgs_scores rows
+   * via the existing setSgsScore. */
+  const [calcColumn, setCalcColumn] = useState<SgsScoreColumn | null>(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -295,6 +303,15 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
                         </button>
                       </div>
                       <div className="font-normal text-muted-foreground">เต็ม {column.maxScore}</div>
+                      <button
+                        type="button"
+                        onClick={() => setCalcColumn(column)}
+                        className="mt-0.5 flex items-center justify-center gap-1 text-xs font-normal text-muted-foreground hover:text-foreground"
+                        title={column.calculationFormula ? 'คำนวณคะแนนใหม่' : 'คำนวณคะแนนจากคะแนนต้นทาง'}
+                      >
+                        <Calculator className="size-3" />
+                        {column.calculationFormula ? 'มีสูตรคำนวณ' : 'คำนวณ'}
+                      </button>
                     </th>
                   ))}
                 </tr>
@@ -490,6 +507,21 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {calcColumn && (
+        <ScoreCalculationModal
+          open={calcColumn !== null}
+          onOpenChange={(next) => {
+            if (!next) setCalcColumn(null)
+          }}
+          subjectId={subjectId}
+          classroomId={classroomId}
+          targetColumn={calcColumn}
+          students={students}
+          existingTargetScores={scoresByColumnId[calcColumn.id] ?? {}}
+          onApplied={refresh}
+        />
+      )}
     </div>
   )
 }

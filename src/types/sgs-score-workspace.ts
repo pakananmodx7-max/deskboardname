@@ -1,3 +1,5 @@
+import type { SgsScoreCalculationFormula } from './sgs-score-calculation'
+
 /**
  * The "คะแนน SGS" workspace — a grade model DELIBERATELY INDEPENDENT
  * from `assignments`/`assignment_submissions` (see
@@ -16,6 +18,13 @@ export interface SgsScoreColumn {
   label: string
   maxScore: number
   position: number
+  /** The teacher's saved calculation configuration for this column, if
+   * any — see src/types/sgs-score-calculation.ts. `null` means the
+   * column has no formula yet (scores are entered manually, exactly as
+   * before this feature existed). Saving/clearing a formula never
+   * writes or changes any score by itself — only "คำนวณใหม่" plus an
+   * explicit approved preview ever does that. */
+  calculationFormula: SgsScoreCalculationFormula | null
   createdAt: string
   updatedAt: string
 }

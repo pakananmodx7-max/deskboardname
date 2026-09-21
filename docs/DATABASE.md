@@ -2342,3 +2342,70 @@ effect on the very next `DELETE` against `sgs_score_columns`.
 
 **Yes** — `supabase/migrations/0024_fix_sgs_score_column_delete_guard.sql`,
 **not applied automatically**. 0001–0023 are untouched.
+
+# Phase 18: SGS Score Calculator — derives a column's values from assignment scores (0025)
+
+## Scope
+
+Adds a "🧮 คำนวณ" action to each column header in the คะแนน SGS tab,
+opening a SAME-PAGE modal (`ScoreCalculationModal`, no new route, no
+navigation) that combines several existing assignment scores into that
+one SGS workspace column's value — proportional scaling, weighted
+groups, or individually-weighted sources, with an explicit missing-score
+policy and rounding rule, a full-class preview, and teacher approval
+before anything is written. See `src/types/sgs-score-calculation.ts` and
+`src/services/sgs-score-calculation-service.ts` for the exact shapes and
+the pure calculation/validation logic (independently tested — no live
+Supabase connection required).
+
+This reads `assignments`/`assignment_submissions` (0006) through the
+EXISTING, canonical `getAssignments`/`getSubmissions`
+(assignment-service.ts) — no new score-retrieval query — and writes only
+through the EXISTING `setSgsScore` (sgs-score-workspace-service.ts), the
+same primitive manual SGS score entry already uses. It never mutates an
+assignment score, never touches another SGS column, another
+subject/classroom, or attendance, and it is completely independent of
+`sgs-bridge/` (the Chrome extension) — this feature only prepares a value
+inside `sgs_scores`; the already-unmodified multi-column export and SGS
+Bridge v1.0.0 carry it to SGS exactly as before.
+
+## Schema
+
+Purely additive: one nullable `jsonb` column added to the EXISTING
+`sgs_score_columns` table (0023) —
+
+```sql
+alter table public.sgs_score_columns
+  add column if not exists calculation_formula jsonb;
+```
+
+Stores the teacher's saved formula (mode, selected sources, groups/
+weights, missing-score policy, rounding) so "คำนวณใหม่" can reproduce and
+re-preview the same calculation later — configuration only, never a
+score value itself. No new table, no new RLS policy: `sgs_score_columns`'s
+existing row-level policies (0023) already gate every column of the row
+by classroom/subject ownership, so adding a column changes nothing about
+who may read or write it.
+
+## Frontend
+
+- `src/types/sgs-score-calculation.ts` — formula/mode/policy/rounding
+  types, all pure data.
+- `src/services/sgs-score-calculation-service.ts` — pure math
+  (`calculateProportionalScore`, `calculateWeightedGroupScore`,
+  `calculateIndividualWeightedScore`, `applyRounding`), per-student and
+  whole-class calculation, config validation, existing-value/overwrite
+  planning, and two thin I/O wrappers
+  (`getSgsScoreCalculationSources` around the existing assignment-service
+  reads, `applySgsScoreCalculation` around the existing `setSgsScore`).
+- `src/features/subjects-real/score-calculation-modal.tsx` — the
+  same-page modal UI (Dialog overlay, never a route).
+- `sgs-score-workspace-service.ts` gained `updateSgsScoreColumnFormula`
+  (saves/clears the formula) and now selects/maps `calculation_formula`
+  alongside the column's other fields.
+
+## Is a migration required?
+
+**Yes** — `supabase/migrations/0025_sgs_score_calculation_formula.sql`,
+**not applied automatically**. 0001–0024 are untouched. `sgs-bridge/`
+(the Chrome extension, frozen at v1.0.0) is untouched.

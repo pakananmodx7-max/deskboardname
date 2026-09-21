@@ -280,12 +280,12 @@ describe("the teacher's column selection — ticking several KrunameClass column
   // The workspace as the teacher sees it: six columns, of which four are
   // ticked in the "ส่งคะแนนไป SGS" dialog.
   const workspaceColumns: SgsScoreColumn[] = [
-    { id: 'c10', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 10', maxScore: 10, position: 0, createdAt: '', updatedAt: '' },
-    { id: 'c11', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 11', maxScore: 10, position: 1, createdAt: '', updatedAt: '' },
-    { id: 'c12', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 12', maxScore: 20, position: 2, createdAt: '', updatedAt: '' },
-    { id: 'c13', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 13', maxScore: 20, position: 3, createdAt: '', updatedAt: '' },
-    { id: 'cFinal', subjectId: 'sub', classroomId: 'cls', label: 'ปลายภาค', maxScore: 30, position: 4, createdAt: '', updatedAt: '' },
-    { id: 'cMid', subjectId: 'sub', classroomId: 'cls', label: 'กลางภาค', maxScore: 20, position: 5, createdAt: '', updatedAt: '' },
+    { id: 'c10', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 10', maxScore: 10, position: 0, calculationFormula: null, createdAt: '', updatedAt: '' },
+    { id: 'c11', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 11', maxScore: 10, position: 1, calculationFormula: null, createdAt: '', updatedAt: '' },
+    { id: 'c12', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 12', maxScore: 20, position: 2, calculationFormula: null, createdAt: '', updatedAt: '' },
+    { id: 'c13', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 13', maxScore: 20, position: 3, calculationFormula: null, createdAt: '', updatedAt: '' },
+    { id: 'cFinal', subjectId: 'sub', classroomId: 'cls', label: 'ปลายภาค', maxScore: 30, position: 4, calculationFormula: null, createdAt: '', updatedAt: '' },
+    { id: 'cMid', subjectId: 'sub', classroomId: 'cls', label: 'กลางภาค', maxScore: 20, position: 5, calculationFormula: null, createdAt: '', updatedAt: '' },
   ]
   const ticked = ['c10', 'c11', 'c12', 'cFinal']
   const workspaceRows: SgsScoreWorkspaceRow[] = [

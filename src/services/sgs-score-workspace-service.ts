@@ -11,6 +11,7 @@ import {
   type SgsScoreWorkspacePayload,
   type SgsScoreWorkspaceRow,
 } from '@/types/sgs-score-workspace'
+import type { SgsScoreCalculationFormula } from '@/types/sgs-score-calculation'
 import type { ClassroomStudent } from '@/types/student'
 
 /**
@@ -29,9 +30,12 @@ interface SgsScoreColumnRow {
   label: string
   max_score: number
   position: number
+  calculation_formula: SgsScoreCalculationFormula | null
   created_at: string
   updated_at: string
 }
+
+const SGS_SCORE_COLUMN_SELECT = 'id, subject_id, classroom_id, label, max_score, position, calculation_formula, created_at, updated_at'
 
 interface SgsScoreRow {
   student_id: string
@@ -46,6 +50,7 @@ function mapColumn(row: SgsScoreColumnRow): SgsScoreColumn {
     label: row.label,
     maxScore: row.max_score,
     position: row.position,
+    calculationFormula: row.calculation_formula ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -67,7 +72,7 @@ export async function getSgsScoreColumns(subjectId: string, classroomId: string)
   const supabase = getSupabaseClient()
   const { data, error } = await supabase
     .from('sgs_score_columns')
-    .select('id, subject_id, classroom_id, label, max_score, position, created_at, updated_at')
+    .select(SGS_SCORE_COLUMN_SELECT)
     .eq('subject_id', subjectId)
     .eq('classroom_id', classroomId)
     .order('position', { ascending: true })
@@ -99,7 +104,27 @@ export async function createSgsScoreColumn(input: CreateSgsScoreColumnInput): Pr
       position: nextPosition,
       created_by: teacherId,
     })
-    .select('id, subject_id, classroom_id, label, max_score, position, created_at, updated_at')
+    .select(SGS_SCORE_COLUMN_SELECT)
+    .single()
+
+  if (error) throw error
+  return mapColumn(data as SgsScoreColumnRow)
+}
+
+/**
+ * Saves (or clears, with `formula: null`) the calculation configuration
+ * for one column — never itself writes a single score. Only "คำนวณใหม่"
+ * plus an explicit approved preview (applySgsScoreCalculation,
+ * sgs-score-calculation-service.ts) ever changes a score value; saving a
+ * formula is purely configuration.
+ */
+export async function updateSgsScoreColumnFormula(columnId: string, formula: SgsScoreCalculationFormula | null): Promise<SgsScoreColumn> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('sgs_score_columns')
+    .update({ calculation_formula: formula })
+    .eq('id', columnId)
+    .select(SGS_SCORE_COLUMN_SELECT)
     .single()
 
   if (error) throw error
