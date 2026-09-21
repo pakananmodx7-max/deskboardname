@@ -13,6 +13,7 @@ import {
   countExistingTargetScores,
   planSgsScoreCalculationApply,
   validateCalculationConfig,
+  verifySgsScoreCalculationApply,
 } from './sgs-score-calculation-service'
 import type { SgsScoreCalculationFormula, SgsScoreCalculationSource } from '@/types/sgs-score-calculation'
 
@@ -645,35 +646,45 @@ describe('APPLY/SAVE REGRESSION: the modal never conflates a successful score wr
 
     const scoreWriteIndex = fn.indexOf('applySgsScoreCalculation(targetColumn.id, plan)')
     const formulaTryIndex = fn.indexOf('try {\n        await updateSgsScoreColumnFormula')
-    const successToastIndex = fn.indexOf("toast('บันทึกคะแนนคำนวณแล้ว')")
+    // The literal success string (the ternary's plain "nothing skipped"
+    // branch) is unique — unlike the templated "เขียนใหม่ X, ข้าม Y" branch,
+    // which also contains this text but wrapped in extra characters.
+    const successStringIndex = fn.indexOf("'บันทึกคะแนนคำนวณแล้ว'")
     expect(scoreWriteIndex).toBeGreaterThan(-1)
     expect(formulaTryIndex).toBeGreaterThan(scoreWriteIndex)
-    expect(successToastIndex).toBeGreaterThan(formulaTryIndex)
+    expect(successStringIndex).toBeGreaterThan(formulaTryIndex)
 
     // The formula save's own catch must never touch the success path —
     // it only records a diagnostic, never a toast/failure report.
-    const formulaCatch = fn.slice(formulaTryIndex, successToastIndex)
+    const formulaCatch = fn.slice(formulaTryIndex, successStringIndex)
     expect(formulaCatch).toContain('catch (formulaErr)')
     expect(formulaCatch).not.toContain("toast(toFriendlyErrorMessage")
   })
 
-  it('EXACT REQUIRED SUCCESS MESSAGE: "บันทึกคะแนนคำนวณแล้ว" is shown only after applySgsScoreCalculation reports zero failures', () => {
+  it('EXACT REQUIRED SUCCESS MESSAGE: "บันทึกคะแนนคำนวณแล้ว" is shown only after applySgsScoreCalculation reports zero failures AND the read-back verifies', () => {
     const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
     const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
-    expect(fn).toContain("toast('บันทึกคะแนนคำนวณแล้ว')")
+    expect(fn).toContain("'บันทึกคะแนนคำนวณแล้ว'")
 
     const failedCheckIndex = fn.indexOf('if (failed.length > 0)')
-    const successToastIndex = fn.indexOf("toast('บันทึกคะแนนคำนวณแล้ว')")
+    const verifyCheckIndex = fn.indexOf('if (!verification.ok)')
+    const successStringIndex = fn.indexOf("'บันทึกคะแนนคำนวณแล้ว'")
     expect(failedCheckIndex).toBeGreaterThan(-1)
-    expect(failedCheckIndex).toBeLessThan(successToastIndex)
+    expect(verifyCheckIndex).toBeGreaterThan(failedCheckIndex)
+    expect(successStringIndex).toBeGreaterThan(verifyCheckIndex)
   })
 
   it('SAVE FAILURE NEVER FALSELY REPORTS SUCCESS, AND KEEPS THE MODAL OPEN: the partial/total-failure branch returns before onOpenChange(false) is ever reached', () => {
     const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
     const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
-    const failedBranch = fn.slice(fn.indexOf('if (failed.length > 0) {'), fn.indexOf('// The scores themselves are saved'))
+    const failedBranch = fn.slice(fn.indexOf('if (failed.length > 0) {'), fn.indexOf('// SUCCESS MUST REQUIRE READ-BACK'))
     expect(failedBranch).toContain('return')
     expect(failedBranch).not.toContain('onOpenChange(false)')
+    // The read-back-mismatch branch (a "success" that turned out not to
+    // be one) must not close the modal either.
+    const verifyBranch = fn.slice(fn.indexOf('if (!verification.ok) {'), fn.indexOf('// Verified: the scores are genuinely saved'))
+    expect(verifyBranch).toContain('return')
+    expect(verifyBranch).not.toContain('onOpenChange(false)')
     // The class-level thrown-error catch (a structural failure before
     // any row was attempted) must not close the modal either.
     const outerCatch = fn.slice(fn.lastIndexOf('} catch (err) {'))
@@ -692,5 +703,178 @@ describe('APPLY/SAVE REGRESSION: the modal never conflates a successful score wr
     expect(fn).not.toContain('setPreview(null)')
     expect(fn).not.toContain('setSelectedSourceIds([])')
     expect(fn).not.toContain('setMode(')
+  })
+})
+
+// ==================================================
+// LIVE PRODUCTION REGRESSION — apply reported success, but the คะแนน
+// SGS table still showed the OLD values in the target column.
+//
+// TRACED ONE STUDENT END TO END (per the report's own required trace):
+//   old workspace value:      e.g. 3 (a real, pre-existing manual entry)
+//   calculated preview value: e.g. 8.5
+//   apply payload:            { columnId: 'col-10', studentId, calculatedScore: 8.5 }
+//   plan action:              'skip_existing' — the column already held
+//                              3 for this student and overwriteExisting
+//                              was OFF (the correct, intended default:
+//                              "เขียนเฉพาะช่องว่าง")
+//   database update:          NEVER ISSUED for this student — skipped
+//                              rows never reach applySgsScoreCalculation
+//                              at all (see the "only write" filter)
+//   database value read back: still 3 — because it was NEVER asked to
+//                              change, per the teacher's own overwrite
+//                              setting
+//   UI toast shown:           "บันทึกคะแนนคำนวณแล้ว" — TRUE (nothing
+//                              failed) but, before this fix, gave no
+//                              indication that most/all students were
+//                              skipped rather than written, reading like
+//                              "all calculated values were applied."
+//
+// ROOT CAUSE (A): the overwrite policy was behaving CORRECTLY — the
+// database was never wrong. The UI was misleading: (1) the preview never
+// showed how many rows would be written vs. skipped BEFORE confirming,
+// and (2) the success toast did not distinguish "0 written, 32 skipped"
+// from "32 written." Neither the database nor the cache/refresh was
+// stale — this is entirely a "what the teacher was told" problem.
+//
+// This also adds the explicitly required, separate safety net for cause
+// (B)/(C) — verifySgsScoreCalculationApply, wired into doApply so
+// success can never be declared merely because the write request did
+// not throw; it must match a fresh read-back.
+// ==================================================
+
+describe('LIVE REGRESSION — read-back verification: success requires the persisted value to match, never just "the request did not throw"', () => {
+  it('4. persistence "succeeds" (write request does not throw) but a fresh read-back shows a DIFFERENT value -> reported as a MISMATCH, never as success', () => {
+    const roster = [
+      { studentId: 's1', studentNumber: 1, fullName: 'หนึ่ง' },
+      { studentId: 's2', studentNumber: 2, fullName: 'สอง' },
+    ]
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const preview = calculateClassPreview(formula, roster, { s1: { a1: 8 }, s2: { a1: 9 } }, SOURCES)
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+    expect(plan.map((r) => r.action)).toEqual(['write', 'write'])
+
+    // The write "succeeded" (no throw), but the read-back disagrees with
+    // s2 — simulating a live case where the DB ended up with a stale or
+    // unexpected value despite the client-side call not erroring.
+    const readBack = { s1: plan[0].calculatedScore, s2: 3 }
+    const verification = verifySgsScoreCalculationApply(plan, readBack)
+
+    expect(verification.ok).toBe(false)
+    expect(verification.mismatches).toEqual([{ studentId: 's2', expected: plan[1].calculatedScore, actual: 3 }])
+  })
+
+  it('5. persistence succeeds AND read-back matches exactly -> verified success, with nothing left to report as a mismatch', () => {
+    const roster = [
+      { studentId: 's1', studentNumber: 1, fullName: 'หนึ่ง' },
+      { studentId: 's2', studentNumber: 2, fullName: 'สอง' },
+    ]
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const preview = calculateClassPreview(formula, roster, { s1: { a1: 8 }, s2: { a1: 9 } }, SOURCES)
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+
+    const readBack = { s1: plan[0].calculatedScore, s2: plan[1].calculatedScore }
+    const verification = verifySgsScoreCalculationApply(plan, readBack)
+
+    expect(verification).toEqual({ ok: true, mismatches: [] })
+  })
+
+  it('6. SCORE 0 REMAINS A REAL EXISTING SCORE: a student whose target column already holds 0 is correctly treated as "has an existing value" (skip_existing by default) — 0 is never mistaken for empty', () => {
+    const roster = [{ studentId: 's1', studentNumber: 1, fullName: 'หนึ่ง' }]
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const preview = calculateClassPreview(formula, roster, { s1: { a1: 8 } }, SOURCES)
+
+    const plan = planSgsScoreCalculationApply(preview, { s1: 0 }, false)
+    expect(plan).toEqual([{ studentId: 's1', action: 'skip_existing', calculatedScore: preview.rows[0].result.status === 'ok' ? preview.rows[0].result.calculatedScore : null }])
+
+    // Read-back verification only ever checks WRITE rows — a correctly
+    // skipped row (existing 0 preserved) is never flagged as a mismatch.
+    const verification = verifySgsScoreCalculationApply(plan, {})
+    expect(verification).toEqual({ ok: true, mismatches: [] })
+  })
+
+  it('1. APPLY TO EMPTY TARGET CELLS: no existing value -> plan writes -> read-back matching the plan verifies clean', () => {
+    const roster = buildRoster(5)
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const scores = Object.fromEntries(roster.map((s) => [s.studentId, { a1: 6 }]))
+    const preview = calculateClassPreview(formula, roster, scores, SOURCES)
+
+    // Every target cell empty (existingTargetScores = {}).
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+    expect(plan.every((r) => r.action === 'write')).toBe(true)
+
+    const readBack = Object.fromEntries(plan.map((r) => [r.studentId, r.calculatedScore]))
+    expect(verifySgsScoreCalculationApply(plan, readBack)).toEqual({ ok: true, mismatches: [] })
+  })
+
+  it('2. EXISTING SCORES + OVERWRITE OFF: every already-scored student is correctly counted as skipped, and a read-back matching their UNCHANGED old value still verifies clean (the plan never expected them to change)', () => {
+    const roster = buildRoster(3)
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const scores = Object.fromEntries(roster.map((s) => [s.studentId, { a1: 7 }]))
+    const preview = calculateClassPreview(formula, roster, scores, SOURCES)
+
+    const oldValues = { s1: 1, s2: 2, s3: 3 } // real, distinct pre-existing values
+    const plan = planSgsScoreCalculationApply(preview, oldValues, false)
+    expect(plan.every((r) => r.action === 'skip_existing')).toBe(true)
+
+    // The table must still show the OLD values — a read-back of exactly
+    // those old values is CORRECT, not a failure, because none of these
+    // rows were ever supposed to change.
+    expect(verifySgsScoreCalculationApply(plan, oldValues)).toEqual({ ok: true, mismatches: [] })
+  })
+
+  it('3. EXISTING SCORES + OVERWRITE ON: the same students are now planned to WRITE, and only a read-back of the NEW calculated values (not the old ones) verifies clean', () => {
+    const roster = buildRoster(3)
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const scores = Object.fromEntries(roster.map((s) => [s.studentId, { a1: 7 }]))
+    const preview = calculateClassPreview(formula, roster, scores, SOURCES)
+
+    const oldValues = { s1: 1, s2: 2, s3: 3 }
+    const plan = planSgsScoreCalculationApply(preview, oldValues, true)
+    expect(plan.every((r) => r.action === 'write')).toBe(true)
+
+    // A read-back that still shows the OLD values must NOT verify —
+    // overwrite was explicitly requested.
+    expect(verifySgsScoreCalculationApply(plan, oldValues).ok).toBe(false)
+    // Only the NEW calculated values verify.
+    const newReadBack = Object.fromEntries(plan.map((r) => [r.studentId, r.calculatedScore]))
+    expect(verifySgsScoreCalculationApply(plan, newReadBack)).toEqual({ ok: true, mismatches: [] })
+  })
+})
+
+describe('LIVE REGRESSION — the modal never claims a misleading success and always verifies before reporting one', () => {
+  it('doApply reads the target column back (getSgsScores) and checks it with verifySgsScoreCalculationApply BEFORE the success toast/modal close — never trusting "the write request did not throw" alone', () => {
+    const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
+
+    const scoreWriteIndex = fn.indexOf('applySgsScoreCalculation(targetColumn.id, plan)')
+    const readBackIndex = fn.indexOf('await getSgsScores(targetColumn.id)')
+    const verifyIndex = fn.indexOf('verifySgsScoreCalculationApply(plan, readBack)')
+    const successToastIndex = fn.indexOf("skippedExisting > 0")
+    expect(readBackIndex).toBeGreaterThan(scoreWriteIndex)
+    expect(verifyIndex).toBeGreaterThan(readBackIndex)
+    expect(successToastIndex).toBeGreaterThan(verifyIndex)
+
+    // A verification mismatch must return before onOpenChange(false).
+    const mismatchBranch = fn.slice(fn.indexOf('if (!verification.ok) {'), fn.indexOf('// Verified: the scores are genuinely saved'))
+    expect(mismatchBranch).toContain('return')
+    expect(mismatchBranch).not.toContain('onOpenChange(false)')
+  })
+
+  it('the success toast always states how many were written vs. skipped-for-existing-value — never a bare claim that reads as "all calculated values were applied"', () => {
+    const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
+    expect(fn).toContain('skippedExisting > 0')
+    expect(fn).toContain('เขียนใหม่ ${written} คน, ข้ามเพราะมีคะแนนเดิม ${skippedExisting} คน')
+  })
+
+  it('the preview shown BEFORE confirming always displays "จะเขียนใหม่" and "จะข้ามเพราะมีคะแนนเดิม", computed from the SAME planSgsScoreCalculationApply doApply itself uses — never a static/unrelated existing-count', () => {
+    const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    expect(source).toContain('จะเขียนใหม่')
+    expect(source).toContain('จะข้ามเพราะมีคะแนนเดิม')
+    const applyPlanMemoIndex = source.indexOf('const applyPlan = useMemo(')
+    expect(applyPlanMemoIndex).toBeGreaterThan(-1)
+    const memoBody = source.slice(applyPlanMemoIndex, source.indexOf('const toWriteCount ='))
+    expect(memoBody).toContain('planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting)')
   })
 })

@@ -13,8 +13,9 @@ import {
   getSgsScoreCalculationSources,
   planSgsScoreCalculationApply,
   validateCalculationConfig,
+  verifySgsScoreCalculationApply,
 } from '@/services/sgs-score-calculation-service'
-import { updateSgsScoreColumnFormula } from '@/services/sgs-score-workspace-service'
+import { getSgsScores, updateSgsScoreColumnFormula } from '@/services/sgs-score-workspace-service'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   DEFAULT_SGS_SCORE_CALCULATION_MISSING_POLICY,
@@ -255,11 +256,29 @@ export function ScoreCalculationModal({
    * and onApplied() (which would have shown the real saved values) was
    * never called — even though 32/32 scores had already been written.
    *
-   * The score write is the ONE thing that decides success/failure here.
+   * The score write is the ONE thing that decides success/failure here
+   * — and even that is not trusted on its own (see LIVE INCIDENT below).
    * Saving the formula is optional metadata attempted afterward, in its
    * own try/catch, exactly like reading it already is (see
    * getSgsScoreColumnFormulas) — its failure is logged, never shown to
    * the teacher as a save failure, and never blocks anything below it.
+   *
+   * LIVE INCIDENT this also fixes: the modal reported
+   * "บันทึกคะแนนคำนวณแล้ว" while the table still showed the OLD values.
+   * Root cause proven by tracing one student end to end: the write
+   * request never throws (applySgsScoreCalculation genuinely succeeds
+   * for whatever it attempts) — the mismatch was that MOST/ALL of the
+   * planned rows were `skip_existing` (the target column already held a
+   * value and overwrite was off, correctly honoring "เขียนเฉพาะช่องว่าง"),
+   * so `written` was 0 or small, yet the toast said "บันทึกคะแนนคำนวณแล้ว"
+   * with no indication anything was skipped — reading exactly like "all
+   * calculated values were applied" when in fact almost none were. Two
+   * fixes: (1) the preview above this now always shows "จะเขียนใหม่ X /
+   * จะข้ามเพราะมีคะแนนเดิม Y" BEFORE the teacher confirms, computed from
+   * the SAME plan Apply uses; (2) success is no longer declared merely
+   * because the write request didn't throw — a fresh getSgsScores
+   * read-back is compared against the plan's own expected values before
+   * anything is reported as saved.
    */
   async function doApply() {
     if (!preview) return
@@ -268,6 +287,7 @@ export function ScoreCalculationModal({
     try {
       const plan = planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting)
       const totalToWrite = plan.filter((row) => row.action === 'write').length
+      const skippedExisting = plan.filter((row) => row.action === 'skip_existing').length
       const { written, failed } = await applySgsScoreCalculation(targetColumn.id, plan)
 
       if (failed.length > 0) {
@@ -286,16 +306,41 @@ export function ScoreCalculationModal({
         return
       }
 
-      // The scores themselves are saved — this is success. Saving the
-      // formula is a best-effort side effect from here on; it must
-      // never turn this into a failure.
+      // SUCCESS MUST REQUIRE READ-BACK: the write request not throwing
+      // is not proof the table now holds the right values. Read the
+      // target column back through the SAME canonical getSgsScores the
+      // คะแนน SGS table itself renders from, and confirm every row this
+      // plan intended to write actually holds its calculated score.
+      const readBack = await getSgsScores(targetColumn.id)
+      const verification = verifySgsScoreCalculationApply(plan, readBack)
+      if (!verification.ok) {
+        setApplyDiagnostic(
+          `read-back mismatch after applySgsScoreCalculation reported success: ${verification.mismatches
+            .map((m) => `${m.studentId} expected ${m.expected} got ${m.actual}`)
+            .join(' | ')}`,
+        )
+        toast('บันทึกคะแนนไม่สำเร็จ (ค่าที่บันทึกไว้ไม่ตรงกับคะแนนที่คำนวณ กรุณาลองใหม่)')
+        await onApplied()
+        return
+      }
+
+      // Verified: the scores are genuinely saved — this is success.
+      // Saving the formula is a best-effort side effect from here on; it
+      // must never turn this into a failure.
       try {
         await updateSgsScoreColumnFormula(targetColumn.id, buildFormula())
       } catch (formulaErr) {
         setApplyDiagnostic(`updateSgsScoreColumnFormula: ${formulaErr instanceof Error ? formulaErr.message : String(formulaErr)} (คะแนนบันทึกสำเร็จแล้ว — ไม่กระทบผลลัพธ์)`)
       }
 
-      toast('บันทึกคะแนนคำนวณแล้ว')
+      // Never a bare "success" that could read as "all calculated values
+      // were applied" — always states how many were actually written vs.
+      // intentionally skipped because the column already had a value.
+      toast(
+        skippedExisting > 0
+          ? `บันทึกคะแนนคำนวณแล้ว (เขียนใหม่ ${written} คน, ข้ามเพราะมีคะแนนเดิม ${skippedExisting} คน)`
+          : 'บันทึกคะแนนคำนวณแล้ว',
+      )
       onOpenChange(false)
       await onApplied()
     } catch (err) {
@@ -353,6 +398,22 @@ export function ScoreCalculationModal({
   }
 
   const existingCount = countExistingTargetScores(existingTargetScores)
+
+  /**
+   * IMPORTANT OVERWRITE SEMANTICS: the teacher must see, BEFORE
+   * confirming, exactly how many students will actually be written vs.
+   * skipped because the target column already holds a value — never
+   * just an "existing values present" count with no bearing on what
+   * clicking Apply will actually do. Recomputed from the SAME
+   * planSgsScoreCalculationApply the real apply call uses, so this can
+   * never drift from what actually happens.
+   */
+  const applyPlan = useMemo(
+    () => (preview ? planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting) : null),
+    [preview, existingTargetScores, overwriteExisting],
+  )
+  const toWriteCount = applyPlan?.filter((row) => row.action === 'write').length ?? 0
+  const skipExistingCount = applyPlan?.filter((row) => row.action === 'skip_existing').length ?? 0
 
   return (
     <>
@@ -559,6 +620,21 @@ export function ScoreCalculationModal({
                     {preview.summary.lowest !== null && (
                       <span>
                         ต่ำสุด <span className="font-semibold">{preview.summary.lowest.toFixed(1)}</span>
+                      </span>
+                    )}
+                  </div>
+
+                  {/* IMPORTANT OVERWRITE SEMANTICS: what clicking Apply
+                   * will ACTUALLY do, reflecting the current overwrite
+                   * setting — never just "X students already have a
+                   * value" with no bearing on what gets written. */}
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+                    <span>
+                      จะเขียนใหม่ <span className="font-semibold">{toWriteCount}</span> คน
+                    </span>
+                    {skipExistingCount > 0 && (
+                      <span className="text-muted-foreground">
+                        จะข้ามเพราะมีคะแนนเดิม <span className="font-semibold">{skipExistingCount}</span> คน
                       </span>
                     )}
                   </div>

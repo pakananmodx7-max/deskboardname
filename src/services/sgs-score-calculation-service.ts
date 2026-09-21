@@ -408,6 +408,52 @@ export async function applySgsScoreCalculation(
 }
 
 // ==================================================
+// Read-back verification — "success" must never be declared merely
+// because a write request returned without throwing (see the live
+// production incident this fixes: the request succeeded, but a stale
+// UI/cache — or, on a different day, a DB trigger/constraint silently
+// rejecting the value — could still leave the actual persisted value
+// wrong). This is a PURE comparison: the caller (score-calculation-modal.tsx)
+// does the actual read-back through the EXISTING getSgsScores
+// (sgs-score-workspace-service.ts), then hands the result here.
+// ==================================================
+
+export interface SgsScoreCalculationVerificationMismatch {
+  studentId: string
+  expected: number
+  actual: number | null
+}
+
+export interface SgsScoreCalculationVerificationResult {
+  ok: boolean
+  mismatches: SgsScoreCalculationVerificationMismatch[]
+}
+
+/**
+ * Confirms every row the apply plan intended to WRITE actually holds its
+ * calculated value in `readBackScores` (a fresh getSgsScores(columnId)
+ * read, keyed by studentId — the exact canonical shape the คะแนน SGS
+ * table itself renders from). A row this plan never intended to write
+ * (skip_existing/skip_not_calculable) is never checked — it was
+ * correctly left untouched on purpose, not a persistence failure.
+ */
+export function verifySgsScoreCalculationApply(
+  plan: SgsScoreCalculationApplyPlanRow[],
+  readBackScores: Record<string, number | null>,
+): SgsScoreCalculationVerificationResult {
+  const mismatches: SgsScoreCalculationVerificationMismatch[] = []
+  for (const row of plan) {
+    if (row.action !== 'write') continue
+    const expected = row.calculatedScore as number
+    const actual = readBackScores[row.studentId] ?? null
+    if (actual !== expected) {
+      mismatches.push({ studentId: row.studentId, expected, actual })
+    }
+  }
+  return { ok: mismatches.length === 0, mismatches }
+}
+
+// ==================================================
 // Source retrieval — wraps the EXISTING canonical assignment score
 // query (assignment-service.ts's getAssignments/getSubmissions), never
 // a new/parallel score-retrieval path. Only active (non-archived)
