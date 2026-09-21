@@ -9,6 +9,7 @@ import {
   autoMatchColumns,
   buildMultiColumnPlan,
   buildSequentialWriteInstructions,
+  summarizeMultiColumnPreview,
   summarizeMultiColumnRun,
 } from '../src/lib/multi-column-run'
 
@@ -311,5 +312,105 @@ describe('an ASYNC DOM facade — the shape popup.js actually uses (chrome.scrip
     expect(outcomesByColumnKey['col-10-3'].map((o) => o.writeOutcome)).toEqual(['WRITTEN', 'WRITTEN', 'WRITTEN'])
     // Each write fully resolves before its own read-back is taken.
     expect(order).toEqual(['write', 'read', 'write', 'read', 'write', 'read'])
+  })
+})
+
+/**
+ * v1.0.0 REGRESSION LOCK — the exact case a real SGS page confirmed live:
+ * 32 students, 4 selected/mapped columns, 128 candidate cells, 88 written,
+ * 40 no-score, and 0 everything else (invalid/not-found/ambiguous/failed).
+ * Per-column: 10 (max 10) 29 written/3 no-score; 11 (max 10) 20/12;
+ * 12 (max 10) 19/13; ปลายภาค (max 30) 20/12. This exercises the FULL
+ * pipeline this file already covers piece by piece — plan, preview,
+ * sequential write + immediate read-back, and the final report — as one
+ * frozen baseline for the proven grading engine.
+ */
+describe('LIVE-PROVEN PRODUCTION CASE — v1.0.0 regression lock', () => {
+  const LIVE_SGS_COLUMNS = [
+    { key: 'col-10-3', label: '10', columnIndex: 3, maxScore: 10 },
+    { key: 'col-11-4', label: '11', columnIndex: 4, maxScore: 10 },
+    { key: 'col-12-5', label: '12', columnIndex: 5, maxScore: 10 },
+    { key: 'col-final-6', label: 'ปลายภาค', columnIndex: 6, maxScore: 30 },
+  ]
+  const LIVE_KRUNAME_COLUMNS = [
+    { key: 'k1', label: 'ช่อง 10', maxScore: 10 },
+    { key: 'k2', label: 'ช่อง 11', maxScore: 10 },
+    { key: 'k3', label: 'ช่อง 12', maxScore: 10 },
+    { key: 'k4', label: 'ปลายภาค', maxScore: 30 },
+  ]
+
+  /** Reproduces the exact per-column no-score counts the live run
+   * reported (3/12/13/12 of the 32 students, respectively, had no
+   * KrunameClass score for that column — everyone else did). */
+  function buildLiveVerifiedScores(roster: ReturnType<typeof buildRoster>) {
+    const noScoreCounts: Record<string, number> = { k1: 3, k2: 12, k3: 13, k4: 12 }
+    const values: Record<string, number> = { k1: 8, k2: 9, k3: 7, k4: 25 }
+    const scores: Record<string, Record<string, number | null>> = {}
+    roster.forEach((student, index) => {
+      scores[student.studentId] = {}
+      for (const key of ['k1', 'k2', 'k3', 'k4']) {
+        scores[student.studentId][key] = index < noScoreCounts[key] ? null : values[key]
+      }
+    })
+    return scores
+  }
+
+  it('reproduces 128 candidate cells, 88 written, 40 no-score, 0 everything else — plan, preview, write, and final report all agree', async () => {
+    const roster = buildRoster(32)
+    const mappingResults = roster.map((student, index) => ({
+      studentId: student.studentId,
+      status: 'MATCHED' as const,
+      matchedSgsRowKey: `row-${index}`,
+      reason: 'จับคู่ด้วยรหัสนักเรียน',
+    }))
+    const matches = autoMatchColumns(LIVE_KRUNAME_COLUMNS, LIVE_SGS_COLUMNS)
+    expect(matches.every((m) => m.status === 'AUTO')).toBe(true)
+
+    const plans = buildMultiColumnPlan({
+      roster,
+      scoresByStudentIdAndColumnKey: buildLiveVerifiedScores(roster),
+      mappingResults,
+      matches,
+      selectedSgsColumns: LIVE_SGS_COLUMNS,
+      existingScoresByColumnKey: {},
+      overwriteMode: 'skip_existing',
+    })
+
+    const preview = summarizeMultiColumnPreview(plans)
+    expect(preview.columns).toBe(4)
+    expect(preview.toWrite).toBe(88)
+    expect(preview.noScore).toBe(40)
+    expect(preview.skippedExisting).toBe(0)
+    expect(preview.invalidScore).toBe(0)
+    expect(preview.notFound).toBe(0)
+    expect(preview.ambiguous).toBe(0)
+    expect(preview.perColumn.map((c) => ({ label: c.sgsColumnLabel, toWrite: c.toWrite, noScore: c.noScore }))).toEqual([
+      { label: '10', toWrite: 29, noScore: 3 },
+      { label: '11', toWrite: 20, noScore: 12 },
+      { label: '12', toWrite: 19, noScore: 13 },
+      { label: 'ปลายภาค', toWrite: 20, noScore: 12 },
+    ])
+
+    const instructions = buildSequentialWriteInstructions(plans)
+    expect(instructions.filter((i) => i.kind === 'WRITE_CELL')).toHaveLength(88)
+    expect(roster.length * LIVE_SGS_COLUMNS.length).toBe(128)
+
+    const grid = createFakeGrid()
+    const { outcomesByColumnKey } = await run(instructions, grid)
+    const report = summarizeMultiColumnRun(attachOutcomesToColumnPlans(plans, outcomesByColumnKey))
+
+    expect(report.written).toBe(88)
+    expect(report.skippedNoScore).toBe(40)
+    expect(report.skippedExisting).toBe(0)
+    expect(report.invalidScore).toBe(0)
+    expect(report.notFound).toBe(0)
+    expect(report.ambiguous).toBe(0)
+    expect(report.failed).toBe(0)
+    expect(report.perColumn.map((c) => ({ label: c.sgsColumnLabel, written: c.written }))).toEqual([
+      { label: '10', written: 29 },
+      { label: '11', written: 20 },
+      { label: '12', written: 19 },
+      { label: 'ปลายภาค', written: 20 },
+    ])
   })
 })
