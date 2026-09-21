@@ -16,6 +16,7 @@ import {
   deleteSgsScoreColumn,
   getSgsScoreColumns,
   getSgsScores,
+  selectSgsScoreWorkspaceColumnsForExport,
   setSgsScore,
   validateSgsScoreWorkspaceMultiPayload,
   validateSgsScoreWorkspacePayload,
@@ -65,6 +66,15 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
 
   const [sendDialogOpen, setSendDialogOpen] = useState(false)
   const [targetColumnId, setTargetColumnId] = useState<string | null>(null)
+  /**
+   * The export checkboxes are stored as the DESELECTED ids, not the
+   * selected ones, so that every column is ticked by default and a
+   * column added later arrives ticked too — the teacher only ever has to
+   * untick what they do not want to send. `selectedExportColumnIds`
+   * below turns it back into the plain selection the rest of the file
+   * (and the payload builder) works with.
+   */
+  const [deselectedExportColumnIds, setDeselectedExportColumnIds] = useState<string[]>([])
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -92,6 +102,21 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
     () => buildSgsScoreWorkspaceRows(students, columns, scoresByColumnId),
     [students, columns, scoresByColumnId],
   )
+
+  const selectedExportColumnIds = useMemo(
+    () => columns.filter((column) => !deselectedExportColumnIds.includes(column.id)).map((column) => column.id),
+    [columns, deselectedExportColumnIds],
+  )
+  const exportColumns = useMemo(
+    () => selectSgsScoreWorkspaceColumnsForExport(columns, selectedExportColumnIds),
+    [columns, selectedExportColumnIds],
+  )
+
+  function toggleExportColumn(columnId: string) {
+    setDeselectedExportColumnIds((prev) =>
+      prev.includes(columnId) ? prev.filter((id) => id !== columnId) : [...prev, columnId],
+    )
+  }
 
   async function handleAddColumn() {
     const label = newColumnLabel.trim()
@@ -122,6 +147,7 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
     try {
       await deleteSgsScoreColumn(column.id)
       if (targetColumnId === column.id) setTargetColumnId(null)
+      setDeselectedExportColumnIds((prev) => prev.filter((id) => id !== column.id))
       await refresh()
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถลบคอลัมน์ได้'))
@@ -180,22 +206,17 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
   }
 
   /**
-   * PRODUCTION multi-column export — one file carrying EVERY column in
-   * this workspace plus each student's score per column, for the
-   * extension's production workflow (select several SGS columns, send
-   * them in one run). The single-column export above is unchanged and
-   * still available.
+   * PRODUCTION multi-column export — ONE file carrying every column the
+   * teacher ticked (key/label/maxScore) plus each student's score for
+   * each of those columns, for the extension's production workflow
+   * (map several SGS columns, write them in one run). Tick four columns
+   * here and the extension reports "ช่องคะแนนที่โหลดมา 4". The
+   * single-column export above is unchanged and still available.
    */
   function handleDownloadMultiPayload() {
-    if (columns.length === 0) return
+    if (exportColumns.length === 0) return
     const payload = buildSgsScoreWorkspaceMultiPayload(
-      {
-        subjectId,
-        subjectName,
-        classroomId,
-        classroomName,
-        columns: columns.map((column) => ({ key: column.id, label: column.label, maxScore: column.maxScore })),
-      },
+      { subjectId, subjectName, classroomId, classroomName, columns: exportColumns },
       rows,
     )
     const validation = validateSgsScoreWorkspaceMultiPayload(payload)
@@ -203,8 +224,8 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
       toast('ไม่สามารถเตรียมข้อมูลได้ กรุณาลองใหม่')
       return
     }
-    downloadJson(payload, `sgs-bridge-ทุกช่อง-${classroomName}`)
-    toast('ดาวน์โหลดไฟล์ทุกช่องคะแนนแล้ว — เปิด Chrome Extension เพื่อโหลดไฟล์นี้ต่อ')
+    downloadJson(payload, `sgs-bridge-${exportColumns.length}ช่อง-${classroomName}`)
+    toast(`ดาวน์โหลดไฟล์ ${exportColumns.length} ช่องคะแนนแล้ว — เปิด Chrome Extension เพื่อโหลดไฟล์นี้ต่อ`)
   }
 
   return (
@@ -348,24 +369,58 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
           </DialogHeader>
 
           <fieldset className="space-y-1.5 rounded-lg border border-border p-3">
-            <legend className="px-1 text-sm font-medium">เลือกช่องคะแนน SGS (เลือกได้ทีละ 1 ช่อง)</legend>
+            <legend className="px-1 text-sm font-medium">เลือกช่องคะแนนที่จะส่ง (เลือกได้หลายช่อง)</legend>
+            <div className="flex flex-wrap items-center gap-2 px-2 pb-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setDeselectedExportColumnIds([])}
+                disabled={columns.length === 0}
+              >
+                เลือกทั้งหมด
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setDeselectedExportColumnIds(columns.map((column) => column.id))}
+                disabled={selectedExportColumnIds.length === 0}
+              >
+                ยกเลิกทั้งหมด
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                เลือกแล้ว <span className="font-semibold text-foreground">{selectedExportColumnIds.length}</span> /{' '}
+                {columns.length} ช่อง
+              </span>
+            </div>
             {columns.map((column) => (
-              <label key={column.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent">
-                <input
-                  type="radio"
-                  name="sgs-workspace-target-column"
-                  value={column.id}
-                  checked={targetColumnId === column.id}
-                  onChange={() => setTargetColumnId(column.id)}
-                  className="size-4"
-                />
-                {column.label} — เต็ม {column.maxScore}
-              </label>
+              <div key={column.id} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent">
+                <label className="flex flex-1 cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    name="sgs-workspace-export-columns"
+                    value={column.id}
+                    checked={selectedExportColumnIds.includes(column.id)}
+                    onChange={() => toggleExportColumn(column.id)}
+                    className="size-4"
+                  />
+                  {column.label} — เต็ม {column.maxScore}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setTargetColumnId(targetColumnId === column.id ? null : column.id)}
+                  className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                >
+                  {targetColumnId === column.id ? 'ซ่อนตัวอย่าง' : 'ดูตัวอย่างรายคน'}
+                </button>
+              </div>
             ))}
           </fieldset>
 
           {targetColumn && (
             <>
+              <p className="text-sm font-medium">ตัวอย่างรายคน — {targetColumn.label}</p>
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
                 <span>
                   นักเรียนทั้งหมด <span className="font-semibold text-foreground">{rows.length}</span> คน
@@ -418,18 +473,19 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
 
           <p className="text-xs text-muted-foreground">
             ขั้นตอนนี้เป็นการเตรียมไฟล์เท่านั้น ยังไม่มีการส่งคะแนนไป SGS โดยอัตโนมัติ — เปิดไฟล์นี้ใน SGS Bridge
-            Chrome Extension เพื่อดำเนินการต่อ (โหมดทดสอบ 1 คน)
+            Chrome Extension เพื่อดำเนินการต่อ ไฟล์เดียวจะมีครบทุกช่องคะแนนที่เลือกไว้ (ส่วนหัวของส่วนขยายจะแสดง
+            "ช่องคะแนนที่โหลดมา {exportColumns.length}")
           </p>
 
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setSendDialogOpen(false)}>
               ยกเลิก
             </Button>
-            <Button type="button" variant="outline" onClick={handleDownloadMultiPayload} disabled={columns.length === 0}>
-              ดาวน์โหลดทุกช่องคะแนน ({columns.length})
+            <Button type="button" variant="outline" onClick={handleDownloadPayload} disabled={!targetColumn}>
+              ดาวน์โหลดเฉพาะช่องที่ดูตัวอย่าง
             </Button>
-            <Button type="button" onClick={handleDownloadPayload} disabled={!targetColumn}>
-              ดาวน์โหลด Bridge Payload
+            <Button type="button" onClick={handleDownloadMultiPayload} disabled={exportColumns.length === 0}>
+              ดาวน์โหลดช่องที่เลือก ({exportColumns.length} ช่อง)
             </Button>
           </DialogFooter>
         </DialogContent>

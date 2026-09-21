@@ -5,10 +5,16 @@ import {
   buildSgsScoreWorkspacePayload,
   buildSgsScoreWorkspaceRows,
   computeSgsScoreWorkspaceSendPlan,
+  selectSgsScoreWorkspaceColumnsForExport,
   validateSgsScoreWorkspaceMultiPayload,
   validateSgsScoreWorkspacePayload,
 } from './sgs-score-workspace-service'
-import { SGS_SCORE_WORKSPACE_PAYLOAD_KIND, SGS_SCORE_WORKSPACE_PAYLOAD_VERSION } from '@/types/sgs-score-workspace'
+import {
+  SGS_SCORE_WORKSPACE_PAYLOAD_KIND,
+  SGS_SCORE_WORKSPACE_PAYLOAD_VERSION,
+  type SgsScoreColumn,
+  type SgsScoreWorkspaceRow,
+} from '@/types/sgs-score-workspace'
 
 const roster = [
   { id: 's1', number: 1, studentCode: '00001', firstName: 'สมชาย', lastName: 'ใจดี' },
@@ -267,5 +273,95 @@ describe('multi-column bridge payload — the production workflow\'s own payload
     const bad = buildSgsScoreWorkspaceMultiPayload(args, rows)
     bad.students[0].scoresByColumnKey.c1 = -1
     expect(validateSgsScoreWorkspaceMultiPayload(bad).ok).toBe(false)
+  })
+})
+
+describe("the teacher's column selection — ticking several KrunameClass columns must yield ONE multi-column payload", () => {
+  // The workspace as the teacher sees it: six columns, of which four are
+  // ticked in the "ส่งคะแนนไป SGS" dialog.
+  const workspaceColumns: SgsScoreColumn[] = [
+    { id: 'c10', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 10', maxScore: 10, position: 0, createdAt: '', updatedAt: '' },
+    { id: 'c11', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 11', maxScore: 10, position: 1, createdAt: '', updatedAt: '' },
+    { id: 'c12', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 12', maxScore: 20, position: 2, createdAt: '', updatedAt: '' },
+    { id: 'c13', subjectId: 'sub', classroomId: 'cls', label: 'ช่อง 13', maxScore: 20, position: 3, createdAt: '', updatedAt: '' },
+    { id: 'cFinal', subjectId: 'sub', classroomId: 'cls', label: 'ปลายภาค', maxScore: 30, position: 4, createdAt: '', updatedAt: '' },
+    { id: 'cMid', subjectId: 'sub', classroomId: 'cls', label: 'กลางภาค', maxScore: 20, position: 5, createdAt: '', updatedAt: '' },
+  ]
+  const ticked = ['c10', 'c11', 'c12', 'cFinal']
+  const workspaceRows: SgsScoreWorkspaceRow[] = [
+    {
+      studentId: 's1',
+      studentNumber: 1,
+      studentCode: '1001',
+      fullName: 'ก',
+      scoresByColumnId: { c10: 8, c11: 0, c12: 17, c13: 19, cFinal: 27, cMid: 18 },
+    },
+    {
+      studentId: 's2',
+      studentNumber: 2,
+      studentCode: '1002',
+      fullName: 'ข',
+      // No score yet in ช่อง 11 — must ship as an explicit null, not be dropped.
+      scoresByColumnId: { c10: 10, c12: 20, c13: 20, cFinal: 30, cMid: 20 },
+    },
+  ]
+
+  function exportTicked() {
+    return buildSgsScoreWorkspaceMultiPayload(
+      {
+        subjectId: 'sub',
+        subjectName: 'คณิต',
+        classroomId: 'cls',
+        classroomName: 'ม.2/1',
+        columns: selectSgsScoreWorkspaceColumnsForExport(workspaceColumns, ticked),
+      },
+      workspaceRows,
+    )
+  }
+
+  it('4 ticked columns produce ONE payload containing exactly those 4 score columns', () => {
+    const payload = exportTicked()
+    expect(payload.kind).toBe('sgs_score_workspace_multi')
+    // This length is exactly what the extension shows as
+    // "ช่องคะแนนที่โหลดมา" — four ticked columns must read 4, never 1.
+    expect(payload.columns).toHaveLength(4)
+    expect(payload.columns.map((c) => c.key)).toEqual(['c10', 'c11', 'c12', 'cFinal'])
+    expect(payload.columns.map((c) => c.label)).toEqual(['ช่อง 10', 'ช่อง 11', 'ช่อง 12', 'ปลายภาค'])
+    expect(payload.columns.map((c) => c.maxScore)).toEqual([10, 10, 20, 30])
+  })
+
+  it('carries every selected column\'s score for every student, keeping 0 and null distinct', () => {
+    const payload = exportTicked()
+    expect(payload.students).toHaveLength(2)
+    payload.students.forEach((student) => {
+      expect(Object.keys(student.scoresByColumnKey).sort()).toEqual(['c10', 'c11', 'c12', 'cFinal'].sort())
+    })
+    expect(payload.students[0].scoresByColumnKey).toEqual({ c10: 8, c11: 0, c12: 17, cFinal: 27 })
+    expect(payload.students[1].scoresByColumnKey).toEqual({ c10: 10, c11: null, c12: 20, cFinal: 30 })
+    expect(validateSgsScoreWorkspaceMultiPayload(payload).ok).toBe(true)
+  })
+
+  it('never leaks an unticked column into the payload', () => {
+    const payload = exportTicked()
+    expect(payload.columns.map((c) => c.key)).not.toContain('c13')
+    expect(payload.columns.map((c) => c.key)).not.toContain('cMid')
+    payload.students.forEach((student) => {
+      expect(student.scoresByColumnKey).not.toHaveProperty('c13')
+      expect(student.scoresByColumnKey).not.toHaveProperty('cMid')
+    })
+  })
+
+  it('follows the workspace column order, not the order the boxes were ticked', () => {
+    const shuffled = selectSgsScoreWorkspaceColumnsForExport(workspaceColumns, ['cFinal', 'c12', 'c10', 'c11'])
+    expect(shuffled.map((c) => c.key)).toEqual(['c10', 'c11', 'c12', 'cFinal'])
+  })
+
+  it('drops an id whose column no longer exists instead of exporting a phantom column', () => {
+    const selected = selectSgsScoreWorkspaceColumnsForExport(workspaceColumns, ['c10', 'deleted-column'])
+    expect(selected.map((c) => c.key)).toEqual(['c10'])
+  })
+
+  it('selecting nothing produces no columns at all', () => {
+    expect(selectSgsScoreWorkspaceColumnsForExport(workspaceColumns, [])).toEqual([])
   })
 })

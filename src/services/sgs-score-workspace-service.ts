@@ -383,6 +383,26 @@ export function validateSgsScoreWorkspacePayload(raw: unknown): SgsScoreWorkspac
   return { ok: errors.length === 0, errors }
 }
 
+/**
+ * Turns the teacher's checkbox selection in the "ส่งคะแนนไป SGS" dialog
+ * into the exact `columns` array the multi-column payload builder below
+ * expects. Selection is by `SgsScoreColumn.id`, and the result always
+ * follows the WORKSPACE's own column order (never the order the boxes
+ * happened to be ticked in), so a payload's column order always matches
+ * what the teacher sees in the table. An id that no longer exists — a
+ * column deleted while the dialog was open — is silently dropped rather
+ * than exported as a phantom column.
+ */
+export function selectSgsScoreWorkspaceColumnsForExport(
+  columns: SgsScoreColumn[],
+  selectedColumnIds: string[],
+): SgsScoreWorkspaceColumnDefinition[] {
+  const selected = new Set(selectedColumnIds)
+  return columns
+    .filter((column) => selected.has(column.id))
+    .map((column) => ({ key: column.id, label: column.label, maxScore: column.maxScore }))
+}
+
 export interface BuildSgsScoreWorkspaceMultiPayloadArgs {
   subjectId: string
   subjectName: string
