@@ -2612,17 +2612,22 @@ function prCurrentMatches() {
 }
 
 /** Step 6 — the KrunameClass -> SGS pairing, with an explicit chooser
- * wherever the automatic match was not unambiguous. */
+ * wherever the automatic match was not unambiguous.
+ *
+ * BUG FIX (LIVE PRODUCTION TEST): every payload column is shown here
+ * UNCONDITIONALLY, one row each — this used to skip a column whose
+ * resolved/candidate SGS key(s) did not happen to already be checked in
+ * Step 3, which silently produced ZERO rows whenever every column was
+ * still AUTO-matched-but-unchecked (e.g. right after "ตรวจสอบ SGS", or
+ * a genuinely UNMAPPED column with no name candidate at all — which
+ * could then never gain a manual chooser no matter what the teacher
+ * checked). An empty table then also hid the readiness reason (see
+ * below), so the teacher saw no mapping UI and no explanation at all. */
 function prRenderMapping() {
   const matches = prCurrentMatches()
   prMappingBody.replaceChildren()
 
   for (const match of matches) {
-    const relevant = match.sgsColumnKey
-      ? prSelectedColumnKeys.includes(match.sgsColumnKey)
-      : match.candidates.some((key) => prSelectedColumnKeys.includes(key))
-    if (!relevant && match.status !== COLUMN_MAPPING_STATUS.AMBIGUOUS) continue
-
     const row = document.createElement('tr')
     const source = document.createElement('td')
     source.textContent = match.krunameColumnLabel
@@ -2656,7 +2661,12 @@ function prRenderMapping() {
     prMappingBody.append(row)
   }
 
-  prMappingWrap.hidden = prMappingBody.childElementCount === 0
+  // The section — mapping TABLE and readiness MESSAGE together — stays
+  // visible whenever there is at least one payload column to map. It
+  // must never collapse based on the table's row count: the readiness
+  // reason lives inside this same wrap, so hiding "empty" would also
+  // hide the one message telling the teacher what to do next.
+  prMappingWrap.hidden = matches.length === 0
 
   const readiness = evaluateColumnMappingReadiness(matches, prSelectedColumnKeys)
   prMappingError.textContent = readiness.reason ?? ''

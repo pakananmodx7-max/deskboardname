@@ -1587,4 +1587,40 @@ describe('PRODUCTION single-page, multi-column workflow — the teacher-facing U
     expect(exec).toContain('target: { tabId: prScan.tabId }')
     expect(exec).not.toContain('getActiveTab()')
   })
+
+  /**
+   * LIVE PRODUCTION BUG FIX: 4 payload columns + 4 matching SGS columns,
+   * all 4 checked in Step 3 — "ตรวจสอบก่อนส่ง" stayed disabled with no
+   * mapping table and no explanation at all. Root cause was in
+   * prRenderMapping: it only rendered a row for a payload column whose
+   * resolved/candidate SGS key(s) already happened to be checked, so a
+   * fresh scan (nothing checked yet) — or a column with zero name
+   * candidates at all — produced ZERO rows. An empty table then also
+   * hid pr-mapping-error, which lives inside the SAME wrap, so the one
+   * message telling the teacher what to do was hidden along with it.
+   */
+  it('BUG FIX: every payload column always gets a mapping row, unconditionally — never gated on whether its SGS key happens to already be checked', () => {
+    const fn = popup.slice(popup.indexOf('function prRenderMapping'), popup.indexOf('function prRenderPreview'))
+    // The old gate compared each match against prSelectedColumnKeys and
+    // `continue`d past it — that comparison must be gone entirely.
+    expect(fn).not.toContain('prSelectedColumnKeys.includes(match.sgsColumnKey)')
+    expect(fn).not.toContain('candidates.some((key) => prSelectedColumnKeys.includes(key))')
+    expect(fn).not.toContain('continue')
+    // The loop body always creates and appends a row.
+    const loopBody = fn.slice(fn.indexOf('for (const match of matches) {'))
+    expect(loopBody).toContain("document.createElement('tr')")
+    expect(loopBody.indexOf('prMappingBody.append(row)')).toBeGreaterThan(-1)
+  })
+
+  it('BUG FIX: the mapping wrap (table AND readiness message together) is hidden ONLY when there is no payload column at all — never based on how many rows happened to render', () => {
+    const fn = popup.slice(popup.indexOf('function prRenderMapping'), popup.indexOf('function prRenderPreview'))
+    expect(fn).not.toContain('prMappingBody.childElementCount')
+    expect(fn).toMatch(/prMappingWrap\.hidden = matches\.length === 0/)
+    // The readiness reason is set and shown AFTER that visibility
+    // decision is made from `matches`, not from the table body — so it
+    // can never be hidden by the same table-emptiness check.
+    const wrapIndex = fn.indexOf('prMappingWrap.hidden')
+    const errorIndex = fn.indexOf('prMappingError.textContent')
+    expect(errorIndex).toBeGreaterThan(wrapIndex)
+  })
 })
