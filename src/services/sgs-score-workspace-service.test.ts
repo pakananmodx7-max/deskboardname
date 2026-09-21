@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -5,6 +7,7 @@ import {
   buildSgsScoreWorkspacePayload,
   buildSgsScoreWorkspaceRows,
   computeSgsScoreWorkspaceSendPlan,
+  mapColumn,
   selectSgsScoreWorkspaceColumnsForExport,
   validateSgsScoreWorkspaceMultiPayload,
   validateSgsScoreWorkspacePayload,
@@ -363,5 +366,149 @@ describe("the teacher's column selection — ticking several KrunameClass column
 
   it('selecting nothing produces no columns at all', () => {
     expect(selectSgsScoreWorkspaceColumnsForExport(workspaceColumns, [])).toEqual([])
+  })
+})
+
+// ==================================================
+// LIVE PRODUCTION REGRESSION — "เกิดข้อผิดพลาด...", "ยังไม่มีนักเรียน
+// ในห้องเรียนนี้" for an EXISTING, already-working คะแนน SGS workspace,
+// the moment the SGS Score Calculator shipped.
+//
+// ROOT CAUSE: getSgsScoreColumns started selecting `calculation_formula`
+// — a column that exists only once migration 0025 has been applied, and
+// every migration in this repo is written but explicitly NOT
+// auto-applied. Selecting a nonexistent column fails the whole query,
+// which failed the whole Promise.all in sgs-scores-tab.tsx's refresh(),
+// so neither `columns` nor `students` state ever got set — even though
+// getStudentsByClassroom itself (the other half of that Promise.all)
+// would have succeeded fine.
+// ==================================================
+
+function readSource(relativePath: string): string {
+  return readFileSync(new URL(relativePath, import.meta.url), 'utf-8')
+}
+
+describe('REGRESSION FIX: the base workspace load can never fail because of the optional calculation_formula column', () => {
+  it('mapColumn ALWAYS returns calculationFormula: null, regardless of whether the row even carries that key — the exact shape a base SGS_SCORE_COLUMN_SELECT query returns for both an existing workspace (no saved formula yet) and one predating this feature entirely', () => {
+    const rowWithoutFormulaKeyAtAll = {
+      id: 'col-10',
+      subject_id: 'sub-1',
+      classroom_id: 'cls-1',
+      label: 'ช่อง 10',
+      max_score: 10,
+      position: 0,
+      created_at: '2024-01-01',
+      updated_at: '2024-01-01',
+    }
+    const column = mapColumn(rowWithoutFormulaKeyAtAll as Parameters<typeof mapColumn>[0])
+    expect(column.calculationFormula).toBeNull()
+    expect(column).toEqual({
+      id: 'col-10',
+      subjectId: 'sub-1',
+      classroomId: 'cls-1',
+      label: 'ช่อง 10',
+      maxScore: 10,
+      position: 0,
+      calculationFormula: null,
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+    })
+  })
+
+  it('getSgsScoreColumns/createSgsScoreColumn select ONLY the base columns — calculation_formula never appears in their query, so an unapplied migration 0025 can never break them', () => {
+    const source = readSource('./sgs-score-workspace-service.ts')
+    const selectConstMatch = /const SGS_SCORE_COLUMN_SELECT = '([^']+)'/.exec(source)
+    expect(selectConstMatch, 'SGS_SCORE_COLUMN_SELECT constant not found').not.toBeNull()
+    const baseSelect = selectConstMatch![1]
+    expect(baseSelect).not.toContain('calculation_formula')
+    expect(baseSelect).toContain('id')
+    expect(baseSelect).toContain('label')
+    expect(baseSelect).toContain('max_score')
+
+    const getColumnsFn = source.slice(source.indexOf('export async function getSgsScoreColumns'), source.indexOf('export async function createSgsScoreColumn'))
+    expect(getColumnsFn).toContain('.select(SGS_SCORE_COLUMN_SELECT)')
+    expect(getColumnsFn).not.toContain('calculation_formula')
+
+    const createColumnStart = source.indexOf('export async function createSgsScoreColumn')
+    const createColumnFn = source.slice(createColumnStart, source.indexOf('\n}', createColumnStart) + 2)
+    expect(createColumnFn).toContain('.select(SGS_SCORE_COLUMN_SELECT)')
+    expect(createColumnFn).not.toContain('calculation_formula')
+  })
+
+  it('calculation_formula is selected in EXACTLY TWO places, both explicit calculator actions — never the base list/create path', () => {
+    const source = readSource('./sgs-score-workspace-service.ts')
+    // updateSgsScoreColumnFormula (writes+reads it back) and
+    // getSgsScoreColumnFormulas (the calculator's own separate read).
+    const occurrences = source.split("calculation_formula'").length - 1 + source.split('calculation_formula:').length - 1
+    expect(occurrences).toBeGreaterThan(0)
+    expect(source).toContain("`${SGS_SCORE_COLUMN_SELECT}, calculation_formula`")
+    expect(source).toContain("select('id, calculation_formula')")
+  })
+
+  it('getSgsScoreColumnFormulas is scoped identically to getSgsScoreColumns (same subject_id/classroom_id filters) and is a COMPLETELY SEPARATE function a caller can fail independently', () => {
+    const source = readSource('./sgs-score-workspace-service.ts')
+    const fn = source.slice(source.indexOf('export async function getSgsScoreColumnFormulas'))
+    expect(fn).toContain(".eq('subject_id', subjectId)")
+    expect(fn).toContain(".eq('classroom_id', classroomId)")
+    expect(fn).toContain("select('id, calculation_formula')")
+  })
+
+  it('updateSgsScoreColumnFormula (the only WRITE of calculation_formula) only ever runs from an explicit calculator action — never imported/called by getSgsScoreColumns, createSgsScoreColumn, or getSgsScores', () => {
+    const source = readSource('./sgs-score-workspace-service.ts')
+    const baseFns = source.slice(source.indexOf('export async function getSgsScoreColumns'), source.indexOf('export async function updateSgsScoreColumnFormula'))
+    expect(baseFns).not.toContain('updateSgsScoreColumnFormula')
+  })
+})
+
+describe('REGRESSION FIX: sgs-scores-tab.tsx keeps the base workspace load and the calculator formula load completely independent', () => {
+  it('refresh() (the base workspace load) never references getSgsScoreColumnFormulas or the formula error state', () => {
+    const source = readSource('../features/subjects-real/tabs/sgs-scores-tab.tsx')
+    const refreshFn = source.slice(source.indexOf('const refresh = useCallback'), source.indexOf('const refreshFormulas = useCallback'))
+    expect(refreshFn).toContain('getSgsScoreColumns(subjectId, classroomId)')
+    expect(refreshFn).not.toContain('getSgsScoreColumnFormulas')
+    expect(refreshFn).not.toContain('formulaLoadError')
+    expect(refreshFn).toContain('setError(')
+  })
+
+  it('refreshFormulas() (the calculator\'s own load) has its OWN try/catch and its OWN error state — a failure there can never write to `error` or touch columns/students', () => {
+    const source = readSource('../features/subjects-real/tabs/sgs-scores-tab.tsx')
+    const refreshFormulasFn = source.slice(source.indexOf('const refreshFormulas = useCallback'), source.indexOf('useEffect(() => {\n    refresh()'))
+    expect(refreshFormulasFn).toContain('getSgsScoreColumnFormulas(subjectId, classroomId)')
+    expect(refreshFormulasFn).toContain('setFormulaLoadError(')
+    expect(refreshFormulasFn).not.toContain('setError(')
+    expect(refreshFormulasFn).not.toContain('setColumns(')
+    expect(refreshFormulasFn).not.toContain('setStudents(')
+  })
+
+  it('both loads run independently on mount — refresh() is never awaited before refreshFormulas() starts, so a slow/failing formula load can never delay or block the base table', () => {
+    const source = readSource('../features/subjects-real/tabs/sgs-scores-tab.tsx')
+    const effect = source.slice(source.indexOf('useEffect(() => {\n    refresh()'), source.indexOf('useEffect(() => {\n    refresh()') + 200)
+    expect(effect).toMatch(/refresh\(\)\s*\n\s*void refreshFormulas\(\)/)
+  })
+
+  it('the calculator entry point (header badge) reads the SEPARATE formulasByColumnId state, never column.calculationFormula (which the base load leaves null on purpose)', () => {
+    const source = readSource('../features/subjects-real/tabs/sgs-scores-tab.tsx')
+    expect(source).toContain('formulasByColumnId[column.id]')
+    expect(source).not.toContain('column.calculationFormula')
+  })
+
+  it('EXISTING CLASSROOM, NO SAVED FORMULA YET: the calculator entry point renders for every column unconditionally — it is never hidden or gated behind whether formulasByColumnId/formulaLoadError succeeded', () => {
+    const source = readSource('../features/subjects-real/tabs/sgs-scores-tab.tsx')
+    // The header th block (label, delete button, maxScore, calculator
+    // button) is rendered once per `column` inside columns.map — nothing
+    // in that block conditions on formulaLoadError or on the formulas
+    // fetch having completed at all.
+    const headerBlock = source.slice(source.indexOf('{columns.map((column) => ('), source.indexOf('</th>\n                  ))}'))
+    expect(headerBlock).toContain('setCalcColumn(column)')
+    expect(headerBlock).toContain("formulasByColumnId[column.id] ? 'มีสูตรคำนวณ' : 'คำนวณ'")
+    expect(headerBlock).not.toContain('formulaLoadError')
+    expect(headerBlock).not.toContain('loading &&')
+  })
+
+  it('the calculator modal receives the saved formula as an explicit prop (existingFormula), never reading it off targetColumn itself', () => {
+    const modalSource = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    const loadFn = modalSource.slice(modalSource.indexOf('const load = useCallback'), modalSource.indexOf('const selectedSources ='))
+    expect(loadFn).not.toContain('targetColumn.calculationFormula')
+    expect(loadFn).toContain('const formula = existingFormula')
   })
 })

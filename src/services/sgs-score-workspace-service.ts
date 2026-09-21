@@ -30,19 +30,47 @@ interface SgsScoreColumnRow {
   label: string
   max_score: number
   position: number
-  calculation_formula: SgsScoreCalculationFormula | null
   created_at: string
   updated_at: string
 }
 
-const SGS_SCORE_COLUMN_SELECT = 'id, subject_id, classroom_id, label, max_score, position, calculation_formula, created_at, updated_at'
+/**
+ * REGRESSION FIX (live production incident): this select list used to
+ * also carry `calculation_formula`, which exists only once migration
+ * 0025 has been applied to a given database — and every migration in
+ * this repo is written but explicitly NOT auto-applied (see every prior
+ * migration's own doc comment). Selecting a column that does not exist
+ * yet fails the WHOLE query, which failed the WHOLE Promise.all in
+ * sgs-scores-tab.tsx's refresh(), so neither columns nor students ever
+ * got set — an existing, already-working คะแนน SGS workspace (32
+ * students, real columns/scores) broke outright ("เกิดข้อผิดพลาด...",
+ * "ยังไม่มีนักเรียนในห้องเรียนนี้") the moment this feature shipped,
+ * even for a teacher who had not touched the calculator at all.
+ *
+ * The base workspace query (list, create) must NEVER depend on
+ * calculation_formula existing — that optional column is now fetched
+ * ONLY by getSgsScoreColumnFormulas/updateSgsScoreColumnFormula, called
+ * separately from the base load and independently error-handled, so an
+ * unapplied migration 0025 degrades to "no saved formulas" instead of
+ * breaking the workspace.
+ */
+const SGS_SCORE_COLUMN_SELECT = 'id, subject_id, classroom_id, label, max_score, position, created_at, updated_at'
+
+interface SgsScoreColumnFormulaRow {
+  id: string
+  calculation_formula: SgsScoreCalculationFormula | null
+}
 
 interface SgsScoreRow {
   student_id: string
   score: number | null
 }
 
-function mapColumn(row: SgsScoreColumnRow): SgsScoreColumn {
+/** Exported for the regression test proving this mapping can never fail
+ * (and never guesses a formula) when `calculation_formula` is absent
+ * from `row` — the exact shape every query using the base
+ * SGS_SCORE_COLUMN_SELECT returns. */
+export function mapColumn(row: SgsScoreColumnRow): SgsScoreColumn {
   return {
     id: row.id,
     subjectId: row.subject_id,
@@ -50,7 +78,10 @@ function mapColumn(row: SgsScoreColumnRow): SgsScoreColumn {
     label: row.label,
     maxScore: row.max_score,
     position: row.position,
-    calculationFormula: row.calculation_formula ?? null,
+    // NEVER populated here on purpose — see the calculation_formula
+    // comment above getSgsScoreColumnFormulas. A caller that needs a
+    // column's saved formula fetches it separately.
+    calculationFormula: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -117,6 +148,13 @@ export async function createSgsScoreColumn(input: CreateSgsScoreColumnInput): Pr
  * plus an explicit approved preview (applySgsScoreCalculation,
  * sgs-score-calculation-service.ts) ever changes a score value; saving a
  * formula is purely configuration.
+ *
+ * This is the ONE place calculation_formula is written, and it only ever
+ * runs from an explicit calculator action (never the base page load) —
+ * if migration 0025 has not been applied yet, this throws and the
+ * calculator UI's own try/catch reports it as a calculator-specific
+ * error (see score-calculation-modal.tsx), never a whole-workspace
+ * failure.
  */
 export async function updateSgsScoreColumnFormula(columnId: string, formula: SgsScoreCalculationFormula | null): Promise<SgsScoreColumn> {
   const supabase = getSupabaseClient()
@@ -124,11 +162,37 @@ export async function updateSgsScoreColumnFormula(columnId: string, formula: Sgs
     .from('sgs_score_columns')
     .update({ calculation_formula: formula })
     .eq('id', columnId)
-    .select(SGS_SCORE_COLUMN_SELECT)
+    .select(`${SGS_SCORE_COLUMN_SELECT}, calculation_formula`)
     .single()
 
   if (error) throw error
-  return mapColumn(data as SgsScoreColumnRow)
+  const row = data as SgsScoreColumnRow & { calculation_formula: SgsScoreCalculationFormula | null }
+  return { ...mapColumn(row), calculationFormula: row.calculation_formula ?? null }
+}
+
+/**
+ * The calculator's OWN, separately-failing read of every column's saved
+ * formula in this subject+classroom — see the comment above
+ * SGS_SCORE_COLUMN_SELECT for why this must never be folded into
+ * getSgsScoreColumns. Callers (sgs-scores-tab.tsx) fetch this
+ * independently of the base workspace load and handle its rejection on
+ * their own (e.g. "no saved formulas yet" / a small calculator-scoped
+ * notice) — never by failing the whole page.
+ */
+export async function getSgsScoreColumnFormulas(subjectId: string, classroomId: string): Promise<Record<string, SgsScoreCalculationFormula | null>> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('sgs_score_columns')
+    .select('id, calculation_formula')
+    .eq('subject_id', subjectId)
+    .eq('classroom_id', classroomId)
+
+  if (error) throw error
+  const formulasByColumnId: Record<string, SgsScoreCalculationFormula | null> = {}
+  for (const row of data as SgsScoreColumnFormulaRow[]) {
+    formulasByColumnId[row.id] = row.calculation_formula ?? null
+  }
+  return formulasByColumnId
 }
 
 export async function deleteSgsScoreColumn(columnId: string): Promise<void> {

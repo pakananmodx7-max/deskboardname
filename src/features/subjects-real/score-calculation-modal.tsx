@@ -42,6 +42,14 @@ interface ScoreCalculationModalProps {
   subjectId: string
   classroomId: string
   targetColumn: SgsScoreColumn
+  /** The column's saved formula, if any — fetched by the tab SEPARATELY
+   * from targetColumn itself (see sgs-score-workspace-service.ts's
+   * getSgsScoreColumnFormulas: targetColumn.calculationFormula is never
+   * populated by the base workspace load, on purpose, so that load can
+   * never fail because this optional data isn't available). `null` means
+   * either "no formula saved yet" or "couldn't be loaded" — both cases
+   * just start the form empty, never an error. */
+  existingFormula: SgsScoreCalculationFormula | null
   students: ClassroomStudent[]
   /** This column's CURRENT scores, keyed by studentId — used only for
    * the "ช่องนี้มีคะแนนอยู่แล้ว X คน" / skip-existing-by-default rule
@@ -76,6 +84,7 @@ export function ScoreCalculationModal({
   subjectId,
   classroomId,
   targetColumn,
+  existingFormula,
   students,
   existingTargetScores,
   onApplied,
@@ -110,7 +119,7 @@ export function ScoreCalculationModal({
         setSources(loadedSources)
         setScoresByStudentIdAndAssignmentId(loadedScores)
 
-        const formula = targetColumn.calculationFormula
+        const formula = existingFormula
         const availableIds = loadedSources.map((s) => s.assignmentId)
         if (formula && formula.mode === 'proportional') {
           setMode('proportional')
@@ -146,7 +155,7 @@ export function ScoreCalculationModal({
       })
       .catch((err: unknown) => setLoadError(toFriendlyErrorMessage(err, 'โหลดคะแนนต้นทางไม่สำเร็จ')))
       .finally(() => setLoading(false))
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-reading targetColumn.calculationFormula deliberately only on (re)open, not on every parent re-render
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-reading existingFormula deliberately only on (re)open, not on every parent re-render (e.g. while the tab's own refreshFormulas() resolves in the background)
   }, [subjectId, classroomId, targetColumn.id])
 
   useEffect(() => {

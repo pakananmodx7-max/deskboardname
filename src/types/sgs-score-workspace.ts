@@ -18,12 +18,19 @@ export interface SgsScoreColumn {
   label: string
   maxScore: number
   position: number
-  /** The teacher's saved calculation configuration for this column, if
-   * any — see src/types/sgs-score-calculation.ts. `null` means the
-   * column has no formula yet (scores are entered manually, exactly as
-   * before this feature existed). Saving/clearing a formula never
+  /**
+   * The teacher's saved calculation configuration for this column, if
+   * any — see src/types/sgs-score-calculation.ts. `null` means either
+   * "no formula saved yet" OR "not fetched by this call" — see
+   * sgs-score-workspace-service.ts's own comment on
+   * SGS_SCORE_COLUMN_SELECT: getSgsScoreColumns/createSgsScoreColumn
+   * deliberately never populate this field (always `null`), so the base
+   * workspace load can never fail because of it. Only
+   * getSgsScoreColumnFormulas and updateSgsScoreColumnFormula's own
+   * return value carry a real value. Saving/clearing a formula never
    * writes or changes any score by itself — only "คำนวณใหม่" plus an
-   * explicit approved preview ever does that. */
+   * explicit approved preview ever does that.
+   */
   calculationFormula: SgsScoreCalculationFormula | null
   createdAt: string
   updatedAt: string

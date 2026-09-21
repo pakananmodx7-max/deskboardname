@@ -15,6 +15,7 @@ import {
   computeSgsScoreWorkspaceSendPlan,
   createSgsScoreColumn,
   deleteSgsScoreColumn,
+  getSgsScoreColumnFormulas,
   getSgsScoreColumns,
   getSgsScores,
   selectSgsScoreWorkspaceColumnsForExport,
@@ -26,6 +27,7 @@ import { getStudentsByClassroom } from '@/services/student-service'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { downloadJson } from '@/lib/export/json-export'
 import { cn } from '@/lib/utils'
+import type { SgsScoreCalculationFormula } from '@/types/sgs-score-calculation'
 import type { SgsScoreColumn } from '@/types/sgs-score-workspace'
 import type { ClassroomStudent } from '@/types/student'
 
@@ -83,6 +85,13 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
    * and, once approved, writes into `calcColumn`'s own sgs_scores rows
    * via the existing setSgsScore. */
   const [calcColumn, setCalcColumn] = useState<SgsScoreColumn | null>(null)
+  /** Saved formulas, fetched and error-handled COMPLETELY SEPARATELY
+   * from the base workspace load below (see getSgsScoreColumnFormulas's
+   * own doc comment) — a column with no entry here just means "no saved
+   * formula" (or "not loaded yet"), never a reason to show the whole
+   * page as broken. */
+  const [formulasByColumnId, setFormulasByColumnId] = useState<Record<string, SgsScoreCalculationFormula | null>>({})
+  const [formulaLoadError, setFormulaLoadError] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -102,9 +111,21 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
       .finally(() => setLoading(false))
   }, [subjectId, classroomId])
 
+  /** The calculator's OWN load step — never awaited by, and never able
+   * to fail, refresh() above. If migration 0025 has not been applied to
+   * this database yet, this throws and only the small calculator notice
+   * below shows; the base table still renders normally. */
+  const refreshFormulas = useCallback(() => {
+    setFormulaLoadError(null)
+    return getSgsScoreColumnFormulas(subjectId, classroomId)
+      .then((formulas) => setFormulasByColumnId(formulas))
+      .catch((err: unknown) => setFormulaLoadError(toFriendlyErrorMessage(err, 'ไม่สามารถโหลดสูตรคำนวณที่บันทึกไว้ได้ — ยังคำนวณคะแนนใหม่ได้ตามปกติ')))
+  }, [subjectId, classroomId])
+
   useEffect(() => {
     refresh()
-  }, [refresh])
+    void refreshFormulas()
+  }, [refresh, refreshFormulas])
 
   const rows = useMemo(
     () => buildSgsScoreWorkspaceRows(students, columns, scoresByColumnId),
@@ -244,6 +265,11 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
       </p>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {/* Deliberately separate from `error` above — a failure loading
+       * saved calculator formulas (e.g. before migration 0025 has been
+       * applied) is a small, calculator-scoped notice, never the same
+       * banner as a broken workspace load. */}
+      {formulaLoadError && <p className="text-xs text-muted-foreground">🧮 {formulaLoadError}</p>}
 
       <Card>
         <CardContent className="flex flex-wrap items-end gap-2 pt-4">
@@ -307,10 +333,10 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
                         type="button"
                         onClick={() => setCalcColumn(column)}
                         className="mt-0.5 flex items-center justify-center gap-1 text-xs font-normal text-muted-foreground hover:text-foreground"
-                        title={column.calculationFormula ? 'คำนวณคะแนนใหม่' : 'คำนวณคะแนนจากคะแนนต้นทาง'}
+                        title={formulasByColumnId[column.id] ? 'คำนวณคะแนนใหม่' : 'คำนวณคะแนนจากคะแนนต้นทาง'}
                       >
                         <Calculator className="size-3" />
-                        {column.calculationFormula ? 'มีสูตรคำนวณ' : 'คำนวณ'}
+                        {formulasByColumnId[column.id] ? 'มีสูตรคำนวณ' : 'คำนวณ'}
                       </button>
                     </th>
                   ))}
@@ -517,9 +543,12 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
           subjectId={subjectId}
           classroomId={classroomId}
           targetColumn={calcColumn}
+          existingFormula={formulasByColumnId[calcColumn.id] ?? null}
           students={students}
           existingTargetScores={scoresByColumnId[calcColumn.id] ?? {}}
-          onApplied={refresh}
+          onApplied={async () => {
+            await Promise.all([refresh(), refreshFormulas()])
+          }}
         />
       )}
     </div>
