@@ -110,6 +110,13 @@ export function ScoreCalculationModal({
   const [confirmOverwriteOpen, setConfirmOverwriteOpen] = useState(false)
   const [savingFormula, setSavingFormula] = useState(false)
   const [applying, setApplying] = useState(false)
+  /** The real underlying error from a failed/partial apply — shown only
+   * in development (import.meta.env.DEV) so a teacher only ever sees the
+   * friendly toast, while a developer diagnosing a live report sees the
+   * exact function/message. Cleared on every new apply attempt; NEVER
+   * used to decide whether the modal closes — that is decided purely by
+   * whether the write itself succeeded (see doApply). */
+  const [applyDiagnostic, setApplyDiagnostic] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -152,6 +159,7 @@ export function ScoreCalculationModal({
         setPreview(null)
         setPreviewError(null)
         setOverwriteExisting(false)
+        setApplyDiagnostic(null)
       })
       .catch((err: unknown) => setLoadError(toFriendlyErrorMessage(err, 'โหลดคะแนนต้นทางไม่สำเร็จ')))
       .finally(() => setLoading(false))
@@ -236,20 +244,66 @@ export function ScoreCalculationModal({
     }
   }
 
+  /**
+   * REGRESSION FIX (live production incident): this used to write the
+   * scores (applySgsScoreCalculation, which succeeds) and THEN save the
+   * formula (updateSgsScoreColumnFormula) inside the SAME try block —
+   * when the formula save failed (e.g. migration 0025 not yet applied
+   * to this database), the thrown error was caught by the SAME catch as
+   * a real score-write failure, so a successful score save was reported
+   * to the teacher as "บันทึกคะแนนไม่สำเร็จ", the modal never closed,
+   * and onApplied() (which would have shown the real saved values) was
+   * never called — even though 32/32 scores had already been written.
+   *
+   * The score write is the ONE thing that decides success/failure here.
+   * Saving the formula is optional metadata attempted afterward, in its
+   * own try/catch, exactly like reading it already is (see
+   * getSgsScoreColumnFormulas) — its failure is logged, never shown to
+   * the teacher as a save failure, and never blocks anything below it.
+   */
   async function doApply() {
     if (!preview) return
     setApplying(true)
+    setApplyDiagnostic(null)
     try {
       const plan = planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting)
-      const { written } = await applySgsScoreCalculation(targetColumn.id, plan)
-      // Applying implies "this is the formula for this column" — save it
-      // too, so the header's "มีสูตรคำนวณ" / "คำนวณใหม่" appears
-      // immediately without a separate manual save.
-      await updateSgsScoreColumnFormula(targetColumn.id, buildFormula())
-      toast(`ใช้คะแนนที่คำนวณกับช่อง "${targetColumn.label}" แล้ว (${written} คน)`)
+      const totalToWrite = plan.filter((row) => row.action === 'write').length
+      const { written, failed } = await applySgsScoreCalculation(targetColumn.id, plan)
+
+      if (failed.length > 0) {
+        // NEVER falsely reported as success — some/all rows failed to
+        // persist. Refresh anyway so the teacher sees exactly which
+        // students DID save, keep the modal open (preview + settings
+        // preserved) so they can retry after the underlying issue is
+        // fixed, and surface the real error for diagnosis.
+        setApplyDiagnostic(`applySgsScoreCalculation: ${failed.length}/${totalToWrite} แถวบันทึกไม่สำเร็จ — ${failed.map((f) => `${f.studentId}: ${f.message}`).join(' | ')}`)
+        toast(
+          written > 0
+            ? `บันทึกคะแนนสำเร็จบางส่วน (${written}/${totalToWrite} คน) — มี ${failed.length} คนบันทึกไม่สำเร็จ กรุณาลองใหม่`
+            : 'บันทึกคะแนนไม่สำเร็จ',
+        )
+        await onApplied()
+        return
+      }
+
+      // The scores themselves are saved — this is success. Saving the
+      // formula is a best-effort side effect from here on; it must
+      // never turn this into a failure.
+      try {
+        await updateSgsScoreColumnFormula(targetColumn.id, buildFormula())
+      } catch (formulaErr) {
+        setApplyDiagnostic(`updateSgsScoreColumnFormula: ${formulaErr instanceof Error ? formulaErr.message : String(formulaErr)} (คะแนนบันทึกสำเร็จแล้ว — ไม่กระทบผลลัพธ์)`)
+      }
+
+      toast('บันทึกคะแนนคำนวณแล้ว')
       onOpenChange(false)
       await onApplied()
     } catch (err) {
+      // A structural failure BEFORE any row was even attempted (e.g.
+      // planSgsScoreCalculationApply itself, or applySgsScoreCalculation
+      // rejecting outright) — same rule: never claim success, keep the
+      // modal open, surface the real error for diagnosis.
+      setApplyDiagnostic(err instanceof Error ? `${err.name}: ${err.message}` : String(err))
       toast(toFriendlyErrorMessage(err, 'บันทึกคะแนนไม่สำเร็จ'))
     } finally {
       setApplying(false)
@@ -565,6 +619,16 @@ export function ScoreCalculationModal({
                 </section>
               )}
             </div>
+          )}
+
+          {/* Development-only diagnostic — the teacher only ever sees the
+           * friendly toast; this exposes the real function/error for
+           * whoever is debugging a live save failure, never for normal
+           * teacher use (see doApply's own doc comment). */}
+          {applyDiagnostic && import.meta.env.DEV && (
+            <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+              [DEV] {applyDiagnostic}
+            </pre>
           )}
 
           <DialogFooter>

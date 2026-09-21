@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   applyRounding,
+  applySgsScoreCalculation,
   calculateClassPreview,
   calculateIndividualWeightedScore,
   calculateProportionalScore,
@@ -389,10 +390,11 @@ describe('15. applying a calculation only ever changes the ONE selected SGS colu
     expect(Object.keys(row).sort()).toEqual(['action', 'calculatedScore', 'studentId'])
   })
 
-  it('applySgsScoreCalculation writes every row through the SAME single columnId parameter — never a per-row id', () => {
+  it('applySgsScoreCalculation writes every row through the SAME single columnId parameter — never a per-row id, and defaults to the EXISTING setSgsScore, never a new write primitive', () => {
     const source = readSource('./sgs-score-calculation-service.ts')
     const fn = source.slice(source.indexOf('export async function applySgsScoreCalculation'), source.indexOf('// ==================================================\n// Source retrieval'))
-    expect(fn).toContain('setSgsScore(columnId, row.studentId, row.calculatedScore)')
+    expect(fn).toContain('write: (columnId: string, studentId: string, score: number | null) => Promise<void> = setSgsScore')
+    expect(fn).toContain('write(columnId, row.studentId, row.calculatedScore)')
     expect(fn).not.toMatch(/row\.columnId|row\.column/)
   })
 })
@@ -466,5 +468,229 @@ describe('20. the calculator is a same-page overlay — it never navigates away 
     expect(source).toContain("from '@/components/ui/dialog'")
     expect(source).not.toMatch(/useNavigate|react-router/)
     expect(source).not.toMatch(/window\.location|location\.href|location\.assign|location\.reload/)
+  })
+})
+
+// ==================================================
+// LIVE PRODUCTION REGRESSION — "บันทึกคะแนนไม่สำเร็จ" even though the
+// preview showed 32/32 students calculated correctly.
+//
+// ROOT CAUSE: score-calculation-modal.tsx's doApply() wrote the scores
+// via applySgsScoreCalculation (which SUCCEEDED — the same canonical
+// setSgsScore every manual SGS edit already uses), then immediately
+// called updateSgsScoreColumnFormula in the SAME try block to save the
+// formula. That call writes calculation_formula — a column that exists
+// only once migration 0025 has been applied, and (per every migration
+// in this repo) is NOT auto-applied. Its failure was caught by the SAME
+// catch as a genuine score-write failure, so a successful 32/32 score
+// save was reported to the teacher as "บันทึกคะแนนไม่สำเร็จ", the modal
+// never closed, and onApplied() (which would have refreshed the table
+// to show the real saved values) was never called.
+// ==================================================
+
+function buildRoster(count: number) {
+  return Array.from({ length: count }, (_, i) => ({ studentId: `s${i + 1}`, studentNumber: i + 1, fullName: `นักเรียน ${i + 1}` }))
+}
+
+/** A fake persistence layer standing in for setSgsScore — records every
+ * call and optionally rejects specific students, so the REAL
+ * applySgsScoreCalculation attempt/collect-failures loop (the actual
+ * bug's own logic) runs end to end without a live Supabase connection. */
+function fakeWriter(options: { rejectStudentIds?: Set<string> } = {}) {
+  const calls: { columnId: string; studentId: string; score: number | null }[] = []
+  const write = async (columnId: string, studentId: string, score: number | null) => {
+    calls.push({ columnId, studentId, score })
+    if (options.rejectStudentIds?.has(studentId)) {
+      throw new Error(`simulated write failure for ${studentId}`)
+    }
+  }
+  return { write, calls }
+}
+
+describe('APPLY/SAVE REGRESSION: applySgsScoreCalculation is the real, sole authority on whether scores were saved', () => {
+  it('THE EXACT LIVE CASE: 32/32 calculated students all persist successfully through the canonical write path', async () => {
+    const roster = buildRoster(32)
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1', 'a2'] })
+    const scores: Record<string, Record<string, number | null>> = {}
+    roster.forEach((s) => {
+      scores[s.studentId] = { a1: 8, a2: 8 }
+    })
+    const preview = calculateClassPreview(formula, roster, scores, SOURCES)
+    expect(preview.summary.calculable).toBe(32)
+
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+    expect(plan.filter((r) => r.action === 'write')).toHaveLength(32)
+
+    const { write, calls } = fakeWriter()
+    const result = await applySgsScoreCalculation('col-10', plan, write)
+
+    expect(result).toEqual({ written: 32, failed: [] })
+    expect(calls).toHaveLength(32)
+    // Only the ONE target column — every call carries the identical id.
+    expect(calls.every((c) => c.columnId === 'col-10')).toBe(true)
+    // Real student ids, never a display label/row index.
+    expect(calls.map((c) => c.studentId).sort()).toEqual(roster.map((s) => s.studentId).sort())
+  })
+
+  it('a failure partway through NEVER silently abandons the rest of the class — every planned row is still attempted, and every failure is reported individually rather than one thrown error hiding what succeeded', async () => {
+    const roster = buildRoster(32)
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const scores: Record<string, Record<string, number | null>> = {}
+    roster.forEach((s) => {
+      scores[s.studentId] = { a1: 7 }
+    })
+    const preview = calculateClassPreview(formula, roster, scores, SOURCES)
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+
+    // The 5th planned write fails (simulating a real per-row DB error) —
+    // this must NOT stop rows 6-32 from being attempted.
+    const failingStudentId = plan.filter((r) => r.action === 'write')[4].studentId
+    const { write, calls } = fakeWriter({ rejectStudentIds: new Set([failingStudentId]) })
+    const result = await applySgsScoreCalculation('col-10', plan, write)
+
+    expect(calls).toHaveLength(32) // every row was ATTEMPTED
+    expect(result.written).toBe(31)
+    expect(result.failed).toEqual([{ studentId: failingStudentId, message: expect.stringContaining('simulated write failure') }])
+  })
+
+  it('a total failure (e.g. the write function rejecting for every row) reports written: 0 with every student individually listed — never a single opaque thrown error', async () => {
+    const roster = buildRoster(3)
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const scores = Object.fromEntries(roster.map((s) => [s.studentId, { a1: 5 }]))
+    const preview = calculateClassPreview(formula, roster, scores, SOURCES)
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+
+    const { write } = fakeWriter({ rejectStudentIds: new Set(roster.map((s) => s.studentId)) })
+    const result = await applySgsScoreCalculation('col-10', plan, write)
+
+    expect(result.written).toBe(0)
+    expect(result.failed).toHaveLength(3)
+  })
+
+  it('SCORE 0 PERSISTS AS 0: a calculated score of exactly 0 is written as the numeric value 0, never skipped and never coerced to null', async () => {
+    const roster = [{ studentId: 's1', studentNumber: 1, fullName: 'หนึ่ง' }]
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'], missingScorePolicy: 'treat_as_zero' })
+    // score 0 on the one selected source -> calculated result is exactly 0.
+    const preview = calculateClassPreview(formula, roster, { s1: { a1: 0 } }, SOURCES)
+    expect(preview.rows[0].result).toMatchObject({ status: 'ok', calculatedScore: 0 })
+
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+    expect(plan).toEqual([{ studentId: 's1', action: 'write', calculatedScore: 0 }])
+
+    const { write, calls } = fakeWriter()
+    const result = await applySgsScoreCalculation('col-10', plan, write)
+    expect(result).toEqual({ written: 1, failed: [] })
+    expect(calls).toEqual([{ columnId: 'col-10', studentId: 's1', score: 0 }])
+  })
+
+  it('a student the preview could not calculate (missing_data) is NEVER attempted at all — skip_not_calculable never reaches the write function', async () => {
+    const roster = [
+      { studentId: 's1', studentNumber: 1, fullName: 'หนึ่ง' },
+      { studentId: 's2', studentNumber: 2, fullName: 'สอง' },
+    ]
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'], missingScorePolicy: 'exclude' })
+    const preview = calculateClassPreview(formula, roster, { s1: { a1: 8 }, s2: { a1: null } }, SOURCES)
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+    expect(plan.find((r) => r.studentId === 's2')?.action).toBe('skip_not_calculable')
+
+    const { write, calls } = fakeWriter()
+    const result = await applySgsScoreCalculation('col-10', plan, write)
+    expect(result.written).toBe(1)
+    expect(calls.map((c) => c.studentId)).toEqual(['s1'])
+  })
+
+  it('EXISTING VALUE SKIP POLICY: a student who already holds a value in the target column is never attempted when overwrite is off', async () => {
+    const roster = [{ studentId: 's1', studentNumber: 1, fullName: 'หนึ่ง' }]
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const preview = calculateClassPreview(formula, roster, { s1: { a1: 8 } }, SOURCES)
+    const plan = planSgsScoreCalculationApply(preview, { s1: 5 }, false)
+    expect(plan[0].action).toBe('skip_existing')
+
+    const { write, calls } = fakeWriter()
+    const result = await applySgsScoreCalculation('col-10', plan, write)
+    expect(result.written).toBe(0)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('EXPLICIT OVERWRITE POLICY: the same student IS attempted, and written, once overwrite is enabled', async () => {
+    const roster = [{ studentId: 's1', studentNumber: 1, fullName: 'หนึ่ง' }]
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const preview = calculateClassPreview(formula, roster, { s1: { a1: 8 } }, SOURCES)
+    const plan = planSgsScoreCalculationApply(preview, { s1: 5 }, true)
+    expect(plan[0].action).toBe('write')
+
+    const { write, calls } = fakeWriter()
+    const result = await applySgsScoreCalculation('col-10', plan, write)
+    expect(result.written).toBe(1)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('SUBJECT/CLASSROOM ISOLATION: applySgsScoreCalculation never touches any column other than the one explicit columnId it was called with — a different subject/classroom\'s columns are structurally unreachable', async () => {
+    const roster = buildRoster(5)
+    const formula = proportionalFormula({ sourceAssignmentIds: ['a1'] })
+    const scores = Object.fromEntries(roster.map((s) => [s.studentId, { a1: 6 }]))
+    const preview = calculateClassPreview(formula, roster, scores, SOURCES)
+    const plan = planSgsScoreCalculationApply(preview, {}, false)
+
+    const { write, calls } = fakeWriter()
+    await applySgsScoreCalculation('this-subjects-classrooms-column-10', plan, write)
+    expect(new Set(calls.map((c) => c.columnId))).toEqual(new Set(['this-subjects-classrooms-column-10']))
+  })
+})
+
+describe('APPLY/SAVE REGRESSION: the modal never conflates a successful score write with the separate, optional formula save', () => {
+  it('doApply saves scores and saves the formula in TWO SEPARATE try/catch blocks — a formula-save failure can never be reported as a score-save failure', () => {
+    const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
+
+    const scoreWriteIndex = fn.indexOf('applySgsScoreCalculation(targetColumn.id, plan)')
+    const formulaTryIndex = fn.indexOf('try {\n        await updateSgsScoreColumnFormula')
+    const successToastIndex = fn.indexOf("toast('บันทึกคะแนนคำนวณแล้ว')")
+    expect(scoreWriteIndex).toBeGreaterThan(-1)
+    expect(formulaTryIndex).toBeGreaterThan(scoreWriteIndex)
+    expect(successToastIndex).toBeGreaterThan(formulaTryIndex)
+
+    // The formula save's own catch must never touch the success path —
+    // it only records a diagnostic, never a toast/failure report.
+    const formulaCatch = fn.slice(formulaTryIndex, successToastIndex)
+    expect(formulaCatch).toContain('catch (formulaErr)')
+    expect(formulaCatch).not.toContain("toast(toFriendlyErrorMessage")
+  })
+
+  it('EXACT REQUIRED SUCCESS MESSAGE: "บันทึกคะแนนคำนวณแล้ว" is shown only after applySgsScoreCalculation reports zero failures', () => {
+    const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
+    expect(fn).toContain("toast('บันทึกคะแนนคำนวณแล้ว')")
+
+    const failedCheckIndex = fn.indexOf('if (failed.length > 0)')
+    const successToastIndex = fn.indexOf("toast('บันทึกคะแนนคำนวณแล้ว')")
+    expect(failedCheckIndex).toBeGreaterThan(-1)
+    expect(failedCheckIndex).toBeLessThan(successToastIndex)
+  })
+
+  it('SAVE FAILURE NEVER FALSELY REPORTS SUCCESS, AND KEEPS THE MODAL OPEN: the partial/total-failure branch returns before onOpenChange(false) is ever reached', () => {
+    const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
+    const failedBranch = fn.slice(fn.indexOf('if (failed.length > 0) {'), fn.indexOf('// The scores themselves are saved'))
+    expect(failedBranch).toContain('return')
+    expect(failedBranch).not.toContain('onOpenChange(false)')
+    // The class-level thrown-error catch (a structural failure before
+    // any row was attempted) must not close the modal either.
+    const outerCatch = fn.slice(fn.lastIndexOf('} catch (err) {'))
+    expect(outerCatch).not.toContain('onOpenChange(false)')
+  })
+
+  it('the real diagnostic error is captured (setApplyDiagnostic) on every failure path, gated behind import.meta.env.DEV so a teacher only ever sees the friendly toast', () => {
+    const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    expect(source).toContain('setApplyDiagnostic(')
+    expect(source).toContain('import.meta.env.DEV')
+  })
+
+  it('a save failure preserves the preview and calculation settings — setPreview(null) is never called on the failure paths of doApply', () => {
+    const source = readSource('../features/subjects-real/score-calculation-modal.tsx')
+    const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
+    expect(fn).not.toContain('setPreview(null)')
+    expect(fn).not.toContain('setSelectedSourceIds([])')
+    expect(fn).not.toContain('setMode(')
   })
 })

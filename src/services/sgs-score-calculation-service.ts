@@ -350,19 +350,61 @@ export function countExistingTargetScores(existingScoresByStudentId: Record<stri
   return Object.values(existingScoresByStudentId).filter((score) => score !== null).length
 }
 
+/** One row that failed to persist, and why — never swallowed, never
+ * folded into a single generic thrown error that hides which students
+ * actually saved. */
+export interface SgsScoreCalculationApplyFailure {
+  studentId: string
+  message: string
+}
+
+export interface SgsScoreCalculationApplyResult {
+  written: number
+  failed: SgsScoreCalculationApplyFailure[]
+}
+
 /**
  * The ONLY function in this file that writes anything — and it writes
  * through the EXISTING setSgsScore (sgs-score-workspace-service.ts),
  * the same primitive manual score entry already uses, one student at a
  * time, for the SELECTED column only. Never touches any other column,
  * assignment_submissions, attendance, or another subject/classroom.
+ *
+ * ATOMICITY/SAFETY: the existing setSgsScore is a per-student upsert —
+ * there is no existing batch/transactional variant to reuse, and this
+ * never invents one. What this DOES guarantee: every planned row is
+ * ATTEMPTED regardless of an earlier row's failure (never silently
+ * abandoning the rest of the class after one bad row), and every
+ * failure is reported individually instead of one thrown error hiding
+ * how many students actually saved. The caller
+ * (score-calculation-modal.tsx) decides what "success" means from
+ * `written`/`failed` — it never infers success merely from this
+ * function not throwing.
  */
-export async function applySgsScoreCalculation(columnId: string, plan: SgsScoreCalculationApplyPlanRow[]): Promise<{ written: number }> {
+export async function applySgsScoreCalculation(
+  columnId: string,
+  plan: SgsScoreCalculationApplyPlanRow[],
+  // Defaults to the EXISTING setSgsScore in every real call site — this
+  // parameter exists only so the regression test can execute the real
+  // per-row attempt/collect-failures loop (the actual bug's own logic)
+  // without a live Supabase connection, the same dependency-injection
+  // shape sgs-bridge's own executeSequentialColumnRun already uses for
+  // the identical reason. Never anything other than setSgsScore in
+  // production.
+  write: (columnId: string, studentId: string, score: number | null) => Promise<void> = setSgsScore,
+): Promise<SgsScoreCalculationApplyResult> {
   const toWrite = plan.filter((row) => row.action === 'write')
+  let written = 0
+  const failed: SgsScoreCalculationApplyFailure[] = []
   for (const row of toWrite) {
-    await setSgsScore(columnId, row.studentId, row.calculatedScore)
+    try {
+      await write(columnId, row.studentId, row.calculatedScore)
+      written += 1
+    } catch (err) {
+      failed.push({ studentId: row.studentId, message: err instanceof Error ? err.message : String(err) })
+    }
   }
-  return { written: toWrite.length }
+  return { written, failed }
 }
 
 // ==================================================
