@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { parseScoreInput } from '@/services/assignment-service'
 import {
+  buildSgsScoreWorkspaceMultiPayload,
   buildSgsScoreWorkspacePayload,
   buildSgsScoreWorkspaceRows,
   computeSgsScoreWorkspaceSendPlan,
@@ -16,6 +17,7 @@ import {
   getSgsScoreColumns,
   getSgsScores,
   setSgsScore,
+  validateSgsScoreWorkspaceMultiPayload,
   validateSgsScoreWorkspacePayload,
 } from '@/services/sgs-score-workspace-service'
 import { getStudentsByClassroom } from '@/services/student-service'
@@ -175,6 +177,34 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
     }
     downloadJson(payload, `sgs-bridge-${targetColumn.label}-${classroomName}`)
     toast('ดาวน์โหลดไฟล์สำหรับ SGS Bridge แล้ว — เปิด Chrome Extension เพื่อโหลดไฟล์นี้ต่อ')
+  }
+
+  /**
+   * PRODUCTION multi-column export — one file carrying EVERY column in
+   * this workspace plus each student's score per column, for the
+   * extension's production workflow (select several SGS columns, send
+   * them in one run). The single-column export above is unchanged and
+   * still available.
+   */
+  function handleDownloadMultiPayload() {
+    if (columns.length === 0) return
+    const payload = buildSgsScoreWorkspaceMultiPayload(
+      {
+        subjectId,
+        subjectName,
+        classroomId,
+        classroomName,
+        columns: columns.map((column) => ({ key: column.id, label: column.label, maxScore: column.maxScore })),
+      },
+      rows,
+    )
+    const validation = validateSgsScoreWorkspaceMultiPayload(payload)
+    if (!validation.ok) {
+      toast('ไม่สามารถเตรียมข้อมูลได้ กรุณาลองใหม่')
+      return
+    }
+    downloadJson(payload, `sgs-bridge-ทุกช่อง-${classroomName}`)
+    toast('ดาวน์โหลดไฟล์ทุกช่องคะแนนแล้ว — เปิด Chrome Extension เพื่อโหลดไฟล์นี้ต่อ')
   }
 
   return (
@@ -394,6 +424,9 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => setSendDialogOpen(false)}>
               ยกเลิก
+            </Button>
+            <Button type="button" variant="outline" onClick={handleDownloadMultiPayload} disabled={columns.length === 0}>
+              ดาวน์โหลดทุกช่องคะแนน ({columns.length})
             </Button>
             <Button type="button" onClick={handleDownloadPayload} disabled={!targetColumn}>
               ดาวน์โหลด Bridge Payload

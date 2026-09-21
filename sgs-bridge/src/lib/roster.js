@@ -31,3 +31,39 @@ export function buildFullRosterFromPayload(payload) {
     })),
   ]
 }
+
+/**
+ * PRODUCTION multi-column payload — the full roster, exactly once per
+ * student. Unlike the single-column payload family there is no separate
+ * `skippedStudentIds` list: a student with no score in a given column
+ * simply carries `null` for that column (see
+ * buildScoresByStudentIdAndColumnKey below), so every student is always
+ * present here and "no score in column X" never means "missing from the
+ * roster."
+ */
+export function buildFullRosterFromMultiPayload(payload) {
+  return (payload?.students ?? []).map((student) => ({
+    studentId: student.studentId,
+    studentNumber: student.studentNumber ?? null,
+    studentCode: student.studentCode ?? null,
+    fullName: student.fullName,
+  }))
+}
+
+/**
+ * `{ [studentId]: { [columnKey]: number|null } }` — the lookup
+ * buildMultiColumnPlan projects onto one column at a time. A missing
+ * entry and an explicit `null` both mean "no score entered," and are
+ * never confused with a real 0.
+ */
+export function buildScoresByStudentIdAndColumnKey(payload) {
+  const out = {}
+  for (const student of payload?.students ?? []) {
+    const scores = {}
+    for (const [columnKey, value] of Object.entries(student.scoresByColumnKey ?? {})) {
+      scores[columnKey] = typeof value === 'number' && Number.isFinite(value) ? value : null
+    }
+    out[student.studentId] = scores
+  }
+  return out
+}

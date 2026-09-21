@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildSgsScoreWorkspaceMultiPayload,
   buildSgsScoreWorkspacePayload,
   buildSgsScoreWorkspaceRows,
   computeSgsScoreWorkspaceSendPlan,
+  validateSgsScoreWorkspaceMultiPayload,
   validateSgsScoreWorkspacePayload,
 } from './sgs-score-workspace-service'
 import { SGS_SCORE_WORKSPACE_PAYLOAD_KIND, SGS_SCORE_WORKSPACE_PAYLOAD_VERSION } from '@/types/sgs-score-workspace'
@@ -195,5 +197,75 @@ describe('validateSgsScoreWorkspacePayload', () => {
   it('rejects non-object input without throwing', () => {
     expect(validateSgsScoreWorkspacePayload(null).ok).toBe(false)
     expect(validateSgsScoreWorkspacePayload('x').ok).toBe(false)
+  })
+})
+
+describe('multi-column bridge payload — the production workflow\'s own payload family', () => {
+  const columns = [
+    { key: 'c1', label: 'ช่อง 10', maxScore: 10 },
+    { key: 'c2', label: 'ช่อง 11', maxScore: 10 },
+    { key: 'c4', label: 'ปลายภาค', maxScore: 30 },
+  ]
+  const rows = [
+    { studentId: 's1', studentNumber: 1, studentCode: '1001', fullName: 'ก', scoresByColumnId: { c1: 8, c2: 9, c4: 27 } },
+    // A real 0 in one column, and no score at all in another.
+    { studentId: 's2', studentNumber: 2, studentCode: '1002', fullName: 'ข', scoresByColumnId: { c1: 0, c2: null, c4: 30 } },
+  ]
+  const args = { subjectId: 'sub', subjectName: 'คณิต', classroomId: 'cls', classroomName: 'ม.2/1', columns }
+
+  it('carries every column and every student, with one score per column', () => {
+    const payload = buildSgsScoreWorkspaceMultiPayload(args, rows)
+    expect(payload.kind).toBe('sgs_score_workspace_multi')
+    expect(payload.columns).toHaveLength(3)
+    expect(payload.students).toHaveLength(2)
+    expect(payload.students[0].scoresByColumnKey).toEqual({ c1: 8, c2: 9, c4: 27 })
+  })
+
+  it('keeps a real 0 as 0 and an absent score as null — never collapsing the two', () => {
+    const payload = buildSgsScoreWorkspaceMultiPayload(args, rows)
+    expect(payload.students[1].scoresByColumnKey.c1).toBe(0)
+    expect(payload.students[1].scoresByColumnKey.c2).toBeNull()
+  })
+
+  it('never drops a student who has no score in some column — the full roster always ships', () => {
+    const payload = buildSgsScoreWorkspaceMultiPayload(args, [
+      { studentId: 's3', studentNumber: 3, studentCode: null, fullName: 'ค', scoresByColumnId: {} },
+    ])
+    expect(payload.students).toHaveLength(1)
+    expect(payload.students[0].scoresByColumnKey).toEqual({ c1: null, c2: null, c4: null })
+  })
+
+  it('validates a freshly built payload', () => {
+    expect(validateSgsScoreWorkspaceMultiPayload(buildSgsScoreWorkspaceMultiPayload(args, rows)).ok).toBe(true)
+  })
+
+  it('rejects a score above its OWN column\'s max, never another column\'s', () => {
+    const payload = buildSgsScoreWorkspaceMultiPayload(args, [
+      // 27 is fine for ปลายภาค (30) but way over ช่อง 10 (10).
+      { studentId: 's1', studentNumber: 1, studentCode: null, fullName: 'ก', scoresByColumnId: { c1: 27, c4: 27 } },
+    ])
+    const result = validateSgsScoreWorkspaceMultiPayload(payload)
+    expect(result.ok).toBe(false)
+    expect(result.errors.some((e) => e.includes('c1') && e.includes('27'))).toBe(true)
+    expect(result.errors.some((e) => e.includes('c4'))).toBe(false)
+  })
+
+  it('rejects a duplicate column key, a wrong kind, and a non-numeric score', () => {
+    expect(validateSgsScoreWorkspaceMultiPayload({ ...buildSgsScoreWorkspaceMultiPayload(args, rows), kind: 'wrong' }).ok).toBe(false)
+    expect(
+      validateSgsScoreWorkspaceMultiPayload({
+        ...buildSgsScoreWorkspaceMultiPayload(args, rows),
+        columns: [columns[0], { ...columns[1], key: 'c1' }],
+      }).ok,
+    ).toBe(false)
+    const bad = buildSgsScoreWorkspaceMultiPayload(args, rows)
+    bad.students[0].scoresByColumnKey.c1 = 'x' as unknown as number
+    expect(validateSgsScoreWorkspaceMultiPayload(bad).ok).toBe(false)
+  })
+
+  it('accepts a negative-free, null-tolerant score map but rejects a negative score', () => {
+    const bad = buildSgsScoreWorkspaceMultiPayload(args, rows)
+    bad.students[0].scoresByColumnKey.c1 = -1
+    expect(validateSgsScoreWorkspaceMultiPayload(bad).ok).toBe(false)
   })
 })

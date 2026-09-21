@@ -95,3 +95,45 @@ export interface SgsScoreWorkspacePayload {
   students: SgsScoreWorkspaceStudentScore[]
   skippedStudentIds: SgsScoreWorkspaceSkippedStudent[]
 }
+
+// ==================================================
+// MULTI-COLUMN bridge payload — the production workflow's own payload
+// family. The teacher sets SGS to show the whole classroom on ONE page
+// and sends SEVERAL score columns in a single run, so one payload
+// carries every selected column's definition plus each student's score
+// PER COLUMN. Deliberately a separate `kind` from the single-column
+// SgsScoreWorkspacePayload above (which keeps working unchanged): the
+// extension tells the two apart by that explicit field, never by
+// guessing from shape.
+// ==================================================
+
+export const SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_VERSION = 1 as const
+export const SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND = 'sgs_score_workspace_multi' as const
+
+export interface SgsScoreWorkspaceMultiStudent {
+  studentId: string
+  studentNumber: number | null
+  studentCode: string | null
+  fullName: string
+  /** Keyed by `SgsScoreWorkspaceColumnDefinition.key`. `null` means "no
+   * score entered for this student in this column" — never an implicit
+   * 0, which is itself a real, sendable score. A column the student has
+   * no entry for at all may simply be absent from this record. */
+  scoresByColumnKey: Record<string, number | null>
+}
+
+export interface SgsScoreWorkspaceMultiPayload {
+  kind: typeof SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND
+  version: typeof SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_VERSION
+  generatedAt: string
+  subject: { id: string; name: string }
+  classroom: { id: string; name: string }
+  /** Every column this payload may write to — each with its OWN
+   * maxScore, which is the only max ever applied to that column's
+   * scores. */
+  columns: SgsScoreWorkspaceColumnDefinition[]
+  /** The FULL roster, every student exactly once. A student with no
+   * score in a given column is represented by a null/absent entry in
+   * `scoresByColumnKey`, never by omission from this list. */
+  students: SgsScoreWorkspaceMultiStudent[]
+}

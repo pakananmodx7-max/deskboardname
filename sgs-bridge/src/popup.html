@@ -2,24 +2,175 @@
 <html lang="th">
   <head>
     <meta charset="utf-8" />
-    <title>SGS Bridge (Dry Run)</title>
+    <title>SGS Bridge</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <h1>SGS Bridge — โหมดทดลอง (Dry Run)</h1>
+    <h1>SGS Bridge</h1>
 
     <section>
       <p id="status" data-state="warn">กำลังตรวจสอบหน้าปัจจุบัน...</p>
+    </section>
+
+    <section id="pr-step-load">
+      <h2>1. โหลดข้อมูลคะแนน</h2>
+      <input type="file" id="payload-file" accept="application/json" />
+      <p id="payload-error" class="error" hidden></p>
+      <dl id="pr-payload-summary" hidden>
+        <dt>วิชา</dt>
+        <dd id="pr-subject"></dd>
+        <dt>ห้อง</dt>
+        <dd id="pr-classroom"></dd>
+        <dt>นักเรียน</dt>
+        <dd id="pr-student-count"></dd>
+        <dt>ช่องคะแนนที่โหลดมา</dt>
+        <dd id="pr-kruname-column-count"></dd>
+      </dl>
+    </section>
+
+    <section id="pr-step-scan" hidden>
+      <h2>2. ตรวจสอบ SGS</h2>
+      <p class="hint">ตั้งจำนวนรายการต่อหน้าใน SGS ให้แสดงนักเรียนทั้งห้องในหน้าเดียว แล้วกดตรวจสอบ</p>
+      <button type="button" id="pr-scan-btn">ตรวจสอบหน้า SGS</button>
+      <dl id="pr-scan-summary" hidden>
+        <dt>วิชา/ห้องใน SGS</dt>
+        <dd id="pr-sgs-context"></dd>
+        <dt>นักเรียนที่แสดงอยู่</dt>
+        <dd id="pr-visible-count"></dd>
+        <dt>ช่องคะแนนที่กรอกได้ตอนนี้</dt>
+        <dd id="pr-writable-count"></dd>
+      </dl>
+      <p id="pr-scan-error" class="error" hidden></p>
+    </section>
+
+    <section id="pr-step-columns" hidden>
+      <h2>3. เลือกคอลัมน์คะแนน</h2>
+      <p class="hint">เลือกได้มากกว่าหนึ่งคอลัมน์ ระบบจะส่งทีละคอลัมน์จนครบ</p>
+      <div>
+        <button type="button" id="pr-select-all">เลือกทั้งหมด</button>
+        <button type="button" id="pr-clear-all">ยกเลิกทั้งหมด</button>
+      </div>
+      <div id="pr-column-list"></div>
+
+      <div id="pr-mapping-wrap" hidden>
+        <h3>การจับคู่ช่องคะแนน</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>KrunameClass</th>
+              <th>SGS</th>
+            </tr>
+          </thead>
+          <tbody id="pr-mapping-body"></tbody>
+        </table>
+        <p id="pr-mapping-error" class="error" hidden></p>
+      </div>
+
+      <label>
+        <input type="checkbox" id="pr-overwrite" />
+        เขียนทับคะแนนเดิม
+      </label>
+      <p class="hint">ค่าเริ่มต้นคือไม่เขียนทับ — คะแนนเดิมที่มีอยู่แล้วใน SGS (รวมคะแนน 0) จะถูกข้าม</p>
+      <button type="button" id="pr-preview-btn" disabled>ตรวจสอบก่อนส่ง</button>
+    </section>
+
+    <section id="pr-step-preview" hidden>
+      <h2>4. ตรวจสอบก่อนส่ง</h2>
+      <dl>
+        <dt>วิชา</dt>
+        <dd id="pr-preview-subject"></dd>
+        <dt>ห้อง</dt>
+        <dd id="pr-preview-classroom"></dd>
+        <dt>นักเรียน</dt>
+        <dd id="pr-preview-students"></dd>
+        <dt>คอลัมน์ที่เลือก</dt>
+        <dd id="pr-preview-columns"></dd>
+      </dl>
+      <table>
+        <thead>
+          <tr>
+            <th>KrunameClass</th>
+            <th>SGS</th>
+            <th>จะส่ง</th>
+            <th>ไม่มีคะแนน</th>
+            <th>ข้ามคะแนนเดิม</th>
+          </tr>
+        </thead>
+        <tbody id="pr-preview-body"></tbody>
+      </table>
+      <dl>
+        <dt>คะแนนที่จะเขียน</dt>
+        <dd id="pr-preview-to-write"></dd>
+        <dt>ช่องที่ไม่มีคะแนน</dt>
+        <dd id="pr-preview-no-score"></dd>
+        <dt>ข้ามเพราะมีคะแนนเดิม</dt>
+        <dd id="pr-preview-skip-existing"></dd>
+        <dt>คะแนนเดิมที่จะถูกเขียนทับหากเปิดตัวเลือก</dt>
+        <dd id="pr-preview-would-overwrite"></dd>
+      </dl>
+      <p id="pr-preview-error" class="error" hidden></p>
+      <label>
+        <input type="checkbox" id="pr-confirm" />
+        ฉันตรวจสอบวิชา ห้อง และคอลัมน์ที่เลือกแล้ว และเข้าใจว่า SGS บันทึกอัตโนมัติ
+      </label>
+      <button type="button" id="pr-send-btn" disabled>ส่งคะแนน</button>
+    </section>
+
+    <section id="pr-step-progress" hidden>
+      <h2>5. ส่งคะแนน</h2>
+      <p id="pr-progress-column"></p>
+      <p id="pr-progress-cells"></p>
+      <button type="button" id="pr-stop-btn">หยุด</button>
+    </section>
+
+    <section id="pr-step-result" hidden>
+      <h2>6. ผลการส่ง</h2>
+      <p id="pr-result-heading">ส่งคะแนนเสร็จแล้ว</p>
+      <dl>
+        <dt>นักเรียน</dt>
+        <dd id="pr-result-students"></dd>
+        <dt>คอลัมน์</dt>
+        <dd id="pr-result-columns"></dd>
+        <dt>สำเร็จ</dt>
+        <dd id="pr-result-written"></dd>
+        <dt>ข้าม ไม่มีคะแนน</dt>
+        <dd id="pr-result-no-score"></dd>
+        <dt>ข้าม มีคะแนนเดิม</dt>
+        <dd id="pr-result-skip-existing"></dd>
+        <dt>คะแนนไม่ถูกต้อง</dt>
+        <dd id="pr-result-invalid"></dd>
+        <dt>ไม่พบนักเรียน</dt>
+        <dd id="pr-result-not-found"></dd>
+        <dt>กำกวม</dt>
+        <dd id="pr-result-ambiguous"></dd>
+        <dt>ล้มเหลว</dt>
+        <dd id="pr-result-failed"></dd>
+      </dl>
+      <table>
+        <thead>
+          <tr>
+            <th>คอลัมน์</th>
+            <th>สำเร็จ</th>
+            <th>ไม่มีคะแนน</th>
+            <th>ข้ามคะแนนเดิม</th>
+            <th>ล้มเหลว</th>
+          </tr>
+        </thead>
+        <tbody id="pr-result-body"></tbody>
+      </table>
+    </section>
+
+    <section id="pr-dev-mode-section">
+      <label>
+        <input type="checkbox" id="pr-dev-mode-toggle" />
+        โหมดนักพัฒนา (รายละเอียดการวินิจฉัย)
+      </label>
       <p class="hint">
         ตั้งค่ารูปแบบ URL/ชื่อหน้าของ SGS ได้ที่ <a href="options.html" target="_blank" rel="noopener">ตั้งค่า</a>
       </p>
     </section>
 
-    <section>
-      <h2>1. โหลด Bridge Payload จาก KrunameClass</h2>
-      <input type="file" id="payload-file" accept="application/json" />
-      <p id="payload-error" class="error" hidden></p>
-    </section>
+    <div id="dev-mode-wrap" hidden>
 
     <section id="preview" hidden>
       <h2>2. ตัวอย่างข้อมูล</h2>
@@ -435,6 +586,8 @@
         เหมือนขั้นตอนที่ 6 ทุกประการ — นี่คือพฤติกรรมที่ตั้งใจไว้ ไม่ใช่ข้อผิดพลาด
       </p>
     </section>
+
+    </div>
 
     <script type="module" src="popup.js"></script>
   </body>

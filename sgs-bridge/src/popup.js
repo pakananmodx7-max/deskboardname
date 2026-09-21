@@ -11,6 +11,7 @@ import {
   inspectPaginationControls,
   readColumnValues,
   readSingleCellRevalidationState,
+  readSingleColumnCellValue,
 } from './content-diagnostic.js'
 import {
   buildCompactStudentGridReport,
@@ -19,7 +20,7 @@ import {
   formatDiagnosticReportForCopy,
 } from './lib/diagnostic-report.js'
 import { matchStudentsToSgs, normalizeStudentCode, normalizeThaiFullName } from './lib/mapping.js'
-import { validateAnySgsBridgePayload } from './lib/payload-validation.js'
+import { SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND, validateAnySgsBridgePayload } from './lib/payload-validation.js'
 import {
   computeSgsRealFillPlan,
   formatSgsExistingScoreDisplay as formatRealExistingScoreDisplay,
@@ -47,7 +48,7 @@ import {
   sgsRowIndexFromKey,
 } from './lib/sgs-table-extraction.js'
 import { describeMatchVerdict, evaluateSubjectClassroomMatch } from './lib/subject-classroom-match.js'
-import { buildFullRosterFromPayload } from './lib/roster.js'
+import { buildFullRosterFromMultiPayload, buildFullRosterFromPayload, buildScoresByStudentIdAndColumnKey } from './lib/roster.js'
 // NEXT PHASE — whole-column writing, now that the guarded single-cell
 // test has passed live. See whole-column-write.js's own doc comment for
 // the full architecture (structural single-column guarantee,
@@ -74,6 +75,19 @@ import {
 // and renders whatever state background.js reports, so only these two
 // display-facing helpers are still needed here.
 import { buildAutoRunPreRunSummary, buildAutoRunReport, emptyAutoRunSummary, isPaginationReadyForAutoRun, PAGINATION_UNKNOWN_MESSAGE } from './lib/auto-run.js'
+import { attachOutcomesToColumnPlans, executeSequentialColumnRun } from './lib/multi-column-executor.js'
+import {
+  applyManualColumnMapping,
+  autoMatchColumns,
+  buildMultiColumnPlan,
+  buildSequentialWriteInstructions,
+  COLUMN_MAPPING_STATUS,
+  evaluateAllStudentsVisibleGate,
+  evaluateColumnMappingReadiness,
+  evaluateMultiColumnRunPreconditions,
+  summarizeMultiColumnPreview,
+  summarizeMultiColumnRun,
+} from './lib/multi-column-run.js'
 import { buildPaginationDiagnosticReport, buildPaginationHintsFromInspection } from './lib/pagination-control.js'
 import { AR_MESSAGE, CONTENT_SCRIPT_UNAVAILABLE_MESSAGE, isPaginationHydrationValid, PAGINATION_HYDRATION_FAILED_MESSAGE } from './lib/run-orchestrator.js'
 import { loadVerifiedSgsTabId, resolveConnectedSgsTab, saveVerifiedSgsTab } from './lib/sgs-tab-connection.js'
@@ -561,8 +575,20 @@ async function loadPayloadFromFile(file) {
     return
   }
 
-  loadedPayload = normalizeLoadedPayload(parsed)
-  renderPreview(loadedPayload)
+  // PRODUCTION workflow (step 1) — both payload families feed the
+  // production path; a multi-column payload additionally carries several
+  // score columns at once. The legacy single-column preview below stays
+  // for โหมดนักพัฒนา and is only built for a payload that has a
+  // targetColumn at all.
+  prPayload = prBuildFromPayload(parsed)
+  prRenderPayloadSummary()
+
+  if (parsed?.kind === SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND) {
+    loadedPayload = null
+  } else {
+    loadedPayload = normalizeLoadedPayload(parsed)
+    renderPreview(loadedPayload)
+  }
   // Session storage only — cleared when the browser closes, never
   // synced, never contains a credential (validateAnySgsBridgePayload
   // above already rejects any payload that does). Purely a convenience
@@ -2342,10 +2368,12 @@ chrome.runtime.onMessage.addListener((message) => {
 async function restoreSessionPayload() {
   const stored = await chrome.storage.session.get(SESSION_PAYLOAD_KEY)
   const payload = stored[SESSION_PAYLOAD_KEY]
-  if (payload && validateAnySgsBridgePayload(payload).validation.ok) {
-    loadedPayload = normalizeLoadedPayload(payload)
-    renderPreview(loadedPayload)
-  }
+  if (!payload || !validateAnySgsBridgePayload(payload).validation.ok) return
+  prPayload = prBuildFromPayload(payload)
+  prRenderPayloadSummary()
+  if (payload.kind === SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND) return
+  loadedPayload = normalizeLoadedPayload(payload)
+  renderPreview(loadedPayload)
 }
 
 /**
@@ -2367,3 +2395,425 @@ void restoreSessionPayload().then(() => restoreAutoRunStateFromBackground())
 // a fresh click) still shows the last startup-trace checkpoint reached,
 // not just whatever this fresh popup instance happens to broadcast live.
 void refreshStartupTraceFromBackground()
+
+// ==================================================
+// PRODUCTION SINGLE-PAGE, MULTI-COLUMN WORKFLOW
+// The teacher-facing path: load scores -> check SGS (whole classroom on
+// ONE page) -> tick one or more SGS columns -> confirm ONE preview ->
+// send, column by column, cell by cell, each write verified by its own
+// immediate read-back. Everything above this block is the older
+// diagnostic/prototype UI, now reachable only via "โหมดนักพัฒนา".
+//
+// NO automatic page navigation exists in this path at all: production
+// mode REQUIRES every student to be visible at once (see
+// evaluateAllStudentsVisibleGate) and refuses to run otherwise.
+// ==================================================
+
+const prDevModeToggle = document.getElementById('pr-dev-mode-toggle')
+const devModeWrap = document.getElementById('dev-mode-wrap')
+const prStepScan = document.getElementById('pr-step-scan')
+const prStepColumns = document.getElementById('pr-step-columns')
+const prStepPreview = document.getElementById('pr-step-preview')
+const prStepProgress = document.getElementById('pr-step-progress')
+const prStepResult = document.getElementById('pr-step-result')
+const prPayloadSummary = document.getElementById('pr-payload-summary')
+const prScanBtn = document.getElementById('pr-scan-btn')
+const prScanSummary = document.getElementById('pr-scan-summary')
+const prScanError = document.getElementById('pr-scan-error')
+const prColumnList = document.getElementById('pr-column-list')
+const prSelectAllBtn = document.getElementById('pr-select-all')
+const prClearAllBtn = document.getElementById('pr-clear-all')
+const prMappingWrap = document.getElementById('pr-mapping-wrap')
+const prMappingBody = document.getElementById('pr-mapping-body')
+const prMappingError = document.getElementById('pr-mapping-error')
+const prOverwriteCheckbox = document.getElementById('pr-overwrite')
+const prPreviewBtn = document.getElementById('pr-preview-btn')
+const prPreviewBody = document.getElementById('pr-preview-body')
+const prPreviewError = document.getElementById('pr-preview-error')
+const prConfirmCheckbox = document.getElementById('pr-confirm')
+const prSendBtn = document.getElementById('pr-send-btn')
+const prStopBtn = document.getElementById('pr-stop-btn')
+const prResultBody = document.getElementById('pr-result-body')
+
+/** Everything the production run needs, rebuilt from scratch by each
+ * fresh scan — never carried over from a previous scan. */
+let prPayload = null
+let prScan = null
+let prSelectedColumnKeys = []
+let prManualMapping = {}
+let prColumnPlans = null
+let prStopRequested = false
+
+function prSetText(id, value) {
+  const el = document.getElementById(id)
+  if (el) el.textContent = String(value)
+}
+
+prDevModeToggle.addEventListener('change', () => {
+  devModeWrap.hidden = !prDevModeToggle.checked
+})
+
+/**
+ * Both payload families feed the SAME production workflow: the
+ * multi-column payload contributes its own columns directly, and a
+ * single-column payload is treated as a one-column case rather than
+ * being rejected — so an existing export keeps working unchanged.
+ */
+function prBuildFromPayload(raw) {
+  if (raw?.kind === SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND) {
+    return {
+      subjectName: raw.subject.name,
+      classroomName: raw.classroom.name,
+      columns: raw.columns,
+      roster: buildFullRosterFromMultiPayload(raw),
+      scoresByStudentIdAndColumnKey: buildScoresByStudentIdAndColumnKey(raw),
+    }
+  }
+
+  const normalized = normalizeLoadedPayload(raw)
+  const roster = buildFullRosterFromPayload(normalized)
+  const columnKey = normalized.targetColumn.key
+  const scores = {}
+  for (const student of roster) scores[student.studentId] = { [columnKey]: student.score }
+  return {
+    subjectName: normalized.subjectName,
+    classroomName: normalized.classroomName,
+    columns: [normalized.targetColumn],
+    roster: roster.map((s) => ({ studentId: s.studentId, studentNumber: s.studentNumber, studentCode: s.studentCode, fullName: s.fullName })),
+    scoresByStudentIdAndColumnKey: scores,
+  }
+}
+
+function prRenderPayloadSummary() {
+  if (!prPayload) return
+  prSetText('pr-subject', prPayload.subjectName)
+  prSetText('pr-classroom', prPayload.classroomName)
+  prSetText('pr-student-count', prPayload.roster.length)
+  prSetText('pr-kruname-column-count', prPayload.columns.length)
+  prPayloadSummary.hidden = false
+  prStepScan.hidden = false
+}
+
+/**
+ * Step 2 — ONE fresh scan of the live page, which also reads each
+ * writable column's existing values so the preview can honestly say
+ * what will be skipped. The all-students-visible gate is checked here
+ * and blocks everything downstream: production mode never turns an SGS
+ * page itself.
+ */
+async function prRunScan() {
+  prScanError.hidden = true
+  prStepColumns.hidden = true
+  prStepPreview.hidden = true
+  prStepResult.hidden = true
+
+  const tab = await getActiveTab()
+  const { facts, candidate } = await performLiveGridScan()
+  if (!candidate) {
+    prScanError.textContent = 'ไม่พบตารางคะแนนนักเรียนในหน้านี้ — กรุณาเปิดหน้ากรอกคะแนนของ SGS'
+    prScanError.hidden = false
+    return
+  }
+
+  const visibleStudentRows = candidate.run.length
+  // SGS's own reported total when it has a pager at all. A page with NO
+  // pager (every student already on one page, which is exactly the
+  // production setup) reports no total, and there the visible rows ARE
+  // the whole classroom — never a guess that papers over a real pager
+  // saying otherwise, which is the case the gate below exists to catch.
+  const totalStudentRows = currentPagination?.totalStudentRows ?? visibleStudentRows
+  const gate = evaluateAllStudentsVisibleGate({ visibleStudentRows, totalStudentRows })
+
+  const writableColumns = candidate.writableScoreColumns.map((column) => ({
+    key: column.key,
+    label: column.label,
+    columnIndex: column.columnIndex,
+    maxScore: column.maxScore,
+  }))
+
+  // Existing values, per writable column — read only, one call each.
+  const existingScoresByColumnKey = {}
+  for (const column of writableColumns) {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: readColumnValues,
+      args: [candidate.tableIndex, candidate.run.startIndex, candidate.run.length, column.columnIndex],
+    })
+    const values = injection.result?.found ? injection.result.values : {}
+    const byRowKey = {}
+    for (const [offsetText, value] of Object.entries(values)) byRowKey[buildSgsRowKey(Number(offsetText))] = value
+    existingScoresByColumnKey[column.key] = byRowKey
+  }
+
+  const sgsCandidates = extractSgsStudentCandidates(
+    facts.tables.find((t) => t.tableIndex === candidate.tableIndex),
+    candidate.run,
+    candidate.identifierColumns,
+  )
+  const mappingResults = matchStudentsToSgs(prPayload.roster, sgsCandidates)
+
+  prScan = {
+    tabId: tab.id,
+    tableIndex: candidate.tableIndex,
+    runStartIndex: candidate.run.startIndex,
+    subjectFilterText: facts.subjectFilter?.selectedText ?? null,
+    classroomFilterText: facts.classroomFilter?.selectedText ?? null,
+    writableColumns,
+    existingScoresByColumnKey,
+    mappingResults,
+    gate,
+  }
+
+  prSetText('pr-sgs-context', `${prScan.subjectFilterText ?? 'ไม่ทราบ'} / ${prScan.classroomFilterText ?? 'ไม่ทราบ'}`)
+  prSetText('pr-visible-count', `${gate.visible ?? '?'} / ${gate.total ?? '?'}${gate.ok ? ' (พร้อม)' : ''}`)
+  prSetText('pr-writable-count', writableColumns.length)
+  prScanSummary.hidden = false
+
+  if (!gate.ok) {
+    prScanError.textContent = gate.reason
+    prScanError.hidden = false
+    return
+  }
+
+  prSelectedColumnKeys = []
+  prManualMapping = {}
+  prRenderColumnPicker()
+  prStepColumns.hidden = false
+}
+
+/** Step 3 — CHECKBOX multi-select (never radio: several columns go in
+ * one run), plus select-all/clear-all. */
+function prRenderColumnPicker() {
+  prColumnList.replaceChildren()
+  for (const column of prScan.writableColumns) {
+    const label = document.createElement('label')
+    // This extension's OWN checkbox, created here in the popup — never
+    // an element read from or written into the SGS page.
+    const prColumnCheckbox = document.createElement('input')
+    prColumnCheckbox.type = 'checkbox'
+    prColumnCheckbox.value = column.key
+    prColumnCheckbox.checked = prSelectedColumnKeys.includes(column.key)
+    prColumnCheckbox.addEventListener('change', () => {
+      prSelectedColumnKeys = prColumnCheckbox.checked
+        ? [...prSelectedColumnKeys, column.key]
+        : prSelectedColumnKeys.filter((key) => key !== column.key)
+      prRenderMapping()
+    })
+    label.append(prColumnCheckbox, document.createTextNode(` ${column.label} (เต็ม ${column.maxScore ?? 'ไม่ทราบ'})`))
+    const wrap = document.createElement('div')
+    wrap.append(label)
+    prColumnList.append(wrap)
+  }
+  prRenderMapping()
+}
+
+function prCurrentMatches() {
+  return applyManualColumnMapping(autoMatchColumns(prPayload.columns, prScan.writableColumns), prManualMapping)
+}
+
+/** Step 6 — the KrunameClass -> SGS pairing, with an explicit chooser
+ * wherever the automatic match was not unambiguous. */
+function prRenderMapping() {
+  const matches = prCurrentMatches()
+  prMappingBody.replaceChildren()
+
+  for (const match of matches) {
+    const relevant = match.sgsColumnKey
+      ? prSelectedColumnKeys.includes(match.sgsColumnKey)
+      : match.candidates.some((key) => prSelectedColumnKeys.includes(key))
+    if (!relevant && match.status !== COLUMN_MAPPING_STATUS.AMBIGUOUS) continue
+
+    const row = document.createElement('tr')
+    const source = document.createElement('td')
+    source.textContent = match.krunameColumnLabel
+    const target = document.createElement('td')
+
+    if (match.status === COLUMN_MAPPING_STATUS.AUTO || match.status === COLUMN_MAPPING_STATUS.MANUAL) {
+      const column = prScan.writableColumns.find((c) => c.key === match.sgsColumnKey)
+      target.textContent = column ? `${column.label} (เต็ม ${column.maxScore ?? 'ไม่ทราบ'})` : 'ไม่พบ'
+    } else {
+      // Never guessed — the teacher chooses.
+      const select = document.createElement('select')
+      const blank = document.createElement('option')
+      blank.value = ''
+      blank.textContent = 'เลือกคอลัมน์ SGS'
+      select.append(blank)
+      for (const column of prScan.writableColumns) {
+        const option = document.createElement('option')
+        option.value = column.key
+        option.textContent = `${column.label} (เต็ม ${column.maxScore ?? 'ไม่ทราบ'})`
+        select.append(option)
+      }
+      select.value = prManualMapping[match.krunameColumnKey] ?? ''
+      select.addEventListener('change', () => {
+        prManualMapping = { ...prManualMapping, [match.krunameColumnKey]: select.value }
+        prRenderMapping()
+      })
+      target.append(select)
+    }
+
+    row.append(source, target)
+    prMappingBody.append(row)
+  }
+
+  prMappingWrap.hidden = prMappingBody.childElementCount === 0
+
+  const readiness = evaluateColumnMappingReadiness(matches, prSelectedColumnKeys)
+  prMappingError.textContent = readiness.reason ?? ''
+  prMappingError.hidden = readiness.ok
+  prPreviewBtn.disabled = !readiness.ok
+}
+
+/** Step 7 — the ONE preview shown before anything is written. */
+function prRenderPreview() {
+  const matches = prCurrentMatches()
+  const selectedColumns = prScan.writableColumns.filter((column) => prSelectedColumnKeys.includes(column.key))
+
+  prColumnPlans = buildMultiColumnPlan({
+    roster: prPayload.roster,
+    scoresByStudentIdAndColumnKey: prPayload.scoresByStudentIdAndColumnKey,
+    mappingResults: prScan.mappingResults,
+    matches,
+    selectedSgsColumns: selectedColumns,
+    existingScoresByColumnKey: prScan.existingScoresByColumnKey,
+    overwriteMode: prOverwriteCheckbox.checked ? 'overwrite_selected_column' : 'skip_existing',
+  })
+
+  const preview = summarizeMultiColumnPreview(prColumnPlans)
+  prSetText('pr-preview-subject', prPayload.subjectName)
+  prSetText('pr-preview-classroom', prPayload.classroomName)
+  prSetText('pr-preview-students', `${prScan.gate.visible} / ${prScan.gate.total}`)
+  prSetText('pr-preview-columns', preview.columns)
+  prSetText('pr-preview-to-write', preview.toWrite)
+  prSetText('pr-preview-no-score', preview.noScore)
+  prSetText('pr-preview-skip-existing', preview.skippedExisting)
+  prSetText('pr-preview-would-overwrite', preview.wouldOverwrite)
+
+  prPreviewBody.replaceChildren()
+  for (const column of preview.perColumn) {
+    const row = document.createElement('tr')
+    for (const value of [column.krunameColumnLabel ?? '-', column.sgsColumnLabel, column.toWrite, column.noScore, column.skippedExisting]) {
+      const cell = document.createElement('td')
+      cell.textContent = String(value)
+      row.append(cell)
+    }
+    prPreviewBody.append(row)
+  }
+
+  const decision = evaluateMultiColumnRunPreconditions({
+    visibilityGate: prScan.gate,
+    mappingReadiness: evaluateColumnMappingReadiness(matches, prSelectedColumnKeys),
+    columnPlans: prColumnPlans,
+  })
+  prPreviewError.textContent = decision.reason ?? ''
+  prPreviewError.hidden = decision.ok
+  prConfirmCheckbox.checked = false
+  prSendBtn.disabled = true
+  prStepPreview.hidden = false
+  prStepPreview.dataset.ok = decision.ok ? 'true' : 'false'
+}
+
+/**
+ * Step 9 — the sequential run itself. popup.js performs each cell's
+ * write and its own immediate read-back through the SAME already-audited
+ * content-diagnostic.js functions the rest of this file uses, one cell
+ * at a time, driven by executeSequentialColumnRun's instruction order:
+ * column A fully (every student verified) before column B begins.
+ */
+async function prSendScores() {
+  prStopRequested = false
+  prSendBtn.disabled = true
+  prStepProgress.hidden = false
+  prStepResult.hidden = true
+
+  const instructions = buildSequentialWriteInstructions(prColumnPlans)
+  const totalCells = instructions.filter((i) => i.kind === 'WRITE_CELL').length
+  let done = 0
+
+  const { outcomesByColumnKey } = await executeSequentialColumnRun({
+    instructions,
+    diagnostic: {
+      fillSgsColumnValues: (tableIndex, runStartIndex, columnIndex, writesByOffset) =>
+        prExecuteInPage(fillSgsColumnValues, [tableIndex, runStartIndex, columnIndex, writesByOffset]),
+      readSingleColumnCellValue: (tableIndex, rowIndex, columnIndex) =>
+        prExecuteInPage(readSingleColumnCellValue, [tableIndex, rowIndex, columnIndex]),
+    },
+    // Each write/read is its own executeScript round trip, which is
+    // already a real async boundary — no extra settle delay needed.
+    settle: null,
+    tableIndex: prScan.tableIndex,
+    runStartIndex: prScan.runStartIndex,
+    shouldStop: () => prStopRequested,
+    onEvent: (event) => {
+      if (event.type === 'COLUMN_BEGIN') prSetText('pr-progress-column', `กำลังส่งคอลัมน์: ${event.sgsColumnLabel}`)
+      if (event.type === 'CELL_WRITTEN' || event.type === 'CELL_FAILED') {
+        done += 1
+        prSetText('pr-progress-cells', `เขียนแล้ว ${done} / ${totalCells} ช่อง`)
+      }
+    },
+  })
+
+  prRenderResult(outcomesByColumnKey)
+}
+
+/** Every DOM touch goes through one executeScript call against the SAME
+ * verified tab the scan used — never a re-resolved "current" tab. */
+async function prExecuteInPage(fn, args) {
+  const [injection] = await chrome.scripting.executeScript({ target: { tabId: prScan.tabId }, func: fn, args })
+  return injection.result
+}
+
+/** Step 12 — the final report, totals plus one line per column. */
+function prRenderResult(outcomesByColumnKey) {
+  const report = summarizeMultiColumnRun(attachOutcomesToColumnPlans(prColumnPlans, outcomesByColumnKey))
+  prSetText('pr-result-students', prPayload.roster.length)
+  prSetText('pr-result-columns', report.columns)
+  prSetText('pr-result-written', report.written)
+  prSetText('pr-result-no-score', report.skippedNoScore)
+  prSetText('pr-result-skip-existing', report.skippedExisting)
+  prSetText('pr-result-invalid', report.invalidScore)
+  prSetText('pr-result-not-found', report.notFound)
+  prSetText('pr-result-ambiguous', report.ambiguous)
+  prSetText('pr-result-failed', report.failed)
+
+  prResultBody.replaceChildren()
+  for (const column of report.perColumn) {
+    const row = document.createElement('tr')
+    for (const value of [column.sgsColumnLabel, column.written, column.skippedNoScore, column.skippedExisting, column.failed]) {
+      const cell = document.createElement('td')
+      cell.textContent = String(value)
+      row.append(cell)
+    }
+    prResultBody.append(row)
+  }
+
+  prStepProgress.hidden = true
+  prStepResult.hidden = false
+}
+
+prScanBtn.addEventListener('click', () => {
+  void prRunScan()
+})
+prSelectAllBtn.addEventListener('click', () => {
+  prSelectedColumnKeys = prScan ? prScan.writableColumns.map((column) => column.key) : []
+  prRenderColumnPicker()
+})
+prClearAllBtn.addEventListener('click', () => {
+  prSelectedColumnKeys = []
+  prRenderColumnPicker()
+})
+prOverwriteCheckbox.addEventListener('change', () => {
+  if (!prStepPreview.hidden) prRenderPreview()
+})
+prPreviewBtn.addEventListener('click', () => {
+  prRenderPreview()
+})
+prConfirmCheckbox.addEventListener('change', () => {
+  prSendBtn.disabled = !(prConfirmCheckbox.checked && prStepPreview.dataset.ok === 'true')
+})
+prSendBtn.addEventListener('click', () => {
+  void prSendScores()
+})
+prStopBtn.addEventListener('click', () => {
+  prStopRequested = true
+})

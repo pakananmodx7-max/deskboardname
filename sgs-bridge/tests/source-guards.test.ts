@@ -612,10 +612,15 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
 
   it('NEXT PHASE: readColumnValues is invoked exactly three times — the read-only section-4 preview, the whole-column page scan (existing scores for the preview table), and the whole-column write\'s own post-write verification read-back — the single-cell path uses its own atomic read instead (see below)', () => {
     const allCalls = [...source.matchAll(/func:\s*readColumnValues,[\s\S]*?args:\s*\[([^\]]*)\]/g)]
-    expect(allCalls.length).toBe(3)
+    // Four now: the three legacy (dev-mode) reads below, plus the
+    // PRODUCTION scan's own per-writable-column read of existing values,
+    // which is what lets its single preview say honestly what will be
+    // skipped. Every one of them is READ-ONLY and scoped to one column.
+    expect(allCalls.length).toBe(4)
     expect(allCalls[0][1]).toMatch(/tableIndex, run\.startIndex, run\.length, confirmedRealColumn\.columnIndex/)
     expect(allCalls[1][1]).toMatch(/candidate\.tableIndex, candidate\.run\.startIndex, candidate\.run\.length, column\.columnIndex/)
     expect(allCalls[2][1]).toMatch(/context\.tableIndex, context\.run\.startIndex, context\.run\.length, context\.columnIndex/)
+    expect(allCalls[3][1]).toMatch(/candidate\.tableIndex, candidate\.run\.startIndex, candidate\.run\.length, column\.columnIndex/)
   })
 
   it('readSingleCellRevalidationState is invoked exactly twice: once for the single-cell preview, once as the write-time stale-DOM revalidation — never a range, always the SAME one row/column', () => {
@@ -910,6 +915,11 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
       'arOverwriteCheckbox',
       'arConfirmSubjectClassroomCheckbox',
       'arConfirmAutosaveCheckbox',
+      // PRODUCTION workflow — both are elements this popup creates/owns
+      // itself (the column multi-select checkbox it renders, and its own
+      // final confirmation box), never anything on the SGS page.
+      'prColumnCheckbox',
+      'prConfirmCheckbox',
     ]
     for (const [, target, rhs] of checkedAssignments) {
       expect(target === 'input' || ownConsentCheckboxes.includes(target)).toBe(true)
@@ -921,6 +931,12 @@ describe('popup.js — never sends the loaded payload or diagnostic report anywh
         // reopen (item 4/5) — still this extension's OWN stored state,
         // never anything read from the SGS page itself.
         const isRestoredOverwriteChoice = target === 'arOverwriteCheckbox' && rhs.trim() === "state.overwriteMode === 'overwrite_selected_column'"
+        // The production column picker re-renders from this popup's own
+        // selection list — still never a value read from the SGS page.
+        if (target === 'prColumnCheckbox') {
+          expect(rhs.trim()).toBe('prSelectedColumnKeys.includes(column.key)')
+          continue
+        }
         expect(rhs.trim() === 'false' || isRestoredOverwriteChoice).toBe(true)
       }
     }
@@ -1469,5 +1485,106 @@ describe('TRUE unattended auto-run — content-script.js: registered only for th
     expect(writeStartIndex).toBeGreaterThan(-1)
     expect(doneIndex).toBeGreaterThan(writeStartIndex)
     expect(advanceCallIndex).toBeGreaterThan(doneIndex)
+  })
+})
+
+describe('PRODUCTION single-page, multi-column workflow — the teacher-facing UI', () => {
+  const html = read('../src/popup.html')
+  const popup = read('../src/popup.js')
+
+  /** Everything before the dev-mode wrapper is what a normal teacher
+   * sees; everything inside it is diagnostics. */
+  const productionHtml = html.slice(0, html.indexOf('<div id="dev-mode-wrap"'))
+  const devHtml = html.slice(html.indexOf('<div id="dev-mode-wrap"'))
+
+  it('shows exactly the six production steps, in order', () => {
+    const headings = [...productionHtml.matchAll(/<h2>([^<]+)<\/h2>/g)].map((m) => m[1].trim())
+    expect(headings).toEqual([
+      '1. โหลดข้อมูลคะแนน',
+      '2. ตรวจสอบ SGS',
+      '3. เลือกคอลัมน์คะแนน',
+      '4. ตรวจสอบก่อนส่ง',
+      '5. ส่งคะแนน',
+      '6. ผลการส่ง',
+    ])
+  })
+
+  it('MULTI-SELECT: the production column picker is built from CHECKBOXES, never radio buttons, and offers เลือกทั้งหมด/ยกเลิกทั้งหมด', () => {
+    const picker = popup.slice(popup.indexOf('function prRenderColumnPicker'), popup.indexOf('function prCurrentMatches'))
+    expect(picker).toContain("prColumnCheckbox.type = 'checkbox'")
+    expect(picker).not.toContain("'radio'")
+    expect(productionHtml).toContain('id="pr-select-all"')
+    expect(productionHtml).toContain('id="pr-clear-all"')
+    expect(productionHtml).toContain('เลือกทั้งหมด')
+    expect(productionHtml).toContain('ยกเลิกทั้งหมด')
+  })
+
+  it('the production UI carries no Dry Run / prototype / verbose-JSON / single-cell-test wording at all', () => {
+    for (const forbidden of ['Dry Run', 'dry-run', 'โหมดทดลอง', 'prototype', 'verbose', 'ทดสอบทีละ 1 ช่อง', 'อัตโนมัติ (ทุกหน้า)']) {
+      expect(productionHtml).not.toContain(forbidden)
+    }
+    expect(html).not.toContain('SGS Bridge — โหมดทดลอง (Dry Run)')
+  })
+
+  it('every diagnostic/prototype control still EXISTS but only behind โหมดนักพัฒนา — never deleted, never on the normal path', () => {
+    expect(productionHtml).toContain('โหมดนักพัฒนา')
+    for (const devOnly of [
+      'id="ar-inspect-pagination-btn"',
+      'id="diagnostic-verbose-run"',
+      'id="single-cell-test-wrap"',
+      'id="auto-run-wrap"',
+      'id="ar-pagination-diagnostic-output"',
+    ]) {
+      expect(devHtml).toContain(devOnly)
+      expect(productionHtml).not.toContain(devOnly)
+    }
+    expect(popup).toMatch(/prDevModeToggle\.addEventListener\('change'[\s\S]{0,160}devModeWrap\.hidden = !prDevModeToggle\.checked/)
+  })
+
+  it('NO AUTOMATIC PAGE NAVIGATION in production: the production controller never clicks a pagination control or starts the multi-page auto-run', () => {
+    const production = popup.slice(popup.indexOf('// PRODUCTION SINGLE-PAGE, MULTI-COLUMN WORKFLOW'))
+    expect(production).not.toContain('clickPaginationControl')
+    expect(production).not.toContain('findSgsNextPageControl')
+    expect(production).not.toMatch(/AR_MESSAGE\.(START|KICKOFF|RESUME)/)
+  })
+
+  it('the all-students-visible gate runs during the scan and blocks the column picker when it fails', () => {
+    const scan = popup.slice(popup.indexOf('async function prRunScan'), popup.indexOf('function prRenderColumnPicker'))
+    expect(scan).toContain('evaluateAllStudentsVisibleGate({ visibleStudentRows, totalStudentRows })')
+    const gateIndex = scan.indexOf('if (!gate.ok)')
+    const showColumnsIndex = scan.indexOf('prStepColumns.hidden = false')
+    expect(gateIndex).toBeGreaterThan(-1)
+    expect(showColumnsIndex).toBeGreaterThan(gateIndex)
+    expect(scan).toMatch(/if \(!gate\.ok\) \{[\s\S]{0,200}return\s*\n\s*\}/)
+  })
+
+  it('OVERWRITE IS OPT-IN: the production run defaults to skip_existing and only overwrites when the teacher ticks the box', () => {
+    expect(productionHtml).toContain('id="pr-overwrite"')
+    expect(productionHtml).toContain('เขียนทับคะแนนเดิม')
+    expect(popup).toContain("prOverwriteCheckbox.checked ? 'overwrite_selected_column' : 'skip_existing'")
+    // The box itself is never pre-ticked in the markup.
+    expect(productionHtml).not.toMatch(/id="pr-overwrite"[^>]*checked/)
+  })
+
+  it('SEQUENTIAL BY COLUMN: the production send drives executeSequentialColumnRun, writing ONE cell per call through the audited DOM helpers', () => {
+    const send = popup.slice(popup.indexOf('async function prSendScores'), popup.indexOf('async function prExecuteInPage'))
+    expect(send).toContain('buildSequentialWriteInstructions(prColumnPlans)')
+    expect(send).toContain('executeSequentialColumnRun({')
+    expect(send).toContain('fillSgsColumnValues')
+    expect(send).toContain('readSingleColumnCellValue')
+    // Never the whole-column batch builder.
+    expect(send).not.toContain('buildWholeColumnWriteInstructions')
+  })
+
+  it('requires an explicit confirmation before the send button can ever be enabled', () => {
+    expect(productionHtml).toContain('id="pr-confirm"')
+    expect(popup).toMatch(/prSendBtn\.disabled = !\(prConfirmCheckbox\.checked && prStepPreview\.dataset\.ok === 'true'\)/)
+    expect(productionHtml).toMatch(/id="pr-send-btn" disabled/)
+  })
+
+  it('every DOM touch in the production run targets the SAME tab the scan verified — never a re-resolved "current" tab', () => {
+    const exec = popup.slice(popup.indexOf('async function prExecuteInPage'), popup.indexOf('function prRenderResult'))
+    expect(exec).toContain('target: { tabId: prScan.tabId }')
+    expect(exec).not.toContain('getActiveTab()')
   })
 })

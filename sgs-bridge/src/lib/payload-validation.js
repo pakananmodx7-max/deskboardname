@@ -138,10 +138,101 @@ export function validateSgsScoreWorkspacePayload(raw) {
  * outright, so an already-downloaded v2 file keeps working.
  */
 export function validateAnySgsBridgePayload(raw) {
+  if (typeof raw === 'object' && raw !== null && raw.kind === SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND) {
+    return { kind: SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND, validation: validateSgsScoreWorkspaceMultiPayload(raw) }
+  }
   if (typeof raw === 'object' && raw !== null && raw.kind === SGS_SCORE_WORKSPACE_PAYLOAD_KIND) {
     return { kind: SGS_SCORE_WORKSPACE_PAYLOAD_KIND, validation: validateSgsScoreWorkspacePayload(raw) }
   }
   return { kind: 'assignment', validation: validateSgsBridgePayload(raw) }
+}
+
+/** The PRODUCTION multi-column payload family — several SGS score
+ * columns plus each student's score PER COLUMN, sent in one run. Mirrors
+ * the web app's own validateSgsScoreWorkspaceMultiPayload so a file this
+ * extension accepts is exactly a file that app produces: `null` stays a
+ * meaningful "no score entered" (never collapsed with a real 0), and
+ * every score is checked against ITS OWN column's max. */
+export const SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND = 'sgs_score_workspace_multi'
+export const SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_VERSION = 1
+
+export function validateSgsScoreWorkspaceMultiPayload(raw) {
+  const errors = []
+  if (typeof raw !== 'object' || raw === null) {
+    return { ok: false, errors: ['payload ต้องเป็น object'] }
+  }
+
+  if (raw.kind !== SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND) {
+    errors.push(`kind ไม่ถูกต้อง (คาดหวัง ${SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_KIND})`)
+  }
+  if (raw.version !== SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_VERSION) {
+    errors.push(`version ไม่ถูกต้อง (คาดหวัง ${SGS_SCORE_WORKSPACE_MULTI_PAYLOAD_VERSION})`)
+  }
+  if (typeof raw.subject !== 'object' || raw.subject === null || typeof raw.subject.name !== 'string' || raw.subject.name.trim() === '') {
+    errors.push('subject.name ต้องเป็นข้อความที่ไม่ว่าง')
+  }
+  if (typeof raw.classroom !== 'object' || raw.classroom === null || typeof raw.classroom.name !== 'string' || raw.classroom.name.trim() === '') {
+    errors.push('classroom.name ต้องเป็นข้อความที่ไม่ว่าง')
+  }
+
+  const maxScoreByKey = new Map()
+  if (!Array.isArray(raw.columns) || raw.columns.length === 0) {
+    errors.push('columns ต้องเป็น array และมีอย่างน้อย 1 คอลัมน์')
+  } else {
+    raw.columns.forEach((column, index) => {
+      if (typeof column?.key !== 'string' || column.key.trim() === '') {
+        errors.push(`columns[${index}].key ต้องเป็นข้อความที่ไม่ว่าง`)
+        return
+      }
+      if (typeof column.label !== 'string' || column.label.trim() === '') {
+        errors.push(`columns[${index}].label ต้องเป็นข้อความที่ไม่ว่าง`)
+      }
+      if (typeof column.maxScore !== 'number' || !Number.isFinite(column.maxScore) || column.maxScore <= 0) {
+        errors.push(`columns[${index}].maxScore ต้องเป็นตัวเลขมากกว่า 0`)
+        return
+      }
+      if (maxScoreByKey.has(column.key)) {
+        errors.push(`columns[${index}].key ซ้ำกับคอลัมน์อื่น (${column.key})`)
+        return
+      }
+      maxScoreByKey.set(column.key, column.maxScore)
+    })
+  }
+
+  if (!Array.isArray(raw.students)) {
+    errors.push('students ต้องเป็น array')
+  } else {
+    raw.students.forEach((student, index) => {
+      if (typeof student?.studentId !== 'string' || student.studentId.trim() === '') {
+        errors.push(`students[${index}].studentId ต้องเป็นข้อความที่ไม่ว่าง`)
+      }
+      if (typeof student?.fullName !== 'string' || student.fullName.trim() === '') {
+        errors.push(`students[${index}].fullName ต้องเป็นข้อความที่ไม่ว่าง`)
+      }
+      const scores = student?.scoresByColumnKey
+      if (typeof scores !== 'object' || scores === null) {
+        errors.push(`students[${index}].scoresByColumnKey ต้องเป็น object`)
+        return
+      }
+      for (const [key, value] of Object.entries(scores)) {
+        if (value === null) continue
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+          errors.push(`students[${index}].scoresByColumnKey.${key} ต้องเป็นตัวเลขหรือ null`)
+          continue
+        }
+        if (value < 0) {
+          errors.push(`students[${index}].scoresByColumnKey.${key} ต้องไม่ติดลบ`)
+          continue
+        }
+        const max = maxScoreByKey.get(key)
+        if (max !== undefined && value > max) {
+          errors.push(`students[${index}].scoresByColumnKey.${key} (${value}) เกินคะแนนเต็มของคอลัมน์ (${max})`)
+        }
+      }
+    })
+  }
+
+  return { ok: errors.length === 0, errors }
 }
 
 export function validateSgsBridgePayload(raw) {
