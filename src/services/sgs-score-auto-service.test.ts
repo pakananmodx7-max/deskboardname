@@ -7,10 +7,11 @@ import { describe, expect, it } from 'vitest'
 import {
   afterSourceScoresSaved,
   convertSgsScoreColumnToAuto,
-  countSgsOverrideCells,
+  countSgsTeacherSetCells,
   createSgsAutoRecalculationScheduler,
   describeSgsAutoRecalculationResult,
-  describeSgsConvertToAutoConfirmation,
+  describeSgsUseAutoForColumnConfirmation,
+  isSgsColumnEligibleForAuto,
   planSgsAutoRecalculationValues,
   planSgsColumnConvertToAuto,
   recalculateSgsCellFromSources,
@@ -253,13 +254,31 @@ describe('2. cell source details', () => {
 // 3. Legacy override -> AUTO
 // ==================================================
 
-describe('3. legacy override → AUTO ("เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ")', () => {
-  it('confirmation text states the affected count', () => {
-    expect(describeSgsConvertToAutoConfirmation(3)).toBe(
-      'คะแนนที่ครูกำหนดเองของนักเรียน 3 คนจะถูกล้าง และระบบจะคำนวณคะแนนใหม่จากงานที่เชื่อมไว้',
+describe('3. legacy override → AUTO ("ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์")', () => {
+  it('confirmation is exactly the three required lines, with N = teacher-set cells (overrides + ยกเลิกการคำนวณ)', () => {
+    expect(describeSgsUseAutoForColumnConfirmation(3)).toBe(
+      'คอลัมน์นี้มีคะแนนที่ครูกำหนดเอง 3 คน\n' +
+        'ระบบจะคำนวณคะแนนใหม่จากงานที่เชื่อมไว้ และใช้คะแนนคำนวณแทนคะแนนเดิม\n' +
+        'หลังจากนี้ เมื่อคะแนนงานเปลี่ยน คะแนน SGS จะอัปเดตตามอัตโนมัติ',
     )
-    const cells = { s1: resolveSgsScoreCell(legacyBackfilled(10)), s2: resolveSgsScoreCell(undefined) }
-    expect(countSgsOverrideCells(cells)).toBe(1)
+    const cells = {
+      s1: resolveSgsScoreCell(legacyBackfilled(10)),
+      s2: resolveSgsScoreCell(applySgsScoreCellAction(undefined, 'suppress_auto')),
+      s3: resolveSgsScoreCell(applySgsScoreRecalculation(undefined, { calculatedScore: 4 }, NOW)),
+      s4: resolveSgsScoreCell(undefined),
+    }
+    expect(countSgsTeacherSetCells(cells)).toBe(2)
+  })
+
+  it('offered only for a column with a runnable saved formula, 0027, and teacher-set cells left', () => {
+    const db = makeDb()
+    const legacy = { s1: resolveSgsScoreCell(legacyBackfilled(10)) }
+    const allAuto = { s1: resolveSgsScoreCell(applySgsScoreRecalculation(undefined, { calculatedScore: 4 }, NOW)) }
+    expect(isSgsColumnEligibleForAuto(db.columns[0], db.formulas.c1, legacy, true)).toBe(true)
+    expect(isSgsColumnEligibleForAuto(db.columns[0], db.formulas.c1, allAuto, true)).toBe(false) // nothing left to convert
+    expect(isSgsColumnEligibleForAuto(db.columns[2], db.formulas.c3, legacy, true)).toBe(false) // no saved formula
+    expect(isSgsColumnEligibleForAuto(db.columns[0], db.formulas.c1, legacy, false)).toBe(false) // 0027 absent
+    expect(isSgsColumnEligibleForAuto(column('c1', 'ช่อง 1', 15), db.formulas.c1, legacy, true)).toBe(false) // max changed
   })
 
   it('recalculates from CURRENT sources, clears the overrides, populates calculated_score; effective = calculated; 0 stays 0', async () => {
@@ -267,7 +286,7 @@ describe('3. legacy override → AUTO ("เปลี่ยนคอลัมน�
     db.cells.c1 = { s1: legacyBackfilled(10), s2: legacyBackfilled(10), s3: legacyBackfilled(8) }
     editSource(db, 'a1', 's1', 0) // live case: 5/5 -> 0/5
 
-    const outcome = await convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1!, {}, depsFor(db))
+    const outcome = await convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1!, depsFor(db))
 
     expect(outcome.overridesCleared).toBe(3)
     expect(db.calls.recalculate).toHaveLength(1)
@@ -282,29 +301,42 @@ describe('3. legacy override → AUTO ("เปลี่ยนคอลัมน�
     const db = makeDb()
     db.cells.c1 = { s1: legacyBackfilled(10), s2: legacyBackfilled(10) }
     editSource(db, 'a1', 's1', null)
-    await convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1!, {}, depsFor(db))
+    await convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1!, depsFor(db))
     expect(effective(db, 'c1', 's1')).toMatchObject({ origin: 'auto', effectiveScore: 0 })
 
     const db2 = makeDb()
     db2.formulas.c1 = { ...proportional('c1', 10, ['a1']), missingScorePolicy: 'exclude' }
     db2.cells.c1 = { s1: legacyBackfilled(10) }
     editSource(db2, 'a1', 's1', null)
-    const outcome = await convertSgsScoreColumnToAuto('sub', 'room', db2.columns[0], db2.formulas.c1!, {}, depsFor(db2))
+    const outcome = await convertSgsScoreColumnToAuto('sub', 'room', db2.columns[0], db2.formulas.c1!, depsFor(db2))
     expect(outcome.becomeEmpty).toBe(1)
     expect(effective(db2, 'c1', 's1')).toMatchObject({ origin: 'empty', effectiveScore: null })
   })
 
-  it('keeps a per-student "ยกเลิกการคำนวณ" and never touches another column', async () => {
+  it('also clears "ยกเลิกการคำนวณ" (every eligible cell becomes AUTO) and never touches another column or any source score', async () => {
     const db = makeDb()
     const suppressed = applySgsScoreCellAction(undefined, 'suppress_auto')!
     db.cells.c1 = { s1: legacyBackfilled(10), s2: suppressed }
     db.cells.c2 = { s1: legacyBackfilled(7) }
-    const before = JSON.stringify(db.cells.c2)
-    await convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1!, {}, depsFor(db))
-    expect(effective(db, 'c1', 's2')).toMatchObject({ origin: 'empty', autoSuppressed: true })
-    expect(JSON.stringify(db.cells.c2)).toBe(before)
+    const c2Before = JSON.stringify(db.cells.c2)
+    const sourcesBefore = JSON.stringify(db.submissions)
+    const outcome = await convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1!, depsFor(db))
+    expect(outcome).toMatchObject({ overridesCleared: 1, suppressedCleared: 1 })
+    expect(effective(db, 'c1', 's2')).toMatchObject({ origin: 'auto', autoSuppressed: false, effectiveScore: 10 })
+    expect(['s1', 's2', 's3'].map((id) => effective(db, 'c1', id).origin)).toEqual(['auto', 'auto', 'auto'])
+    expect(JSON.stringify(db.cells.c2)).toBe(c2Before)
+    expect(JSON.stringify(db.submissions)).toBe(sourcesBefore)
     expect(db.calls.getCells).toEqual([['c1']])
-    expect(db.calls.recalculate.every((c) => c.columnId === 'c1')).toBe(true)
+    expect(db.calls.recalculate.map((c) => c.columnId)).toEqual(['c1'])
+  })
+
+  it('uses the CURRENT saved formula: a formula changed after the legacy values were written drives the result', async () => {
+    const db = makeDb()
+    db.cells.c1 = { s1: legacyBackfilled(10) }
+    db.formulas.c1 = proportional('c1', 10, ['a1', 'a2']) // now 5/5 + 10/10 over 15
+    editSource(db, 'a2', 's1', 0)
+    await convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1, depsFor(db))
+    expect(effective(db, 'c1', 's1')).toMatchObject({ origin: 'auto', effectiveScore: 3.3 })
   })
 
   it('planner: override cells get clearOverride; AUTO cells only a refreshed calculated value; no row + nothing calculable is skipped', () => {
@@ -324,26 +356,31 @@ describe('3. legacy override → AUTO ("เปลี่ยนคอลัมน�
     const db = makeDb()
     db.cells.c1 = { s1: legacyBackfilled(10) }
     const mismatched = column('c1', 'ช่อง 1', 15) // column max changed since the formula was saved
-    await expect(convertSgsScoreColumnToAuto('sub', 'room', mismatched, db.formulas.c1!, {}, depsFor(db))).rejects.toThrow('ตั้งค่าการคำนวณใหม่')
+    await expect(convertSgsScoreColumnToAuto('sub', 'room', mismatched, db.formulas.c1!, depsFor(db))).rejects.toThrow('ตั้งค่าการคำนวณใหม่')
     db.supportsScoreOrigin = false
-    await expect(convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1!, {}, depsFor(db))).rejects.toThrow('0027')
+    await expect(convertSgsScoreColumnToAuto('sub', 'room', db.columns[0], db.formulas.c1!, depsFor(db))).rejects.toThrow('0027')
     expect(db.calls.recalculate).toHaveLength(0)
   })
 
-  it('UI: only reachable through a ConfirmDialog carrying the count', () => {
-    const dialog = readSource('../features/subjects-real/sgs-column-sources-dialog.tsx')
-    expect(dialog).toContain('เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ')
-    expect(dialog).toContain('onClick={() => setConfirmOpen(true)}')
-    const confirm = dialog.slice(dialog.indexOf('<ConfirmDialog'))
-    expect(confirm).toContain('describeSgsConvertToAutoConfirmation(counts.override)')
-    expect(confirm).toContain('await onConvertToAuto()')
-    expect(dialog.match(/onConvertToAuto\(\)/g)).toHaveLength(1)
+  it('UI: ONE header action per eligible column, one simple ยกเลิก/ยืนยัน confirmation, then the workspace refreshes', () => {
+    const tab = readSource('../features/subjects-real/tabs/sgs-scores-tab.tsx')
+    const header = tab.slice(tab.indexOf('{columns.map((column) => ('), tab.indexOf('</th>\n                  ))}'))
+    expect(header).toContain('isSgsColumnEligibleForAuto(column, formulasByColumnId[column.id], resolvedByColumnId[column.id] ?? {}, supportsScoreOrigin)')
+    expect(header).toContain('onClick={() => setAutoColumn(column)}')
+    expect(header).toContain('{SGS_USE_AUTO_FOR_COLUMN_LABEL}')
+    const confirm = tab.slice(tab.indexOf('{autoColumn && ('), tab.indexOf('{sourcesColumn && formulasByColumnId[sourcesColumn.id] && ('))
+    expect(confirm).toContain('<ConfirmDialog')
+    expect(confirm).toContain('describeSgsUseAutoForColumnConfirmation(countSgsTeacherSetCells(resolvedByColumnId[autoColumn.id] ?? {}))')
+    expect(confirm).toContain('confirmLabel="ยืนยัน"')
+    expect(confirm).toContain('onConfirm={() => handleUseAutoForColumn(autoColumn)}')
+    const handler = tab.slice(tab.indexOf('async function handleUseAutoForColumn'), tab.indexOf('const selectedExportColumnIds'))
+    expect(handler.indexOf('await convertSgsScoreColumnToAuto(subjectId, classroomId, column, formula)')).toBeLessThan(handler.indexOf('await Promise.all([refresh(), refreshSources()])'))
+    // No per-student preview, and no second copy of the action anywhere.
+    expect(readSource('../features/subjects-real/sgs-column-sources-dialog.tsx')).not.toContain('ConfirmDialog')
+    expect(readSource('../features/subjects-real/score-calculation-modal.tsx')).not.toContain('doResetToAuto')
+    expect(tab.match(/setAutoColumn\(column\)/g)).toHaveLength(1)
   })
 })
-
-// ==================================================
-// 4 + 5. Automatic recalculation after a source-score save
-// ==================================================
 
 describe('4/5. auto recalculation after a source score changes', () => {
   it('AUTO: 5/5 (10/10) -> 0/5 recalculates the SGS cell to 0 (zero stays zero)', async () => {

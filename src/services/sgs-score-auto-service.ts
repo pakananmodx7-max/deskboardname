@@ -26,9 +26,10 @@ import type { ClassroomStudent } from '@/types/student'
  *   - createSgsAutoRecalculationScheduler: coalesces a burst of saves into
  *     one run per subject+classroom and never runs two at once, so a
  *     later save always triggers a run that reads the newer scores.
- *   - convertSgsScoreColumnToAuto: the teacher's explicit
- *     "เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ" — recalculates from FRESH sources
- *     and clears that column's overrides in ONE atomic RPC call.
+ *   - convertSgsScoreColumnToAuto: the teacher's ONE explicit action
+ *     "ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์" — recalculates from FRESH sources
+ *     and clears that column's overrides and suppressions in ONE atomic
+ *     RPC call, so every cell becomes AUTO.
  *
  * Every IO dependency is injectable (see SgsAutoDeps) so the rules are
  * tested without a live Supabase connection. Nothing here ever touches
@@ -102,24 +103,23 @@ export interface SgsColumnConvertToAutoPlan {
   values: SgsScoreRecalculationValue[]
   /** Override cells whose teacher value is removed. */
   overridesCleared: number
-  /** Suppressed cells re-enabled (only with clearSuppressed). */
+  /** "ยกเลิกการคำนวณ" cells re-enabled. */
   suppressedCleared: number
   /** Cleared cells that end up EMPTY because nothing is calculable. */
   becomeEmpty: number
 }
 
 /**
- * "เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ": every roster student gets the
- * current calculated value; override cells additionally get
- * clearOverride, so their effective score becomes that value. A
- * per-student "ยกเลิกการคำนวณ" is a separate explicit decision and is kept
- * unless clearSuppressed is set.
+ * "ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์": every roster student gets the
+ * current calculated value, and every teacher-set cell (override or
+ * "ยกเลิกการคำนวณ") additionally gets clearOverride — which, in
+ * recalculate_sgs_score_column, clears both — so its effective score
+ * becomes that value (AUTO). A calculated 0 is written as 0.
  */
 export function planSgsColumnConvertToAuto(
   studentIds: string[],
   cells: Record<string, SgsScoreCellRecord>,
   live: Record<string, number | null>,
-  options: { clearSuppressed?: boolean } = {},
 ): SgsColumnConvertToAutoPlan {
   const values: SgsScoreRecalculationValue[] = []
   let overridesCleared = 0
@@ -130,10 +130,10 @@ export function planSgsColumnConvertToAuto(
     const cell = resolveSgsScoreCell(record)
     const calculatedScore = live[studentId] ?? null
     const isOverride = cell.origin === 'override'
-    const clearSuppression = !isOverride && cell.autoSuppressed && options.clearSuppressed === true
-    const clearOverride = isOverride || clearSuppression
+    const isSuppressed = !isOverride && cell.autoSuppressed
+    const clearOverride = isOverride || isSuppressed
     if (isOverride) overridesCleared += 1
-    if (clearSuppression) suppressedCleared += 1
+    if (isSuppressed) suppressedCleared += 1
     if (clearOverride && calculatedScore === null) becomeEmpty += 1
     // A student with no row and nothing calculable has nothing to record.
     if (!record && calculatedScore === null) continue
@@ -142,14 +142,35 @@ export function planSgsColumnConvertToAuto(
   return { values, overridesCleared, suppressedCleared, becomeEmpty }
 }
 
-/** Override count for the confirmation text — from the cells already on
- * screen (the operation itself re-reads them). */
-export function countSgsOverrideCells(cells: Record<string, ResolvedSgsScoreCell>): number {
-  return Object.values(cells).filter((cell) => cell.origin === 'override').length
+/** Teacher-set cells (override or "ยกเลิกการคำนวณ") — the N in the
+ * confirmation, from the cells already on screen (the operation itself
+ * re-reads them). */
+export function countSgsTeacherSetCells(cells: Record<string, ResolvedSgsScoreCell>): number {
+  return Object.values(cells).filter((cell) => cell.origin === 'override' || cell.autoSuppressed).length
 }
 
-export function describeSgsConvertToAutoConfirmation(overrideCount: number): string {
-  return `คะแนนที่ครูกำหนดเองของนักเรียน ${overrideCount} คนจะถูกล้าง และระบบจะคำนวณคะแนนใหม่จากงานที่เชื่อมไว้`
+/** Whether a column gets the "ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์" action: a
+ * saved formula that can run as saved (its max matches the column's),
+ * 0027 applied, and at least one teacher-set cell left. */
+export function isSgsColumnEligibleForAuto(
+  column: SgsScoreColumn,
+  formula: SgsScoreCalculationFormula | null | undefined,
+  cells: Record<string, ResolvedSgsScoreCell>,
+  supportsScoreOrigin: boolean,
+): boolean {
+  if (!supportsScoreOrigin || !formula) return false
+  if (formula.targetMaxScore !== column.maxScore) return false
+  return countSgsTeacherSetCells(cells) > 0
+}
+
+export const SGS_USE_AUTO_FOR_COLUMN_LABEL = 'ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์'
+
+export function describeSgsUseAutoForColumnConfirmation(teacherSetCount: number): string {
+  return [
+    `คอลัมน์นี้มีคะแนนที่ครูกำหนดเอง ${teacherSetCount} คน`,
+    'ระบบจะคำนวณคะแนนใหม่จากงานที่เชื่อมไว้ และใช้คะแนนคำนวณแทนคะแนนเดิม',
+    'หลังจากนี้ เมื่อคะแนนงานเปลี่ยน คะแนน SGS จะอัปเดตตามอัตโนมัติ',
+  ].join('\n')
 }
 
 // ==================================================
@@ -345,17 +366,17 @@ export interface SgsConvertToAutoOutcome {
 }
 
 /**
- * "เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ" for ONE column: fresh sources,
+ * "ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์" for ONE column: fresh sources,
  * roster and this column's cells, then ONE recalculate_sgs_score_column
  * call (all-or-nothing) that writes the current calculated value and
- * clears the overrides. No other column is read for writing or touched.
+ * clears every override and suppression. No other column and no
+ * assignment score is read for writing or touched.
  */
 export async function convertSgsScoreColumnToAuto(
   subjectId: string,
   classroomId: string,
   column: SgsScoreColumn,
   formula: SgsScoreCalculationFormula,
-  options: { clearSuppressed?: boolean } = {},
   deps: SgsAutoDeps = defaultSgsAutoDeps,
 ): Promise<SgsConvertToAutoOutcome> {
   const [sourceData, students, cellsLoad] = await Promise.all([
@@ -367,7 +388,7 @@ export async function convertSgsScoreColumnToAuto(
   const studentIds = students.map((s) => s.id)
   const live = computeLiveCalculatedScores(formula, column.maxScore, studentIds, sourceData.scoresByStudentIdAndAssignmentId, sourceData.sources)
   if (!live) throw new Error('ยังคำนวณจากงานที่เชื่อมไม่ได้ — งานต้นทางถูกเก็บถาวร/ลบ หรือคะแนนเต็มของช่องเปลี่ยน กรุณาตั้งค่าการคำนวณใหม่')
-  const plan = planSgsColumnConvertToAuto(studentIds, cellsLoad.cellsByColumnId[column.id] ?? {}, live, options)
+  const plan = planSgsColumnConvertToAuto(studentIds, cellsLoad.cellsByColumnId[column.id] ?? {}, live)
   const written = plan.values.length > 0 ? await deps.recalculate(column.id, plan.values) : 0
   return { written, overridesCleared: plan.overridesCleared, suppressedCleared: plan.suppressedCleared, becomeEmpty: plan.becomeEmpty }
 }

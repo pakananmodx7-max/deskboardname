@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
@@ -13,8 +14,11 @@ import { SgsScoreCellDialog, type SgsScoreCellDialogAction } from '@/features/su
 import { parseScoreInput } from '@/services/assignment-service'
 import {
   convertSgsScoreColumnToAuto,
-  countSgsOverrideCells,
+  countSgsTeacherSetCells,
+  describeSgsUseAutoForColumnConfirmation,
+  isSgsColumnEligibleForAuto,
   recalculateSgsCellFromSources,
+  SGS_USE_AUTO_FOR_COLUMN_LABEL,
   sgsAutoRecalculation,
 } from '@/services/sgs-score-auto-service'
 import {
@@ -330,7 +334,10 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
    * sgs-column-sources-dialog.tsx). Opening it re-reads the source
    * assignments so names/max scores are current. */
   const [sourcesColumn, setSourcesColumn] = useState<SgsScoreColumn | null>(null)
-  const [convertBusy, setConvertBusy] = useState(false)
+  /** The column whose "ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์" confirmation is
+   * open — the ONE way to turn teacher/legacy values back into AUTO for a
+   * whole column. */
+  const [autoColumn, setAutoColumn] = useState<SgsScoreColumn | null>(null)
 
   function openSourcesDialog(column: SgsScoreColumn) {
     setSourcesColumn(column)
@@ -348,21 +355,20 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
     return counts
   }
 
-  /** "เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ" (confirmed in the dialog) —
-   * ONE column, fresh sources, one atomic RPC; a per-student
-   * "ยกเลิกการคำนวณ" is kept. */
-  async function handleConvertToAuto(column: SgsScoreColumn) {
+  /** Confirmed "ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์": ONE column, recalculated
+   * from its CURRENT saved formula and FRESH source scores, every override
+   * and suppression cleared, in one atomic recalculate_sgs_score_column
+   * call; then the workspace reloads. */
+  async function handleUseAutoForColumn(column: SgsScoreColumn) {
     const formula = formulasByColumnId[column.id]
     if (!formula) return
-    setConvertBusy(true)
     try {
-      const outcome = await convertSgsScoreColumnToAuto(subjectId, classroomId, column, formula)
-      toast(`เปลี่ยน "${column.label}" เป็นคำนวณอัตโนมัติแล้ว — ล้างคะแนนที่ครูกำหนดเอง ${outcome.overridesCleared} คน`)
+      await convertSgsScoreColumnToAuto(subjectId, classroomId, column, formula)
+      setAutoColumn(null)
+      toast(`"${column.label}" ใช้คะแนนคำนวณอัตโนมัติแล้ว`)
       await Promise.all([refresh(), refreshSources()])
     } catch (err) {
-      toast(toFriendlyErrorMessage(err, 'เปลี่ยนเป็นคำนวณอัตโนมัติไม่สำเร็จ'))
-    } finally {
-      setConvertBusy(false)
+      toast(toFriendlyErrorMessage(err, 'ใช้คะแนนคำนวณอัตโนมัติไม่สำเร็จ'))
     }
   }
 
@@ -609,14 +615,14 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
                           ? `${listFormulaSourceIds(formulasByColumnId[column.id]!).length} งาน · ${supportsScoreOrigin ? 'Auto' : 'มีสูตร'}`
                           : 'คำนวณ'}
                       </button>
-                      {supportsScoreOrigin && formulasByColumnId[column.id] && countSgsOverrideCells(resolvedByColumnId[column.id] ?? {}) > 0 && (
+                      {isSgsColumnEligibleForAuto(column, formulasByColumnId[column.id], resolvedByColumnId[column.id] ?? {}, supportsScoreOrigin) && (
                         <button
                           type="button"
-                          onClick={() => openSourcesDialog(column)}
-                          className="mx-auto mt-0.5 flex items-center gap-1 text-[11px] font-normal text-violet-700 hover:underline"
-                          title="คะแนนที่ครูกำหนดเองไม่เปลี่ยนตามงานต้นทาง — เปิดเพื่อเปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ"
+                          onClick={() => setAutoColumn(column)}
+                          className="mx-auto mt-1 block max-w-[10rem] rounded-md border border-violet-300 bg-violet-50 px-2 py-0.5 text-[11px] font-medium leading-tight text-violet-800 hover:bg-violet-100"
+                          title={`มีคะแนนที่ครูกำหนดเอง ${countSgsTeacherSetCells(resolvedByColumnId[column.id] ?? {})} คน`}
                         >
-                          ครูกำหนดเอง {countSgsOverrideCells(resolvedByColumnId[column.id] ?? {})} คน
+                          {SGS_USE_AUTO_FOR_COLUMN_LABEL}
                         </button>
                       )}
                       {(driftCountByColumnId[column.id] ?? 0) > 0 && (
@@ -883,6 +889,19 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
         />
       )}
 
+      {autoColumn && (
+        <ConfirmDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setAutoColumn(null)
+          }}
+          title={`${SGS_USE_AUTO_FOR_COLUMN_LABEL} — ${autoColumn.label}`}
+          description={describeSgsUseAutoForColumnConfirmation(countSgsTeacherSetCells(resolvedByColumnId[autoColumn.id] ?? {}))}
+          confirmLabel="ยืนยัน"
+          onConfirm={() => handleUseAutoForColumn(autoColumn)}
+        />
+      )}
+
       {sourcesColumn && formulasByColumnId[sourcesColumn.id] && (
         <SgsColumnSourcesDialog
           open
@@ -895,8 +914,6 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
           sourcesError={sourceData ? null : sourceLoadError}
           supportsOrigin={supportsScoreOrigin}
           counts={originCountsFor(sourcesColumn.id)}
-          busy={convertBusy}
-          onConvertToAuto={() => handleConvertToAuto(sourcesColumn)}
           onOpenCalculator={() => {
             setCalcColumn(sourcesColumn)
             setSourcesColumn(null)

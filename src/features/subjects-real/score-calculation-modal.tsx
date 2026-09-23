@@ -18,9 +18,7 @@ import {
   verifySgsScoreCalculationApply,
   type SgsScoreCalculationAssignmentMeta,
 } from '@/services/sgs-score-calculation-service'
-import { convertSgsScoreColumnToAuto } from '@/services/sgs-score-auto-service'
-import { computeSgsScoreColumnResetImpact } from '@/services/sgs-score-origin'
-import { getSgsScores, resetSgsScoreColumnToAuto, updateSgsScoreColumnFormula } from '@/services/sgs-score-workspace-service'
+import { getSgsScores, updateSgsScoreColumnFormula } from '@/services/sgs-score-workspace-service'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   DEFAULT_SGS_SCORE_CALCULATION_MISSING_POLICY,
@@ -71,8 +69,9 @@ interface ScoreCalculationModalProps {
   /** Cells the teacher explicitly left empty ("ยกเลิกการคำนวณสำหรับ
    * นักเรียนคนนี้") — protected like an existing value. */
   protectedStudentIds?: ReadonlySet<string>
-  /** This column's resolved cells (0027) — used for the confirmed bulk
-   * reset's affected count and the "จะกลายเป็นว่าง" preview line. */
+  /** This column's resolved cells (0027) — used for the "จะกลายเป็นว่าง"
+   * preview line. (Turning a whole column back to AUTO is the tab header's
+   * single "ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์" action, not this modal.) */
   targetCells?: Record<string, ResolvedSgsScoreCell>
   /** Called after a successful save/apply so the tab can refetch and
    * show the new values/formula badge — this modal never mutates
@@ -120,7 +119,6 @@ export function ScoreCalculationModal({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [sources, setSources] = useState<SgsScoreCalculationSource[]>([])
   const [assignmentsMeta, setAssignmentsMeta] = useState<SgsScoreCalculationAssignmentMeta[]>([])
-  const [confirmResetOpen, setConfirmResetOpen] = useState(false)
   const [scoresByStudentIdAndAssignmentId, setScoresByStudentIdAndAssignmentId] = useState<Record<string, Record<string, number | null>>>({})
 
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
@@ -452,28 +450,7 @@ export function ScoreCalculationModal({
   const autoWillEmptyCount = supportsScoreOrigin
     ? (applyPlan?.filter((row) => row.action === 'skip_not_calculable' && targetCells[row.studentId]?.origin === 'auto').length ?? 0)
     : 0
-  const resetImpact = computeSgsScoreColumnResetImpact(targetCells)
-  const resetCount = resetImpact.overrides + resetImpact.suppressed
   const linkedSources = existingFormula ? describeFormulaSources(existingFormula, assignmentsMeta) : []
-
-  async function doResetToAuto() {
-    try {
-      // With a saved mapping: recalculate from FRESH source scores and
-      // clear overrides + suppressions in one atomic call, so nobody falls
-      // back to a calculated value stored before a source score changed
-      // (or never stored, for legacy cells). Without one: the plain reset.
-      const changed = existingFormula
-        ? await convertSgsScoreColumnToAuto(subjectId, classroomId, targetColumn, existingFormula, { clearSuppressed: true }).then(
-            (outcome) => outcome.overridesCleared + outcome.suppressedCleared,
-          )
-        : await resetSgsScoreColumnToAuto(targetColumn.id)
-      toast(`กลับไปใช้คะแนนคำนวณแล้ว ${changed} คน`)
-      setConfirmResetOpen(false)
-      await onApplied()
-    } catch (err) {
-      toast(toFriendlyErrorMessage(err, 'ล้างคะแนนที่ครูกำหนดเองไม่สำเร็จ'))
-    }
-  }
 
   return (
     <>
@@ -532,21 +509,6 @@ export function ScoreCalculationModal({
                   <p className="text-xs text-muted-foreground">
                     {SGS_SCORE_CALCULATION_MISSING_POLICY_LABEL[existingFormula.missingScorePolicy]} · ปัดคะแนน {SGS_SCORE_CALCULATION_ROUNDING_LABEL[existingFormula.rounding]} — แก้ไขงานที่เชื่อมหรือวิธีคำนวณได้ในขั้นตอนด้านล่าง
                   </p>
-                  {supportsScoreOrigin && resetCount > 0 && (
-                    <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2 text-sm">
-                      <span>
-                        ครูกำหนดคะแนนเอง <span className="font-semibold">{resetImpact.overrides}</span> คน
-                        {resetImpact.suppressed > 0 && (
-                          <>
-                            {' '}· ยกเลิกการคำนวณ <span className="font-semibold">{resetImpact.suppressed}</span> คน
-                          </>
-                        )}
-                      </span>
-                      <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={() => setConfirmResetOpen(true)}>
-                        กลับไปใช้คะแนนคำนวณทั้งคอลัมน์
-                      </Button>
-                    </div>
-                  )}
                 </section>
               )}
 
@@ -863,16 +825,6 @@ export function ScoreCalculationModal({
         confirmLabel="ยืนยันเขียนทับ"
         destructive
         onConfirm={doApply}
-      />
-
-      <ConfirmDialog
-        open={confirmResetOpen}
-        onOpenChange={setConfirmResetOpen}
-        title="กลับไปใช้คะแนนคำนวณทั้งคอลัมน์?"
-        description={`ช่อง "${targetColumn.label}": จะลบคะแนนที่ครูกำหนดเอง ${resetImpact.overrides} คน และยกเลิกการงดคำนวณ ${resetImpact.suppressed} คน (รวม ${resetCount} คน)\nนักเรียนกลุ่มนี้จะใช้คะแนนที่คำนวณจากงานต้นทาง${existingFormula ? 'ปัจจุบัน (คำนวณใหม่ก่อนบันทึก)' : 'แทน'}${!existingFormula && resetImpact.becomeEmpty > 0 ? `\nในจำนวนนี้ ${resetImpact.becomeEmpty} คนยังไม่มีคะแนนคำนวณ — ช่องจะกลายเป็นว่าง` : ''}`}
-        confirmLabel={`ยืนยัน (${resetCount} คน)`}
-        destructive
-        onConfirm={doResetToAuto}
       />
     </>
   )

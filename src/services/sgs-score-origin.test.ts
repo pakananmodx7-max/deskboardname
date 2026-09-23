@@ -402,16 +402,13 @@ describe('13. clearing manual overrides for an entire column', () => {
     expect(after.m.score).toBeNull() // no calculated value -> becomes EMPTY, exactly as the confirmation said
   })
 
-  it('UI: the bulk reset is only reachable through a ConfirmDialog that states the affected count', () => {
+  it('UI: the whole-column action lives ONLY in the SGS tab header (the calculator no longer has a second reset)', () => {
     const modal = readSource('../features/subjects-real/score-calculation-modal.tsx')
-    expect(modal).toContain('onClick={() => setConfirmResetOpen(true)}')
-    const confirm = modal.slice(modal.indexOf('open={confirmResetOpen}'), modal.indexOf('onConfirm={doResetToAuto}'))
-    expect(confirm).toContain('resetImpact.overrides')
-    expect(confirm).toContain('resetImpact.suppressed')
-    expect(confirm).toContain('confirmLabel={`ยืนยัน (${resetCount} คน)`}')
-    expect(confirm).toContain('destructive')
-    // doResetToAuto is never called directly from a button.
-    expect(modal.match(/doResetToAuto/g)).toHaveLength(2) // definition + onConfirm
+    expect(modal).not.toContain('doResetToAuto')
+    expect(modal).not.toContain('confirmResetOpen')
+    expect(modal).not.toContain('resetSgsScoreColumnToAuto')
+    const tab = readSource('../features/subjects-real/tabs/sgs-scores-tab.tsx')
+    expect(tab).toContain('onClick={() => setAutoColumn(column)}')
   })
 })
 

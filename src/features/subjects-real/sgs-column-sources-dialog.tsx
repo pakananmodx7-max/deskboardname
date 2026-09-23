@@ -1,11 +1,8 @@
 import { Calculator, Link2 } from 'lucide-react'
-import { useState } from 'react'
-
 import { Button } from '@/components/ui/button'
-import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { describeFormulaRule, type SgsFormulaSourceDescription } from '@/services/sgs-score-calculation-service'
-import { describeSgsConvertToAutoConfirmation } from '@/services/sgs-score-auto-service'
+import { SGS_USE_AUTO_FOR_COLUMN_LABEL } from '@/services/sgs-score-auto-service'
 import {
   SGS_SCORE_CALCULATION_MISSING_POLICY_LABEL,
   SGS_SCORE_CALCULATION_MODE_LABEL,
@@ -32,10 +29,6 @@ interface SgsColumnSourcesDialogProps {
   sourcesError?: string | null
   supportsOrigin: boolean
   counts: SgsColumnOriginCounts
-  busy: boolean
-  /** "เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ" — only ever called after the
-   * ConfirmDialog below. */
-  onConvertToAuto: () => Promise<void>
   onOpenCalculator: () => void
 }
 
@@ -44,7 +37,8 @@ interface SgsColumnSourcesDialogProps {
  * (name, its max score, weight/group), the calculation method, missing-
  * score rule, rounding and the SGS column's own max, plus how the
  * column's cells currently split between AUTO and teacher-set values.
- * The one write here is the confirmed "เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ".
+ * Read-only: turning teacher-set values back into AUTO is the column
+ * header's single "ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์" action.
  */
 export function SgsColumnSourcesDialog({
   open,
@@ -55,11 +49,8 @@ export function SgsColumnSourcesDialog({
   sourcesError = null,
   supportsOrigin,
   counts,
-  busy,
-  onConvertToAuto,
   onOpenCalculator,
 }: SgsColumnSourcesDialogProps) {
-  const [confirmOpen, setConfirmOpen] = useState(false)
   const maxMismatch = formula.targetMaxScore !== column.maxScore
   const showWeights = formula.mode !== 'proportional'
 
@@ -155,24 +146,11 @@ export function SgsColumnSourcesDialog({
                   )}{' '}
                   · ว่าง <span className="font-semibold">{counts.empty}</span> คน
                 </p>
-                {counts.override > 0 ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      คะแนนที่ครูกำหนดเองจะไม่เปลี่ยนตามงานต้นทาง (คะแนนคำนวณยังอัปเดตอยู่เบื้องหลัง)
-                    </p>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="ml-auto"
-                      disabled={busy || maxMismatch}
-                      onClick={() => setConfirmOpen(true)}
-                    >
-                      เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ
-                    </Button>
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">ทุกช่องใช้คะแนนคำนวณ — เมื่อแก้คะแนนงานที่เชื่อม คะแนนช่องนี้จะอัปเดตอัตโนมัติ</p>
-                )}
+                <p className="text-xs text-muted-foreground">
+                  {counts.override + counts.suppressed > 0
+                    ? `คะแนนที่ครูกำหนดเองจะไม่เปลี่ยนตามงานต้นทาง — ใช้ปุ่ม "${SGS_USE_AUTO_FOR_COLUMN_LABEL}" ที่หัวคอลัมน์เพื่อให้ทั้งคอลัมน์คำนวณอัตโนมัติ`
+                    : 'ทุกช่องใช้คะแนนคำนวณ — เมื่อแก้คะแนนงานที่เชื่อม คะแนนช่องนี้จะอัปเดตอัตโนมัติ'}
+                </p>
               </section>
             )}
           </div>
@@ -189,18 +167,6 @@ export function SgsColumnSourcesDialog({
         </DialogContent>
       </Dialog>
 
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title="เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ?"
-        description={`ช่อง "${column.label}": ${describeSgsConvertToAutoConfirmation(counts.override)}`}
-        confirmLabel={`ยืนยัน (${counts.override} คน)`}
-        destructive
-        onConfirm={async () => {
-          await onConvertToAuto()
-          setConfirmOpen(false)
-        }}
-      />
     </>
   )
 }

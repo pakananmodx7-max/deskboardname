@@ -2497,9 +2497,15 @@ Built entirely on 0027's existing RPCs (`src/services/sgs-score-auto-service.ts`
   and one `recalculate_sgs_score_column` per affected column. It never
   sends `clear_override`: an OVERRIDE keeps its effective value while
   `calculated_score` stays current underneath; suppression is kept.
-- **"เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ"** (column sources dialog, confirmed
-  with the affected count): recalculates from fresh sources and clears
-  that column's overrides in ONE `recalculate_sgs_score_column` call.
+- **"ใช้คะแนนคำนวณอัตโนมัติทั้งคอลัมน์"** — the ONE whole-column action,
+  shown in the header of a column that has a saved formula (runnable as
+  saved) and still has teacher-set cells. One ยกเลิก/ยืนยัน confirmation
+  stating the count, then ONE `recalculate_sgs_score_column` call from
+  the current formula and fresh source scores with `clear_override` on
+  every override and "ยกเลิกการคำนวณ" cell, so every cell becomes AUTO
+  (0 stays 0). No other column and no assignment score is touched; the
+  workspace reloads afterwards. The calculator no longer has a separate
+  whole-column reset.
 - **"กลับไปใช้คะแนนคำนวณ"** on a mapped cell recalculates from fresh
   sources with `clear_override`, so it never restores a stale value.
 
