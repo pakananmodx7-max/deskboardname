@@ -1,6 +1,6 @@
 import { getSupabaseClient } from '@/lib/supabase'
 import { getAllAttendanceForClassroom } from '@/services/attendance-service'
-import { computeGradeRows, getAssignments } from '@/services/assignment-service'
+import { getAssignments, getSubmissionsForAssignments } from '@/services/assignment-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import type { Assignment, AssignmentSubmission, SubmissionStatus } from '@/types/assignment'
 import type { AttendanceStatus } from '@/types/attendance'
@@ -39,9 +39,9 @@ import type { ClassroomStudent } from '@/types/student'
  *
  * The 4 dimensions actually computed, all straight from data this app
  * already has:
- *   - grade       assignment_submissions.score / assignments.max_score
- *                 (reuses assignment-service.ts's computeGradeRows —
- *                 never a second, competing score computation)
+ *   - grade       assignment_submissions.score / assignments.max_score,
+ *                 over GRADED assignments only (computeGradedScoreTotals)
+ *                 — a missing score is never counted as 0
  *   - completion  submitted+late / total assignments
  *   - onTime      submitted (not late) / total assignments
  *   - attendance  present / total attendance_records, scoped to THIS
@@ -52,65 +52,13 @@ import type { ClassroomStudent } from '@/types/student'
  * PERFORMANCE: exactly 4 Supabase round trips regardless of roster size
  * or assignment count — getStudentsByClassroom (1), getAssignments (1),
  * one BATCHED assignment_submissions select across every assignment id
- * (1, via fetchSubmissionsForAssignments below — never one request per
- * assignment), and getAllAttendanceForClassroom (2 requests internally:
+ * (1, via assignment-service.ts's getSubmissionsForAssignments — never
+ * one request per assignment), and getAllAttendanceForClassroom (2 requests internally:
  * sessions then records, already batched by `.in(...)`). Never fetches
  * another classroom's or another teacher's data — every query is scoped
  * to the given subjectId/classroomId, and RLS further guarantees
  * teacher-ownership regardless.
  */
-
-// ==================================================
-// Batched submissions fetch — avoids one request per assignment
-// ==================================================
-
-interface AssignmentSubmissionBatchRow {
-  assignment_id: string
-  id: string
-  student_id: string
-  status: SubmissionStatus
-  score: number | null
-  note: string | null
-  submitted_at: string | null
-  reviewed_at: string | null
-}
-
-/** One Supabase request for every assignment's submissions at once
- * (`.in('assignment_id', ids)`) instead of assignment-service.ts's
- * getSubmissions called once per assignment — the N+1 shape that pattern
- * has elsewhere in this codebase (e.g. report-service.ts's
- * getGradeSummaryReport) is exactly what this function avoids. Same
- * column selection and row shape as getSubmissions, just grouped by
- * assignment_id client-side afterward. */
-export async function fetchSubmissionsForAssignments(
-  assignmentIds: string[],
-): Promise<Record<string, Record<string, AssignmentSubmission>>> {
-  if (assignmentIds.length === 0) return {}
-
-  const supabase = getSupabaseClient()
-  const { data, error } = await supabase
-    .from('assignment_submissions')
-    .select('assignment_id, id, student_id, status, score, note, submitted_at, reviewed_at')
-    .in('assignment_id', assignmentIds)
-
-  if (error) throw error
-
-  const byAssignment: Record<string, Record<string, AssignmentSubmission>> = {}
-  for (const id of assignmentIds) byAssignment[id] = {}
-
-  for (const row of data as AssignmentSubmissionBatchRow[]) {
-    byAssignment[row.assignment_id][row.student_id] = {
-      studentId: row.student_id,
-      status: row.status,
-      score: row.score,
-      note: row.note,
-      id: row.id,
-      submittedAt: row.submitted_at,
-      reviewedAt: row.reviewed_at,
-    }
-  }
-  return byAssignment
-}
 
 // ==================================================
 // Pure aggregation — submission timeliness
@@ -216,6 +164,43 @@ export function averageNonNull(values: (number | null)[]): number | null {
 }
 
 // ==================================================
+// Graded-only score totals — a MISSING score is never a zero
+// ==================================================
+
+export interface GradedScoreTotals {
+  earned: number
+  /** Sum of max_score over ONLY the assignments this student has a
+   * recorded (non-null) score for. */
+  possible: number
+  gradedCount: number
+}
+
+/** Pure — the grade dimension's input. Unlike assignment-service.ts's
+ * computeGradeRows (the Grades tab's "total out of everything assigned",
+ * deliberately unchanged), an ungraded / not-submitted assignment is left
+ * out of BOTH sides here, so a missing score is never silently counted
+ * as 0. Missing work is measured by the separate completion/onTime
+ * dimensions instead. A recorded 0 IS counted (`!== null`, never a
+ * truthiness test). */
+export function computeGradedScoreTotals(
+  studentId: string,
+  assignments: Assignment[],
+  submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
+): GradedScoreTotals {
+  let earned = 0
+  let possible = 0
+  let gradedCount = 0
+  for (const assignment of assignments) {
+    const score = submissionsByAssignment[assignment.id]?.[studentId]?.score
+    if (score === null || score === undefined) continue
+    earned += score
+    possible += assignment.maxScore
+    gradedCount += 1
+  }
+  return { earned, possible, gradedCount }
+}
+
+// ==================================================
 // Radar/comparison-table metrics
 // ==================================================
 
@@ -232,8 +217,7 @@ export function buildStudentAnalyticsMetrics(
   submissionsByAssignment: Record<string, Record<string, AssignmentSubmission>>,
   attendanceByStudent: Record<string, StudentAnalyticsAttendanceSummary>,
 ): StudentAnalyticsMetric[] {
-  const gradeRows = computeGradeRows(rosterIds, assignments, submissionsByAssignment)
-  const gradeByStudent = new Map(gradeRows.map((row) => [row.studentId, row]))
+  const gradeByStudent = new Map(rosterIds.map((id) => [id, computeGradedScoreTotals(id, assignments, submissionsByAssignment)]))
 
   const timelinessRows = computeSubmissionTimelinessRows(rosterIds, assignments, submissionsByAssignment)
   const timelinessByStudent = new Map(timelinessRows.map((row) => [row.studentId, row]))
@@ -251,7 +235,9 @@ export function buildStudentAnalyticsMetrics(
   }
 
   function gradeValue(studentId: string): number | null {
-    return gradeByStudent.get(studentId)?.percentage ?? null
+    const totals = gradeByStudent.get(studentId)
+    if (!totals || totals.possible === 0) return null
+    return (totals.earned / totals.possible) * 100
   }
 
   function attendanceValue(studentId: string): number | null {
@@ -272,7 +258,7 @@ export function buildStudentAnalyticsMetrics(
       label: STUDENT_ANALYTICS_METRIC_LABELS.grade,
       value: grade,
       classroomAverage: averageNonNull(rosterIds.map(gradeValue)),
-      rawLabel: gradeRow && grade !== null ? `${gradeRow.total.toFixed(1)}/${gradeRow.possible.toFixed(1)} คะแนน` : null,
+      rawLabel: gradeRow && grade !== null ? `${gradeRow.earned.toFixed(1)}/${gradeRow.possible.toFixed(1)} คะแนน (${gradeRow.gradedCount} งานที่มีคะแนน)` : null,
     },
     {
       key: 'completion',
@@ -517,7 +503,7 @@ export async function getStudentAnalyticsSnapshot(
     getAllAttendanceForClassroom(classroomId, subjectId),
   ])
 
-  const submissionsByAssignment = await fetchSubmissionsForAssignments(assignments.map((a) => a.id))
+  const submissionsByAssignment = await getSubmissionsForAssignments(assignments.map((a) => a.id))
 
   const activeRosterIds = roster.filter((s) => s.status === 'active').map((s) => s.id)
   // The target student always counts toward their own comparisons, even

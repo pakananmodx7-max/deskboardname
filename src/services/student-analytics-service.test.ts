@@ -179,7 +179,7 @@ describe('buildStudentAnalyticsMetrics', () => {
     const grade = metrics.find((m) => m.key === 'grade')!
     expect(grade.value).toBe(85) // (80+90)/(100+100)*100
     expect(grade.classroomAverage).toBeCloseTo(67.5) // avg of s1=85, s2=50
-    expect(grade.rawLabel).toBe('170.0/200.0 คะแนน')
+    expect(grade.rawLabel).toBe('170.0/200.0 คะแนน (2 งานที่มีคะแนน)')
 
     const attendanceMetric = metrics.find((m) => m.key === 'attendance')!
     expect(attendanceMetric.value).toBe(100)
@@ -202,12 +202,26 @@ describe('buildStudentAnalyticsMetrics', () => {
     expect(metrics.find((m) => m.key === 'onTime')!.value).toBeNull()
   })
 
-  it('missing scores (assignment exists, no score yet) count toward "possible" but not "earned"', () => {
+  it('a MISSING score is never counted as 0: with nothing graded the grade dimension is null (missing work shows up in completion instead)', () => {
     const assignments = [assignment({ id: 'a1', maxScore: 100 })]
     const subs = { a1: { s1: submission({ score: null, status: 'not_submitted' }) } }
     const metrics = buildStudentAnalyticsMetrics('s1', ['s1'], assignments, subs, {})
-    expect(metrics.find((m) => m.key === 'grade')!.value).toBe(0)
+    expect(metrics.find((m) => m.key === 'grade')!.value).toBeNull()
     expect(metrics.find((m) => m.key === 'completion')!.value).toBe(0)
+  })
+
+  it('partially graded: only graded assignments enter the grade denominator', () => {
+    const assignments = [assignment({ id: 'a1', maxScore: 10 }), assignment({ id: 'a2', maxScore: 10 })]
+    const subs = { a1: { s1: submission({ score: 8 }) }, a2: { s1: submission({ score: null, status: 'missing' }) } }
+    const metrics = buildStudentAnalyticsMetrics('s1', ['s1'], assignments, subs, {})
+    expect(metrics.find((m) => m.key === 'grade')!.value).toBe(80) // 8/10, not 8/20
+  })
+
+  it('a recorded 0 IS counted (0 is a real score, not missing)', () => {
+    const assignments = [assignment({ id: 'a1', maxScore: 10 }), assignment({ id: 'a2', maxScore: 10 })]
+    const subs = { a1: { s1: submission({ score: 10 }) }, a2: { s1: submission({ score: 0 }) } }
+    const metrics = buildStudentAnalyticsMetrics('s1', ['s1'], assignments, subs, {})
+    expect(metrics.find((m) => m.key === 'grade')!.value).toBe(50)
   })
 
   it('no attendance records -> attendance metric value and average are both null', () => {
@@ -218,17 +232,20 @@ describe('buildStudentAnalyticsMetrics', () => {
     expect(attendanceMetric.rawLabel).toBeNull()
   })
 
-  it('classroom average is computed across the whole roster, including students with no data skipped (never treated as 0)', () => {
+  it('classroom average skips a classmate with no recorded score — never treated as 0', () => {
     const assignments = [assignment({ id: 'a1', maxScore: 100 })]
     const subs = { a1: { s1: submission({ studentId: 's1', score: 100 }) } }
-    // s2 has zero assignments in scope for this snapshot? Actually both
-    // students share the same assignment list — s2 simply has no
-    // submission row, which is a REAL 0 (missing = 0 score), not "no
-    // data." Confirms the distinction: missing submission != no
-    // denominator.
+    // s2 has no score at all -> grade null -> excluded from the average.
     const metrics = buildStudentAnalyticsMetrics('s1', ['s1', 's2'], assignments, subs, {})
     const grade = metrics.find((m) => m.key === 'grade')!
-    expect(grade.classroomAverage).toBe(50) // (100 + 0) / 2
+    expect(grade.classroomAverage).toBe(100)
+  })
+
+  it('classroom average includes a classmate whose recorded score is 0', () => {
+    const assignments = [assignment({ id: 'a1', maxScore: 100 })]
+    const subs = { a1: { s1: submission({ studentId: 's1', score: 100 }), s2: submission({ studentId: 's2', score: 0 }) } }
+    const metrics = buildStudentAnalyticsMetrics('s1', ['s1', 's2'], assignments, subs, {})
+    expect(metrics.find((m) => m.key === 'grade')!.classroomAverage).toBe(50)
   })
 
   it('normalizes to the 0-100 scale regardless of raw denominator size', () => {

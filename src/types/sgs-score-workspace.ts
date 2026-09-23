@@ -43,6 +43,53 @@ export interface CreateSgsScoreColumnInput {
   maxScore: number
 }
 
+// ==================================================
+// Score origin (supabase/migrations/0027_sgs_score_origin.sql) — every
+// cell is EMPTY, AUTO (calculated from the column's mapped source
+// assignments) or OVERRIDE (a value the teacher entered). `score` in the
+// database is always the EFFECTIVE score, so every existing reader
+// (SGS export, read-back verification) already consumes the right value.
+// See src/services/sgs-score-origin.ts for the rules.
+// ==================================================
+
+export type SgsScoreOrigin = 'empty' | 'auto' | 'override'
+
+/** One sgs_scores row as read from the database. Before migration 0027
+ * is applied only `score` exists — the rest read as null/false. */
+export interface SgsScoreCellRecord {
+  /** The persisted EFFECTIVE score. */
+  score: number | null
+  calculatedScore: number | null
+  overrideScore: number | null
+  autoSuppressed: boolean
+  calculatedAt: string | null
+}
+
+export interface ResolvedSgsScoreCell {
+  origin: SgsScoreOrigin
+  effectiveScore: number | null
+  calculatedScore: number | null
+  overrideScore: number | null
+  /** EMPTY because the teacher explicitly cancelled the calculation for
+   * this student — the column's mapping and calculatedScore are intact. */
+  autoSuppressed: boolean
+  calculatedAt: string | null
+}
+
+/** The three atomic cell actions set_sgs_score_cell (0027) supports. */
+export type SgsScoreCellAction = 'override' | 'clear_override' | 'suppress_auto'
+
+/** One entry of recalculate_sgs_score_column's p_values (0027). */
+export interface SgsScoreRecalculationValue {
+  studentId: string
+  /** null = not calculable for this student right now (an AUTO cell
+   * becomes EMPTY; an override is never touched). */
+  calculatedScore: number | null
+  /** Also remove this student's override/suppression (the calculator's
+   * confirmed "เขียนทับคะแนนเดิม"). Defaults to false. */
+  clearOverride?: boolean
+}
+
 /** One roster student's current SGS scores, keyed by `SgsScoreColumn.id`
  * — `null` means "no score entered yet," never an implicit 0. */
 export interface SgsScoreWorkspaceRow {

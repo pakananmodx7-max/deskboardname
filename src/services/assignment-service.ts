@@ -353,6 +353,38 @@ export async function getSubmissions(assignmentId: string): Promise<Record<strin
   return submissions
 }
 
+interface AssignmentSubmissionBatchRow extends AssignmentSubmissionRow {
+  assignment_id: string
+}
+
+/** ONE request for many assignments' submissions (`.in('assignment_id',
+ * ids)`), grouped client-side by assignment id — the batched
+ * counterpart of getSubmissions for callers that need a whole class ×
+ * many assignments at once (the SGS Score Calculator's source load,
+ * Student Analytics) instead of one request per assignment. Same column
+ * selection and mapping as getSubmissions. Every requested id gets an
+ * entry, empty when it has no rows. */
+export async function getSubmissionsForAssignments(
+  assignmentIds: string[],
+): Promise<Record<string, Record<string, AssignmentSubmission>>> {
+  if (assignmentIds.length === 0) return {}
+
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase
+    .from('assignment_submissions')
+    .select('assignment_id, id, student_id, status, score, note, submitted_at, reviewed_at')
+    .in('assignment_id', assignmentIds)
+
+  if (error) throw error
+
+  const byAssignment: Record<string, Record<string, AssignmentSubmission>> = {}
+  for (const id of assignmentIds) byAssignment[id] = {}
+  for (const row of data as AssignmentSubmissionBatchRow[]) {
+    ;(byAssignment[row.assignment_id] ??= {})[row.student_id] = mapSubmission(row)
+  }
+  return byAssignment
+}
+
 /**
  * Upserts one student's status — `assignment_submissions_insert_own`
  * (0006) requires the student to be a CURRENT member of the assignment's

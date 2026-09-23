@@ -2409,3 +2409,75 @@ who may read or write it.
 **Yes** — `supabase/migrations/0025_sgs_score_calculation_formula.sql`,
 **not applied automatically**. 0001–0024 are untouched. `sgs-bridge/`
 (the Chrome extension, frozen at v1.0.0) is untouched.
+
+# Phase 19: SGS score origin — AUTO / OVERRIDE / EMPTY (0027)
+
+## Problem
+
+Before 0027 a calculated SGS value was written by the same `setSgsScore`
+as a manual edit, into the same `sgs_scores.score`. Nothing recorded its
+origin, so a teacher could not see which values were calculated, a manual
+edit destroyed the only copy of the calculated value, re-running the
+calculator refilled cells the teacher had cleared, and a student whose
+sources became un-calculable kept a stale calculated value forever (the
+calculator could only ever write numbers).
+
+## Schema (additive only)
+
+`sgs_scores` gains `calculated_score numeric`, `override_score numeric`,
+`auto_suppressed boolean not null default false`, `calculated_at
+timestamptz`. `score` keeps its meaning for every existing reader: it is
+the **effective** score, always
+`coalesce(override_score, case when auto_suppressed then null else calculated_score end)`.
+The SGS Bridge export reads `score`, so it consumes the effective score
+with no export/extension change.
+
+The column's saved `calculation_formula` (0025) **is** the source mapping —
+no mapping table was added.
+
+## RPCs (all SECURITY INVOKER — RLS from 0023 still applies)
+
+| RPC | Purpose |
+|---|---|
+| `set_sgs_score_cell(column, student, action, value)` | `override` (keep calculated), `clear_override` (fall back to calculated or EMPTY — backs "ล้างคะแนน" and "กลับไปใช้คะแนนคำนวณ"), `suppress_auto` (EMPTY for this student, mapping kept). Row locked `FOR UPDATE`; effective score computed in the DB. |
+| `recalculate_sgs_score_column(column, values jsonb)` | Whole column in one transaction (all-or-nothing); column row locked first. Updates `calculated_score` for everyone; effective follows only for AUTO cells; a null value empties an AUTO cell. `clear_override` per entry = the calculator's confirmed "เขียนทับคะแนนเดิม". |
+| `reset_sgs_score_column_to_auto(column)` | Confirmed bulk removal of every override/suppression in one column; returns the changed count. |
+
+`sgs_score_reconcile_legacy` adopts a direct write of `score` by an older
+client (value → override, clear → suppressed) before any RPC changes the
+row, so such a write is never silently overwritten by a recalculation.
+
+## Backfill
+
+Existing non-null scores become overrides (`override_score = score`); the
+origin of an existing value is unknowable, so the safe assumption is that
+the teacher owns it. `score` is never modified; NULL rows are untouched; 0
+stays 0. Re-running is a no-op. Converting a column back to automatic is
+the explicit, confirmed "กลับไปใช้คะแนนคำนวณทั้งคอลัมน์".
+
+## Rollback
+
+Drop the five functions and the four columns (exact statements in the
+migration header). `score` already holds every effective value, so no score
+is lost — only origin information.
+
+## App behavior before 0027 is applied
+
+`getSgsScoreCellsForColumns` reads the origin columns and, if that fails,
+retries the plain select and reports `supportsScoreOrigin: false`; the tab,
+cell actions and calculator then use the original `setSgsScore` path. An
+unapplied 0027 degrades to the previous behavior, never a broken workspace.
+
+## Verification
+
+`supabase/tests/0027_sgs_score_origin.sql` (25 checks: AUTO, OVERRIDE,
+source changes in both states, restore, clear, 0 vs NULL, un-calculable,
+suppression, legacy write, bulk reset, atomic rollback, max bound,
+cross-teacher isolation) and `supabase/tests/0027_sgs_score_origin_backfill.sql`
+(backfill + idempotent re-run) — all PASS against a disposable local
+Postgres 16. Not applied to any live database.
+
+## Is a migration required?
+
+Yes — 0027 must be applied manually after review. It has **not** been
+applied anywhere.

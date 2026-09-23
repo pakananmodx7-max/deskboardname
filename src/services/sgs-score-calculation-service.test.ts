@@ -406,15 +406,21 @@ describe('15. applying a calculation only ever changes the ONE selected SGS colu
 describe('16. raw assignment scores are never mutated by this feature', () => {
   it('this whole file only ever IMPORTS READ functions from assignment-service.ts — never a write function', () => {
     const source = readSource('./sgs-score-calculation-service.ts')
-    expect(source).toContain("import { getAssignments, getSubmissions } from '@/services/assignment-service'")
+    // Batched read (getSubmissionsForAssignments) replaced the per-assignment
+    // getSubmissions loop — still READ functions only.
+    expect(source).toContain("import { getAssignments, getSubmissionsForAssignments } from '@/services/assignment-service'")
     for (const writeFn of ['setSubmissionScore', 'updateAssignment', 'archiveAssignment', 'deleteAssignmentPermanently', 'setSubmissionStatus', 'setSubmissionNote']) {
       expect(source).not.toContain(writeFn)
     }
   })
 
-  it('the only write primitive imported anywhere in this file is setSgsScore, from the EXISTING SGS workspace service — no new write path', () => {
+  it('the only write primitives imported anywhere in this file come from the SGS workspace service and write ONLY sgs_scores — setSgsScore (pre-0027) and recalculateSgsScoreColumn (0027)', () => {
     const source = readSource('./sgs-score-calculation-service.ts')
-    expect(source).toContain("import { setSgsScore } from '@/services/sgs-score-workspace-service'")
+    expect(source).toContain("import { recalculateSgsScoreColumn, setSgsScore } from '@/services/sgs-score-workspace-service'")
+    const workspace = readSource('./sgs-score-workspace-service.ts')
+    const recalcFn = workspace.slice(workspace.indexOf('export async function recalculateSgsScoreColumn'), workspace.indexOf('export async function resetSgsScoreColumnToAuto'))
+    expect(recalcFn).toContain("rpc('recalculate_sgs_score_column'")
+    expect(recalcFn).not.toContain('assignment_submissions')
   })
 })
 
@@ -875,6 +881,9 @@ describe('LIVE REGRESSION — the modal never claims a misleading success and al
     const applyPlanMemoIndex = source.indexOf('const applyPlan = useMemo(')
     expect(applyPlanMemoIndex).toBeGreaterThan(-1)
     const memoBody = source.slice(applyPlanMemoIndex, source.indexOf('const toWriteCount ='))
-    expect(memoBody).toContain('planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting)')
+    expect(memoBody).toContain('planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting, protectedStudentIds)')
+    // ...and doApply uses the exact same call.
+    const fn = source.slice(source.indexOf('async function doApply'), source.indexOf('function handleApplyClick'))
+    expect(fn).toContain('planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting, protectedStudentIds)')
   })
 })

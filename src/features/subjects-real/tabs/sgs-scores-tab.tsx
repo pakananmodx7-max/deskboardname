@@ -1,5 +1,5 @@
-import { Calculator, Plus, Send, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Calculator, Link2, Plus, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -7,7 +7,22 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { ScoreCalculationModal } from '@/features/subjects-real/score-calculation-modal'
+import { SgsScoreCell } from '@/features/subjects-real/sgs-score-cell'
+import { SgsScoreCellDialog, type SgsScoreCellDialogAction } from '@/features/subjects-real/sgs-score-cell-dialog'
 import { parseScoreInput } from '@/services/assignment-service'
+import {
+  computeLiveCalculatedScores,
+  explainStudentCalculation,
+  getSgsScoreCalculationSources,
+  listFormulaSourceIds,
+  type SgsScoreCalculationAssignmentMeta,
+} from '@/services/sgs-score-calculation-service'
+import {
+  effectiveScoresFromCells,
+  hasSgsCalculationDrift,
+  interpretSgsScoreCellInput,
+  resolveSgsScoreCell,
+} from '@/services/sgs-score-origin'
 import {
   buildSgsScoreWorkspaceMultiPayload,
   buildSgsScoreWorkspacePayload,
@@ -16,10 +31,12 @@ import {
   createSgsScoreColumn,
   deleteSgsScoreColumn,
   getSgsScoreColumnFormulas,
+  getSgsScoreCellsForColumns,
   getSgsScoreColumns,
-  getSgsScores,
+  recalculateSgsScoreColumn,
   selectSgsScoreWorkspaceColumnsForExport,
   setSgsScore,
+  setSgsScoreCell,
   validateSgsScoreWorkspaceMultiPayload,
   validateSgsScoreWorkspacePayload,
 } from '@/services/sgs-score-workspace-service'
@@ -27,8 +44,8 @@ import { getStudentsByClassroom } from '@/services/student-service'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { downloadJson } from '@/lib/export/json-export'
 import { cn } from '@/lib/utils'
-import type { SgsScoreCalculationFormula } from '@/types/sgs-score-calculation'
-import type { SgsScoreColumn } from '@/types/sgs-score-workspace'
+import type { SgsScoreCalculationFormula, SgsScoreCalculationSource } from '@/types/sgs-score-calculation'
+import type { ResolvedSgsScoreCell, SgsScoreCellRecord, SgsScoreColumn } from '@/types/sgs-score-workspace'
 import type { ClassroomStudent } from '@/types/student'
 
 interface SgsScoresTabProps {
@@ -58,7 +75,14 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
 
   const [columns, setColumns] = useState<SgsScoreColumn[]>([])
   const [students, setStudents] = useState<ClassroomStudent[]>([])
-  const [scoresByColumnId, setScoresByColumnId] = useState<Record<string, Record<string, number | null>>>({})
+  /** Raw sgs_scores rows per column (see SgsScoreCellRecord). Every
+   * display value is DERIVED from these via resolveSgsScoreCell — there is
+   * no second, independently-edited copy of any score in this component. */
+  const [cellRecordsByColumnId, setCellRecordsByColumnId] = useState<Record<string, Record<string, SgsScoreCellRecord>>>({})
+  /** Migration 0027 applied? false = the pre-0027 behavior, unchanged
+   * (plain scores, no AUTO/OVERRIDE) — decided by the base load itself,
+   * never by a separate request that could fail the page. */
+  const [supportsScoreOrigin, setSupportsScoreOrigin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [resetTicks, setResetTicks] = useState<Record<string, number>>({})
@@ -100,12 +124,11 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
       .then(async ([columnRows, studentRows]) => {
         setColumns(columnRows)
         setStudents(studentRows)
-        const scoreRows = await Promise.all(columnRows.map((c) => getSgsScores(c.id)))
-        const next: Record<string, Record<string, number | null>> = {}
-        columnRows.forEach((c, i) => {
-          next[c.id] = scoreRows[i]
-        })
-        setScoresByColumnId(next)
+        // ONE request for every column's cells (never one per column),
+        // degrading to the plain pre-0027 read when 0027 isn't applied.
+        const { supportsScoreOrigin: supported, cellsByColumnId } = await getSgsScoreCellsForColumns(columnRows.map((c) => c.id))
+        setSupportsScoreOrigin(supported)
+        setCellRecordsByColumnId(cellsByColumnId)
       })
       .catch((err: unknown) => setError(toFriendlyErrorMessage(err)))
       .finally(() => setLoading(false))
@@ -127,10 +150,145 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
     void refreshFormulas()
   }, [refresh, refreshFormulas])
 
+  /** Current source-assignment scores for every calculated column — its
+   * OWN independently-failing load (same rule as refreshFormulas: a
+   * failure only disables "what do today's sources calculate to", never
+   * the table). One getAssignments + ONE batched submissions request. */
+  const [sourceData, setSourceData] = useState<{
+    sources: SgsScoreCalculationSource[]
+    assignments: SgsScoreCalculationAssignmentMeta[]
+    scoresByStudentIdAndAssignmentId: Record<string, Record<string, number | null>>
+  } | null>(null)
+  const hasAnyFormula = Object.values(formulasByColumnId).some((f) => f !== null)
+  const refreshSources = useCallback(() => {
+    return getSgsScoreCalculationSources(subjectId, classroomId)
+      .then((data) => setSourceData(data))
+      .catch(() => setSourceData(null))
+  }, [subjectId, classroomId])
+  useEffect(() => {
+    if (hasAnyFormula) void refreshSources()
+  }, [hasAnyFormula, refreshSources])
+
+  /** columnId -> studentId -> resolved cell, for EVERY roster student
+   * (a student with no row resolves to EMPTY, never 0). */
+  const resolvedByColumnId = useMemo(() => {
+    const result: Record<string, Record<string, ResolvedSgsScoreCell>> = {}
+    for (const column of columns) {
+      const records = cellRecordsByColumnId[column.id] ?? {}
+      const cells: Record<string, ResolvedSgsScoreCell> = {}
+      for (const student of students) cells[student.id] = resolveSgsScoreCell(records[student.id])
+      result[column.id] = cells
+    }
+    return result
+  }, [columns, students, cellRecordsByColumnId])
+
+  /** The EFFECTIVE score per column/student — the only values the table,
+   * the SGS send preview and every exported payload ever read. */
+  const scoresByColumnId = useMemo(() => {
+    const result: Record<string, Record<string, number | null>> = {}
+    for (const [columnId, cells] of Object.entries(resolvedByColumnId)) result[columnId] = effectiveScoresFromCells(cells)
+    return result
+  }, [resolvedByColumnId])
+
+  /** What today's source scores calculate to, per calculated column —
+   * `null` for a column whose saved formula can't run as-is (a source
+   * was archived/deleted or the column's max changed). */
+  const liveByColumnId = useMemo(() => {
+    const result: Record<string, Record<string, number | null> | null> = {}
+    if (!sourceData) return result
+    for (const column of columns) {
+      const formula = formulasByColumnId[column.id]
+      if (!formula) continue
+      result[column.id] = computeLiveCalculatedScores(
+        formula,
+        column.maxScore,
+        students.map((s) => s.id),
+        sourceData.scoresByStudentIdAndAssignmentId,
+        sourceData.sources,
+      )
+    }
+    return result
+  }, [columns, students, formulasByColumnId, sourceData])
+
+  const driftCountByColumnId = useMemo(() => {
+    const result: Record<string, number> = {}
+    if (!supportsScoreOrigin) return result
+    for (const column of columns) {
+      const live = liveByColumnId[column.id]
+      if (!live) continue
+      result[column.id] = students.filter((s) => hasSgsCalculationDrift(resolvedByColumnId[column.id][s.id], live[s.id])).length
+    }
+    return result
+  }, [columns, students, liveByColumnId, resolvedByColumnId, supportsScoreOrigin])
+
   const rows = useMemo(
     () => buildSgsScoreWorkspaceRows(students, columns, scoresByColumnId),
     [students, columns, scoresByColumnId],
   )
+
+  /** Writes to ONE cell are chained, so rapid edits reach the database
+   * in exactly the order the teacher made them (an older request can
+   * never land after, and overwrite, a newer one). */
+  const cellQueueRef = useRef(new Map<string, Promise<unknown>>())
+  function enqueueCellWrite<T>(cellKey: string, work: () => Promise<T>): Promise<T> {
+    const previous = cellQueueRef.current.get(cellKey) ?? Promise.resolve()
+    const next = previous.catch(() => undefined).then(work)
+    cellQueueRef.current.set(cellKey, next)
+    return next
+  }
+
+  function storeCellRecord(columnId: string, studentId: string, record: SgsScoreCellRecord | null) {
+    setCellRecordsByColumnId((prev) => {
+      const column = { ...(prev[columnId] ?? {}) }
+      if (record === null) delete column[studentId]
+      else column[studentId] = record
+      return { ...prev, [columnId]: column }
+    })
+  }
+
+  /** Re-reads ONE cell after a recalculation (the RPC returns a count,
+   * not the row). Only that student's record is replaced, so a concurrent
+   * edit to a different cell in the same column is never overwritten
+   * locally by this (older) read. */
+  async function reloadCell(columnId: string, studentId: string) {
+    const { cellsByColumnId } = await getSgsScoreCellsForColumns([columnId])
+    storeCellRecord(columnId, studentId, cellsByColumnId[columnId]?.[studentId] ?? null)
+  }
+
+  /** One cell action. 0027: the atomic set_sgs_score_cell /
+   * recalculate_sgs_score_column RPCs compute the effective score in the
+   * database, and the returned row replaces local state. Before 0027:
+   * the original setSgsScore (override = the value, clear = null). */
+  async function performCellAction(column: SgsScoreColumn, studentId: string, action: SgsScoreCellDialogAction, value?: number) {
+    const cellKey = `${column.id}:${studentId}`
+    await enqueueCellWrite(cellKey, async () => {
+      if (!supportsScoreOrigin) {
+        const score = action === 'override' ? (value ?? null) : null
+        await setSgsScore(column.id, studentId, score)
+        storeCellRecord(column.id, studentId, { score, calculatedScore: null, overrideScore: null, autoSuppressed: false, calculatedAt: null })
+        return
+      }
+      if (action === 'recalculate') {
+        // Always from FRESH source scores, never the ones loaded when the
+        // tab opened — an assignment score may have changed since.
+        const formula = formulasByColumnId[column.id]
+        const fresh = await getSgsScoreCalculationSources(subjectId, classroomId)
+        setSourceData(fresh)
+        const live = formula
+          ? computeLiveCalculatedScores(formula, column.maxScore, [studentId], fresh.scoresByStudentIdAndAssignmentId, fresh.sources)
+          : null
+        if (!live) throw new Error('ยังคำนวณจากงานต้นทางไม่ได้ — ตรวจสอบการตั้งค่าการคำนวณของช่องนี้')
+        await recalculateSgsScoreColumn(column.id, [{ studentId, calculatedScore: live[studentId] ?? null }])
+        await reloadCell(column.id, studentId)
+        return
+      }
+      const record = await setSgsScoreCell(column.id, studentId, action, action === 'override' ? (value ?? null) : null)
+      storeCellRecord(column.id, studentId, record)
+    })
+  }
+
+  const [detailCell, setDetailCell] = useState<{ columnId: string; studentId: string } | null>(null)
+  const [detailBusy, setDetailBusy] = useState(false)
 
   const selectedExportColumnIds = useMemo(
     () => columns.filter((column) => !deselectedExportColumnIds.includes(column.id)).map((column) => column.id),
@@ -185,21 +343,51 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
 
   async function handleScoreBlur(column: SgsScoreColumn, studentId: string, raw: string) {
     const cellKey = `${column.id}:${studentId}`
+    const resetCell = () => setResetTicks((prev) => ({ ...prev, [cellKey]: (prev[cellKey] ?? 0) + 1 }))
     const { value: score, error: validationError } = parseScoreInput(raw, column.maxScore)
     if (validationError) {
       toast(validationError)
-      setResetTicks((prev) => ({ ...prev, [cellKey]: (prev[cellKey] ?? 0) + 1 }))
+      resetCell()
+      return
+    }
+    const cell = resolvedByColumnId[column.id]?.[studentId] ?? resolveSgsScoreCell(undefined)
+    const intent = interpretSgsScoreCellInput(cell, score)
+    if (intent.kind === 'noop') return
+    if (intent.kind === 'blank_on_auto') {
+      // An empty input never silently breaks the column's mapping — the
+      // explicit per-student action lives in the ⋯ menu.
+      toast('ช่องนี้คำนวณจากงานที่เชื่อม — หากต้องการให้ว่าง ใช้เมนู ⋯ > ยกเลิกการคำนวณสำหรับนักเรียนคนนี้')
+      resetCell()
       return
     }
     try {
-      await setSgsScore(column.id, studentId, score)
-      setScoresByColumnId((prev) => ({
-        ...prev,
-        [column.id]: { ...prev[column.id], [studentId]: score },
-      }))
+      if (intent.kind === 'override') {
+        await performCellAction(column, studentId, 'override', intent.value)
+      } else {
+        await performCellAction(column, studentId, 'clear_override')
+        if (supportsScoreOrigin && cell.calculatedScore !== null && formulasByColumnId[column.id]) {
+          toast(`กลับไปใช้คะแนนคำนวณ (${cell.calculatedScore})`)
+        }
+      }
     } catch (err) {
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกคะแนนได้'))
-      setResetTicks((prev) => ({ ...prev, [cellKey]: (prev[cellKey] ?? 0) + 1 }))
+      resetCell()
+    }
+  }
+
+  async function handleDetailAction(action: SgsScoreCellDialogAction, value?: number) {
+    if (!detailCell) return
+    const column = columns.find((c) => c.id === detailCell.columnId)
+    if (!column) return
+    setDetailBusy(true)
+    try {
+      await performCellAction(column, detailCell.studentId, action, value)
+      setResetTicks((prev) => ({ ...prev, [`${column.id}:${detailCell.studentId}`]: (prev[`${column.id}:${detailCell.studentId}`] ?? 0) + 1 }))
+      toast('บันทึกแล้ว')
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกคะแนนได้'))
+    } finally {
+      setDetailBusy(false)
     }
   }
 
@@ -329,15 +517,33 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
                         </button>
                       </div>
                       <div className="font-normal text-muted-foreground">เต็ม {column.maxScore}</div>
+                      {/* The mapping/calculation indicator — always rendered
+                       * (never gated on the formula load succeeding). With a
+                       * saved mapping: "🔗 N งาน · Auto"; without: "คำนวณ".
+                       * Either way it opens the calculator, which shows the
+                       * linked sources. */}
                       <button
                         type="button"
                         onClick={() => setCalcColumn(column)}
-                        className="mt-0.5 flex items-center justify-center gap-1 text-xs font-normal text-muted-foreground hover:text-foreground"
-                        title={formulasByColumnId[column.id] ? 'คำนวณคะแนนใหม่' : 'คำนวณคะแนนจากคะแนนต้นทาง'}
+                        className="mx-auto mt-0.5 flex items-center justify-center gap-1 text-xs font-normal text-muted-foreground hover:text-foreground"
+                        title={formulasByColumnId[column.id] ? 'ดู/แก้ไขงานที่เชื่อม และคำนวณใหม่' : 'คำนวณคะแนนจากคะแนนต้นทาง'}
                       >
-                        <Calculator className="size-3" />
-                        {formulasByColumnId[column.id] ? 'มีสูตรคำนวณ' : 'คำนวณ'}
+                        {formulasByColumnId[column.id] ? <Link2 className="size-3" /> : <Calculator className="size-3" />}
+                        {formulasByColumnId[column.id]
+                          ? `${listFormulaSourceIds(formulasByColumnId[column.id]!).length} งาน · ${supportsScoreOrigin ? 'Auto' : 'มีสูตร'}`
+                          : 'คำนวณ'}
                       </button>
+                      {(driftCountByColumnId[column.id] ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setCalcColumn(column)}
+                          className="mx-auto mt-0.5 flex items-center gap-1 text-[11px] font-normal text-amber-700 hover:underline"
+                          title="คะแนนในงานต้นทางเปลี่ยนหลังการคำนวณครั้งล่าสุด — เปิดเพื่อคำนวณใหม่"
+                        >
+                          <RefreshCw className="size-3" />
+                          ต้นทางเปลี่ยน {driftCountByColumnId[column.id]} คน
+                        </button>
+                      )}
                     </th>
                   ))}
                 </tr>
@@ -376,19 +582,20 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
                       <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{row.studentCode ?? '-'}</td>
                       <td className="whitespace-nowrap px-5 py-2 font-medium text-foreground">{row.fullName}</td>
                       {columns.map((column) => {
-                        const score = row.scoresByColumnId[column.id] ?? null
+                        const cell = resolvedByColumnId[column.id]?.[row.studentId] ?? resolveSgsScoreCell(undefined)
                         const cellKey = `${column.id}:${row.studentId}`
+                        const live = liveByColumnId[column.id]
                         return (
-                          <td key={column.id} className="px-3 py-2 text-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={column.maxScore}
-                              defaultValue={score ?? ''}
-                              placeholder="—"
-                              key={`${cellKey}-${score}-${resetTicks[cellKey] ?? 0}`}
-                              onBlur={(e) => handleScoreBlur(column, row.studentId, e.target.value)}
-                              className="mx-auto h-8 w-16 text-center"
+                          <td key={column.id} className="px-2 py-2 text-center">
+                            <SgsScoreCell
+                              cell={cell}
+                              maxScore={column.maxScore}
+                              hasFormula={supportsScoreOrigin && Boolean(formulasByColumnId[column.id])}
+                              drift={supportsScoreOrigin && Boolean(live) && hasSgsCalculationDrift(cell, live?.[row.studentId])}
+                              inputKey={`${cellKey}-${cell.origin}-${cell.effectiveScore}-${resetTicks[cellKey] ?? 0}`}
+                              ariaLabel={`${column.label} ${row.fullName}`}
+                              onCommit={(raw) => handleScoreBlur(column, row.studentId, raw)}
+                              onOpenDetails={() => setDetailCell({ columnId: column.id, studentId: row.studentId })}
                             />
                           </td>
                         )
@@ -460,6 +667,17 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
               </div>
             ))}
           </fieldset>
+
+          {exportColumns.some((c) => (driftCountByColumnId[c.key] ?? 0) > 0) && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
+              คะแนนต้นทางเปลี่ยนแต่ยังไม่ได้คำนวณใหม่:{' '}
+              {exportColumns
+                .filter((c) => (driftCountByColumnId[c.key] ?? 0) > 0)
+                .map((c) => `${c.label} (${driftCountByColumnId[c.key]} คน)`)
+                .join(', ')}{' '}
+              — ไฟล์นี้จะใช้คะแนนที่บันทึกไว้ขณะนี้ หากต้องการใช้คะแนนล่าสุด ให้คำนวณใหม่ก่อน
+            </p>
+          )}
 
           {targetColumn && (
             <>
@@ -545,12 +763,67 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
           targetColumn={calcColumn}
           existingFormula={formulasByColumnId[calcColumn.id] ?? null}
           students={students}
-          existingTargetScores={scoresByColumnId[calcColumn.id] ?? {}}
+          // 0027: only TEACHER-OWNED values count as "existing" — an AUTO
+          // cell is always recalculated, an override/suppression is kept
+          // unless the teacher confirms เขียนทับ. Before 0027: every
+          // non-empty cell, exactly as before.
+          existingTargetScores={
+            supportsScoreOrigin
+              ? Object.fromEntries(
+                  Object.entries(resolvedByColumnId[calcColumn.id] ?? {})
+                    .filter(([, cell]) => cell.origin === 'override')
+                    .map(([studentId, cell]) => [studentId, cell.overrideScore]),
+                )
+              : (scoresByColumnId[calcColumn.id] ?? {})
+          }
+          supportsScoreOrigin={supportsScoreOrigin}
+          protectedStudentIds={
+            supportsScoreOrigin
+              ? new Set(
+                  Object.entries(resolvedByColumnId[calcColumn.id] ?? {})
+                    .filter(([, cell]) => cell.autoSuppressed)
+                    .map(([studentId]) => studentId),
+                )
+              : undefined
+          }
+          targetCells={supportsScoreOrigin ? resolvedByColumnId[calcColumn.id] : undefined}
           onApplied={async () => {
-            await Promise.all([refresh(), refreshFormulas()])
+            await Promise.all([refresh(), refreshFormulas(), refreshSources()])
           }}
         />
       )}
+
+      {detailCell &&
+        (() => {
+          const column = columns.find((c) => c.id === detailCell.columnId)
+          const student = students.find((s) => s.id === detailCell.studentId)
+          if (!column || !student) return null
+          const cell = resolvedByColumnId[column.id]?.[student.id] ?? resolveSgsScoreCell(undefined)
+          const formula = formulasByColumnId[column.id] ?? null
+          const live = liveByColumnId[column.id]
+          return (
+            <SgsScoreCellDialog
+              open
+              onOpenChange={(next) => {
+                if (!next) setDetailCell(null)
+              }}
+              columnLabel={column.label}
+              maxScore={column.maxScore}
+              studentName={`${student.firstName} ${student.lastName}`.trim()}
+              cell={cell}
+              formula={supportsScoreOrigin ? formula : null}
+              supportsOrigin={supportsScoreOrigin}
+              liveCalculated={live ? (live[student.id] ?? null) : undefined}
+              contributions={
+                formula && sourceData
+                  ? explainStudentCalculation(formula, sourceData.scoresByStudentIdAndAssignmentId[student.id] ?? {}, sourceData.sources)
+                  : []
+              }
+              busy={detailBusy}
+              onAction={handleDetailAction}
+            />
+          )
+        })()}
     </div>
   )
 }

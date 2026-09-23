@@ -5,7 +5,10 @@ import {
   SGS_SCORE_WORKSPACE_PAYLOAD_KIND,
   SGS_SCORE_WORKSPACE_PAYLOAD_VERSION,
   type CreateSgsScoreColumnInput,
+  type SgsScoreCellAction,
+  type SgsScoreCellRecord,
   type SgsScoreColumn,
+  type SgsScoreRecalculationValue,
   type SgsScoreWorkspaceColumnDefinition,
   type SgsScoreWorkspaceMultiPayload,
   type SgsScoreWorkspacePayload,
@@ -229,6 +232,156 @@ export async function setSgsScore(columnId: string, studentId: string, score: nu
     .from('sgs_scores')
     .upsert({ column_id: columnId, student_id: studentId, score }, { onConflict: 'column_id,student_id' })
   if (error) throw error
+}
+
+// ==================================================
+// Score origin (migration 0027) — cell reads and the three atomic RPCs.
+// ==================================================
+
+interface SgsScoreCellRow {
+  column_id: string
+  student_id: string
+  score: number | null
+  calculated_score?: number | null
+  override_score?: number | null
+  auto_suppressed?: boolean | null
+  calculated_at?: string | null
+}
+
+const SGS_SCORE_CELL_SELECT_WITH_ORIGIN = 'column_id, student_id, score, calculated_score, override_score, auto_suppressed, calculated_at'
+const SGS_SCORE_CELL_SELECT_LEGACY = 'column_id, student_id, score'
+
+/** Maps one sgs_scores row — a row read without the 0027 columns (the
+ * legacy select) maps to "no origin information": only `score`. PostgREST
+ * returns numeric columns as numbers; `Number()` guards a string-encoded
+ * numeric without ever turning null into 0. */
+export function mapSgsScoreCellRow(row: SgsScoreCellRow): SgsScoreCellRecord {
+  const num = (v: number | string | null | undefined): number | null => (v === null || v === undefined ? null : Number(v))
+  return {
+    score: num(row.score),
+    calculatedScore: num(row.calculated_score),
+    overrideScore: num(row.override_score),
+    autoSuppressed: row.auto_suppressed === true,
+    calculatedAt: row.calculated_at ?? null,
+  }
+}
+
+export interface SgsScoreCellsLoad {
+  /** false = migration 0027 is not applied to this database yet; the
+   * workspace then behaves exactly as it did before 0027 (plain scores,
+   * no AUTO/OVERRIDE). */
+  supportsScoreOrigin: boolean
+  /** columnId -> studentId -> record. Every requested column gets an
+   * entry (empty when it has no rows). */
+  cellsByColumnId: Record<string, Record<string, SgsScoreCellRecord>>
+}
+
+function groupCellRows(columnIds: string[], rows: SgsScoreCellRow[]): Record<string, Record<string, SgsScoreCellRecord>> {
+  const cellsByColumnId: Record<string, Record<string, SgsScoreCellRecord>> = {}
+  for (const id of columnIds) cellsByColumnId[id] = {}
+  for (const row of rows) {
+    ;(cellsByColumnId[row.column_id] ??= {})[row.student_id] = mapSgsScoreCellRow(row)
+  }
+  return cellsByColumnId
+}
+
+/**
+ * EVERY column's cells in ONE request (`.in('column_id', ids)`) — replaces
+ * the previous one-getSgsScores-per-column load.
+ *
+ * Migration safety (see the two live incidents documented above
+ * SGS_SCORE_COLUMN_SELECT and in score-calculation-modal.tsx): this first
+ * asks for the 0027 origin columns; if that request fails, it retries
+ * with the plain pre-0027 select and reports `supportsScoreOrigin:
+ * false`. An unapplied 0027 therefore degrades to the old behavior —
+ * never a broken workspace. A failure of the plain select is a real
+ * error and is thrown.
+ */
+export async function getSgsScoreCellsForColumns(columnIds: string[]): Promise<SgsScoreCellsLoad> {
+  if (columnIds.length === 0) return { supportsScoreOrigin: await probeSgsScoreOriginSupport(), cellsByColumnId: {} }
+
+  const supabase = getSupabaseClient()
+  const withOrigin = await supabase.from('sgs_scores').select(SGS_SCORE_CELL_SELECT_WITH_ORIGIN).in('column_id', columnIds)
+  if (!withOrigin.error) {
+    return { supportsScoreOrigin: true, cellsByColumnId: groupCellRows(columnIds, withOrigin.data as SgsScoreCellRow[]) }
+  }
+
+  const legacy = await supabase.from('sgs_scores').select(SGS_SCORE_CELL_SELECT_LEGACY).in('column_id', columnIds)
+  if (legacy.error) throw legacy.error
+  return { supportsScoreOrigin: false, cellsByColumnId: groupCellRows(columnIds, legacy.data as SgsScoreCellRow[]) }
+}
+
+/** Whether 0027's columns exist — used only when there are no columns
+ * to read yet (a workspace with zero columns). Never throws. */
+async function probeSgsScoreOriginSupport(): Promise<boolean> {
+  const supabase = getSupabaseClient()
+  const { error } = await supabase.from('sgs_scores').select('calculated_score').limit(1)
+  return !error
+}
+
+interface SgsScoreRpcRow extends SgsScoreCellRow {
+  id: string
+}
+
+/**
+ * One cell action through set_sgs_score_cell (0027) — the effective
+ * score is computed by the DATABASE from the row's own current
+ * calculated value, never sent from here, so a stale screen can never
+ * write a stale effective score. Returns the row as persisted, or null
+ * when clear_override targeted a cell that has no row.
+ */
+export async function setSgsScoreCell(
+  columnId: string,
+  studentId: string,
+  action: SgsScoreCellAction,
+  value: number | null = null,
+): Promise<SgsScoreCellRecord | null> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('set_sgs_score_cell', {
+    p_column_id: columnId,
+    p_student_id: studentId,
+    p_action: action,
+    p_value: value,
+  })
+  if (error) throw error
+  const row = data as SgsScoreRpcRow | null
+  return row && row.id ? mapSgsScoreCellRow(row) : null
+}
+
+/** Serializes recalculation values into recalculate_sgs_score_column's
+ * p_values shape. Pure — `null` stays JSON null, 0 stays 0. */
+export function buildSgsRecalculationPayload(values: SgsScoreRecalculationValue[]): { student_id: string; calculated_score: number | null; clear_override: boolean }[] {
+  return values.map((v) => ({
+    student_id: v.studentId,
+    calculated_score: v.calculatedScore,
+    clear_override: v.clearOverride === true,
+  }))
+}
+
+/**
+ * The whole column in ONE all-or-nothing transaction
+ * (recalculate_sgs_score_column, 0027): calculated values update for
+ * every listed student; overrides and per-student suppressions are kept
+ * unless an entry sets clearOverride. Returns how many rows were written.
+ */
+export async function recalculateSgsScoreColumn(columnId: string, values: SgsScoreRecalculationValue[]): Promise<number> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('recalculate_sgs_score_column', {
+    p_column_id: columnId,
+    p_values: buildSgsRecalculationPayload(values),
+  })
+  if (error) throw error
+  return Number(data ?? 0)
+}
+
+/** Confirmed bulk "ล้างคะแนนที่ครูกำหนดเองทั้งคอลัมน์" — every override
+ * and suppression in ONE column removed atomically (0027). Returns how
+ * many cells changed. */
+export async function resetSgsScoreColumnToAuto(columnId: string): Promise<number> {
+  const supabase = getSupabaseClient()
+  const { data, error } = await supabase.rpc('reset_sgs_score_column_to_auto', { p_column_id: columnId })
+  if (error) throw error
+  return Number(data ?? 0)
 }
 
 /**

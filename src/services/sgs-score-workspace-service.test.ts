@@ -500,7 +500,10 @@ describe('REGRESSION FIX: sgs-scores-tab.tsx keeps the base workspace load and t
     // fetch having completed at all.
     const headerBlock = source.slice(source.indexOf('{columns.map((column) => ('), source.indexOf('</th>\n                  ))}'))
     expect(headerBlock).toContain('setCalcColumn(column)')
-    expect(headerBlock).toContain("formulasByColumnId[column.id] ? 'มีสูตรคำนวณ' : 'คำนวณ'")
+    // Mapping indicator: "N งาน · Auto" with a saved mapping, "คำนวณ"
+    // without — both branches present, neither gated on the load.
+    expect(headerBlock).toContain('listFormulaSourceIds(formulasByColumnId[column.id]!).length} งาน ·')
+    expect(headerBlock).toContain(": 'คำนวณ'")
     expect(headerBlock).not.toContain('formulaLoadError')
     expect(headerBlock).not.toContain('loading &&')
   })

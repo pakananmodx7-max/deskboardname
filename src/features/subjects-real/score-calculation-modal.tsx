@@ -8,14 +8,18 @@ import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import {
   applySgsScoreCalculation,
+  applySgsScoreCalculationWithOrigin,
   calculateClassPreview,
   countExistingTargetScores,
+  describeFormulaSources,
   getSgsScoreCalculationSources,
   planSgsScoreCalculationApply,
   validateCalculationConfig,
   verifySgsScoreCalculationApply,
+  type SgsScoreCalculationAssignmentMeta,
 } from '@/services/sgs-score-calculation-service'
-import { getSgsScores, updateSgsScoreColumnFormula } from '@/services/sgs-score-workspace-service'
+import { computeSgsScoreColumnResetImpact } from '@/services/sgs-score-origin'
+import { getSgsScores, resetSgsScoreColumnToAuto, updateSgsScoreColumnFormula } from '@/services/sgs-score-workspace-service'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import {
   DEFAULT_SGS_SCORE_CALCULATION_MISSING_POLICY,
@@ -34,7 +38,7 @@ import type {
   SgsScoreCalculationSource,
   SgsScoreCalculationWeight,
 } from '@/types/sgs-score-calculation'
-import type { SgsScoreColumn } from '@/types/sgs-score-workspace'
+import type { ResolvedSgsScoreCell, SgsScoreColumn } from '@/types/sgs-score-workspace'
 import type { ClassroomStudent } from '@/types/student'
 
 interface ScoreCalculationModalProps {
@@ -56,11 +60,27 @@ interface ScoreCalculationModalProps {
    * the "ช่องนี้มีคะแนนอยู่แล้ว X คน" / skip-existing-by-default rule
    * (section 10). Never used as a calculation source. */
   existingTargetScores: Record<string, number | null>
+  /** Migration 0027 applied: applying writes calculated values through
+   * recalculate_sgs_score_column (one atomic transaction; teacher
+   * overrides kept) instead of plain setSgsScore. The tab then passes
+   * ONLY teacher-owned values as existingTargetScores, so AUTO cells are
+   * recalculated rather than "skipped because they already have a
+   * value". False/absent = the pre-0027 behavior, unchanged. */
+  supportsScoreOrigin?: boolean
+  /** Cells the teacher explicitly left empty ("ยกเลิกการคำนวณสำหรับ
+   * นักเรียนคนนี้") — protected like an existing value. */
+  protectedStudentIds?: ReadonlySet<string>
+  /** This column's resolved cells (0027) — used for the confirmed bulk
+   * reset's affected count and the "จะกลายเป็นว่าง" preview line. */
+  targetCells?: Record<string, ResolvedSgsScoreCell>
   /** Called after a successful save/apply so the tab can refetch and
    * show the new values/formula badge — this modal never mutates
    * anything in the parent directly. */
   onApplied: () => void | Promise<void>
 }
+
+const EMPTY_ID_SET: ReadonlySet<string> = new Set()
+const EMPTY_CELLS: Record<string, ResolvedSgsScoreCell> = {}
 
 /**
  * SGS SCORE CALCULATOR — a same-page overlay ONLY (see the spec's own
@@ -88,6 +108,9 @@ export function ScoreCalculationModal({
   existingFormula,
   students,
   existingTargetScores,
+  supportsScoreOrigin = false,
+  protectedStudentIds = EMPTY_ID_SET,
+  targetCells = EMPTY_CELLS,
   onApplied,
 }: ScoreCalculationModalProps) {
   const { toast } = useToast()
@@ -95,6 +118,8 @@ export function ScoreCalculationModal({
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [sources, setSources] = useState<SgsScoreCalculationSource[]>([])
+  const [assignmentsMeta, setAssignmentsMeta] = useState<SgsScoreCalculationAssignmentMeta[]>([])
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false)
   const [scoresByStudentIdAndAssignmentId, setScoresByStudentIdAndAssignmentId] = useState<Record<string, Record<string, number | null>>>({})
 
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
@@ -123,8 +148,9 @@ export function ScoreCalculationModal({
     setLoading(true)
     setLoadError(null)
     return getSgsScoreCalculationSources(subjectId, classroomId)
-      .then(({ sources: loadedSources, scoresByStudentIdAndAssignmentId: loadedScores }) => {
+      .then(({ sources: loadedSources, assignments: loadedAssignments, scoresByStudentIdAndAssignmentId: loadedScores }) => {
         setSources(loadedSources)
+        setAssignmentsMeta(loadedAssignments)
         setScoresByStudentIdAndAssignmentId(loadedScores)
 
         const formula = existingFormula
@@ -285,10 +311,15 @@ export function ScoreCalculationModal({
     setApplying(true)
     setApplyDiagnostic(null)
     try {
-      const plan = planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting)
+      const plan = planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting, protectedStudentIds)
       const totalToWrite = plan.filter((row) => row.action === 'write').length
       const skippedExisting = plan.filter((row) => row.action === 'skip_existing').length
-      const { written, failed } = await applySgsScoreCalculation(targetColumn.id, plan)
+      // 0027: ONE all-or-nothing transaction that keeps teacher
+      // overrides; before 0027: the original per-row setSgsScore path.
+      // Same result shape either way, so every rule below is unchanged.
+      const { written, failed } = supportsScoreOrigin
+        ? await applySgsScoreCalculationWithOrigin(targetColumn.id, plan)
+        : await applySgsScoreCalculation(targetColumn.id, plan)
 
       if (failed.length > 0) {
         // NEVER falsely reported as success — some/all rows failed to
@@ -397,7 +428,7 @@ export function ScoreCalculationModal({
     setWeights((prev) => prev.map((w) => (w.assignmentId === assignmentId ? { ...w, weightPercent } : w)))
   }
 
-  const existingCount = countExistingTargetScores(existingTargetScores)
+  const existingCount = countExistingTargetScores(existingTargetScores) + protectedStudentIds.size
 
   /**
    * IMPORTANT OVERWRITE SEMANTICS: the teacher must see, BEFORE
@@ -409,11 +440,31 @@ export function ScoreCalculationModal({
    * never drift from what actually happens.
    */
   const applyPlan = useMemo(
-    () => (preview ? planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting) : null),
-    [preview, existingTargetScores, overwriteExisting],
+    () => (preview ? planSgsScoreCalculationApply(preview, existingTargetScores, overwriteExisting, protectedStudentIds) : null),
+    [preview, existingTargetScores, overwriteExisting, protectedStudentIds],
   )
   const toWriteCount = applyPlan?.filter((row) => row.action === 'write').length ?? 0
   const skipExistingCount = applyPlan?.filter((row) => row.action === 'skip_existing').length ?? 0
+  // 0027: an AUTO cell whose sources are no longer calculable is EMPTIED
+  // by the recalculation (never left holding a stale number) — said out
+  // loud before the teacher confirms.
+  const autoWillEmptyCount = supportsScoreOrigin
+    ? (applyPlan?.filter((row) => row.action === 'skip_not_calculable' && targetCells[row.studentId]?.origin === 'auto').length ?? 0)
+    : 0
+  const resetImpact = computeSgsScoreColumnResetImpact(targetCells)
+  const resetCount = resetImpact.overrides + resetImpact.suppressed
+  const linkedSources = existingFormula ? describeFormulaSources(existingFormula, assignmentsMeta) : []
+
+  async function doResetToAuto() {
+    try {
+      const changed = await resetSgsScoreColumnToAuto(targetColumn.id)
+      toast(`กลับไปใช้คะแนนคำนวณแล้ว ${changed} คน`)
+      setConfirmResetOpen(false)
+      await onApplied()
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'ล้างคะแนนที่ครูกำหนดเองไม่สำเร็จ'))
+    }
+  }
 
   return (
     <>
@@ -430,6 +481,66 @@ export function ScoreCalculationModal({
             <p className="text-sm text-destructive">{loadError}</p>
           ) : (
             <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
+              {/* ที่มาคะแนน — the column's CURRENT source mapping (its saved
+               * formula), shown before any editing so the teacher can see
+               * exactly which assignments feed this column. */}
+              {existingFormula && (
+                <section className="space-y-2 rounded-lg border border-border bg-muted/20 p-3" aria-label="งานที่เชื่อมกับช่องนี้">
+                  <h3 className="text-sm font-semibold">
+                    งานที่เชื่อมกับช่องนี้ ({linkedSources.length} งาน · {SGS_SCORE_CALCULATION_MODE_LABEL[existingFormula.mode]})
+                  </h3>
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="text-xs text-muted-foreground">
+                        <th className="py-1 pr-3 font-medium">งาน</th>
+                        <th className="py-1 pr-3 font-medium">เต็ม</th>
+                        {existingFormula.mode !== 'proportional' && <th className="py-1 pr-3 font-medium">น้ำหนัก</th>}
+                        <th className="py-1 font-medium">สถานะ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {linkedSources.map((source, index) => (
+                        <tr key={`${source.assignmentId}-${index}`} className="border-t border-border">
+                          <td className="py-1 pr-3">
+                            {source.label}
+                            {source.groupLabel && <span className="ml-1 text-xs text-muted-foreground">({source.groupLabel})</span>}
+                          </td>
+                          <td className="py-1 pr-3 text-muted-foreground">{source.maxScore ?? '—'}</td>
+                          {existingFormula.mode !== 'proportional' && (
+                            <td className="py-1 pr-3 text-muted-foreground">{source.weightPercent !== null ? `${source.weightPercent}%` : '—'}</td>
+                          )}
+                          <td className="py-1 text-xs">
+                            {source.status === 'active' ? (
+                              <span className="text-muted-foreground">ใช้งานอยู่</span>
+                            ) : (
+                              <span className="text-destructive">{source.status === 'archived' ? 'เก็บถาวรแล้ว — ไม่ถูกนำมาคำนวณ' : 'ถูกลบแล้ว — ไม่ถูกนำมาคำนวณ'}</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="text-xs text-muted-foreground">
+                    {SGS_SCORE_CALCULATION_MISSING_POLICY_LABEL[existingFormula.missingScorePolicy]} · ปัดคะแนน {SGS_SCORE_CALCULATION_ROUNDING_LABEL[existingFormula.rounding]} — แก้ไขงานที่เชื่อมหรือวิธีคำนวณได้ในขั้นตอนด้านล่าง
+                  </p>
+                  {supportsScoreOrigin && resetCount > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2 text-sm">
+                      <span>
+                        ครูกำหนดคะแนนเอง <span className="font-semibold">{resetImpact.overrides}</span> คน
+                        {resetImpact.suppressed > 0 && (
+                          <>
+                            {' '}· ยกเลิกการคำนวณ <span className="font-semibold">{resetImpact.suppressed}</span> คน
+                          </>
+                        )}
+                      </span>
+                      <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={() => setConfirmResetOpen(true)}>
+                        กลับไปใช้คะแนนคำนวณทั้งคอลัมน์
+                      </Button>
+                    </div>
+                  )}
+                </section>
+              )}
+
               {/* 1. เลือกคะแนนต้นทาง */}
               <section className="space-y-2">
                 <h3 className="text-sm font-semibold">1. เลือกคะแนนต้นทาง</h3>
@@ -637,6 +748,11 @@ export function ScoreCalculationModal({
                         จะข้ามเพราะมีคะแนนเดิม <span className="font-semibold">{skipExistingCount}</span> คน
                       </span>
                     )}
+                    {autoWillEmptyCount > 0 && (
+                      <span className="text-destructive">
+                        คำนวณไม่ได้ — ช่องคำนวณอัตโนมัติจะกลายเป็นว่าง <span className="font-semibold">{autoWillEmptyCount}</span> คน
+                      </span>
+                    )}
                   </div>
 
                   <div className="max-h-72 overflow-y-auto rounded-lg border border-border">
@@ -679,7 +795,16 @@ export function ScoreCalculationModal({
                   {existingCount > 0 && (
                     <div className="space-y-1.5 rounded-lg border border-border bg-muted/30 p-3">
                       <p className="text-sm">
-                        ช่อง "{targetColumn.label}" มีคะแนนอยู่แล้ว <span className="font-semibold">{existingCount}</span> คน
+                        {supportsScoreOrigin ? (
+                          <>
+                            ช่อง "{targetColumn.label}" มีคะแนนที่ครูกำหนดเอง (หรือยกเลิกการคำนวณไว้){' '}
+                            <span className="font-semibold">{existingCount}</span> คน — คะแนนคำนวณอัตโนมัติจะอัปเดตเสมอ
+                          </>
+                        ) : (
+                          <>
+                            ช่อง "{targetColumn.label}" มีคะแนนอยู่แล้ว <span className="font-semibold">{existingCount}</span> คน
+                          </>
+                        )}
                       </p>
                       <label className="flex items-center gap-2 text-sm">
                         <input
@@ -729,6 +854,16 @@ export function ScoreCalculationModal({
         confirmLabel="ยืนยันเขียนทับ"
         destructive
         onConfirm={doApply}
+      />
+
+      <ConfirmDialog
+        open={confirmResetOpen}
+        onOpenChange={setConfirmResetOpen}
+        title="กลับไปใช้คะแนนคำนวณทั้งคอลัมน์?"
+        description={`ช่อง "${targetColumn.label}": จะลบคะแนนที่ครูกำหนดเอง ${resetImpact.overrides} คน และยกเลิกการงดคำนวณ ${resetImpact.suppressed} คน (รวม ${resetCount} คน)\nนักเรียนกลุ่มนี้จะใช้คะแนนที่คำนวณจากงานต้นทางแทน${resetImpact.becomeEmpty > 0 ? `\nในจำนวนนี้ ${resetImpact.becomeEmpty} คนยังไม่มีคะแนนคำนวณ — ช่องจะกลายเป็นว่าง` : ''}`}
+        confirmLabel={`ยืนยัน (${resetCount} คน)`}
+        destructive
+        onConfirm={doResetToAuto}
       />
     </>
   )

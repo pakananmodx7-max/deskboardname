@@ -1,5 +1,6 @@
-import { getAssignments, getSubmissions } from '@/services/assignment-service'
-import { setSgsScore } from '@/services/sgs-score-workspace-service'
+import { getAssignments, getSubmissionsForAssignments } from '@/services/assignment-service'
+import { recalculateSgsScoreColumn, setSgsScore } from '@/services/sgs-score-workspace-service'
+import type { SgsScoreRecalculationValue } from '@/types/sgs-score-workspace'
 import type {
   SgsScoreCalculationConfigValidation,
   SgsScoreCalculationFormula,
@@ -330,13 +331,17 @@ export function planSgsScoreCalculationApply(
   preview: SgsScoreCalculationPreview,
   existingScoresByStudentId: Record<string, number | null>,
   overwriteExisting: boolean,
+  // Students whose cell the teacher explicitly left EMPTY ("ยกเลิกการ
+  // คำนวณสำหรับนักเรียนคนนี้", migration 0027) — protected exactly like an
+  // existing value: never written unless overwriteExisting.
+  protectedStudentIds: ReadonlySet<string> = new Set(),
 ): SgsScoreCalculationApplyPlanRow[] {
   return preview.rows.map((row) => {
     if (row.result.status !== 'ok') {
       return { studentId: row.studentId, action: 'skip_not_calculable', calculatedScore: null }
     }
     const existing = existingScoresByStudentId[row.studentId] ?? null
-    if (existing !== null && !overwriteExisting) {
+    if ((existing !== null || protectedStudentIds.has(row.studentId)) && !overwriteExisting) {
       return { studentId: row.studentId, action: 'skip_existing', calculatedScore: row.result.calculatedScore }
     }
     return { studentId: row.studentId, action: 'write', calculatedScore: row.result.calculatedScore }
@@ -455,21 +460,33 @@ export function verifySgsScoreCalculationApply(
 
 // ==================================================
 // Source retrieval — wraps the EXISTING canonical assignment score
-// query (assignment-service.ts's getAssignments/getSubmissions), never
-// a new/parallel score-retrieval path. Only active (non-archived)
-// assignments are offered as calculator sources.
+// query (assignment-service.ts's getAssignments + its batched
+// getSubmissionsForAssignments — ONE submissions request for every
+// source, never one per assignment), never a new/parallel
+// score-retrieval path. Only active (non-archived) assignments are
+// offered as calculator sources; `assignments` carries every assignment
+// (archived included) so a saved mapping can show which of its sources
+// is no longer active.
 // ==================================================
+
+export interface SgsScoreCalculationAssignmentMeta {
+  assignmentId: string
+  label: string
+  maxScore: number
+  isArchived: boolean
+}
 
 export async function getSgsScoreCalculationSources(
   subjectId: string,
   classroomId: string,
 ): Promise<{
   sources: SgsScoreCalculationSource[]
+  assignments: SgsScoreCalculationAssignmentMeta[]
   scoresByStudentIdAndAssignmentId: Record<string, Record<string, number | null>>
 }> {
-  const assignments = await getAssignments(subjectId, classroomId)
-  const activeAssignments = assignments.filter((a) => !a.isArchived)
-  const submissionsByAssignment = await Promise.all(activeAssignments.map((a) => getSubmissions(a.id)))
+  const allAssignments = await getAssignments(subjectId, classroomId)
+  const activeAssignments = allAssignments.filter((a) => !a.isArchived)
+  const submissionsByAssignment = await getSubmissionsForAssignments(activeAssignments.map((a) => a.id))
 
   const sources: SgsScoreCalculationSource[] = activeAssignments.map((a) => ({
     assignmentId: a.id,
@@ -478,12 +495,223 @@ export async function getSgsScoreCalculationSources(
   }))
 
   const scoresByStudentIdAndAssignmentId: Record<string, Record<string, number | null>> = {}
-  activeAssignments.forEach((assignment, index) => {
-    for (const [studentId, submission] of Object.entries(submissionsByAssignment[index])) {
+  for (const assignment of activeAssignments) {
+    for (const [studentId, submission] of Object.entries(submissionsByAssignment[assignment.id] ?? {})) {
       scoresByStudentIdAndAssignmentId[studentId] ??= {}
       scoresByStudentIdAndAssignmentId[studentId][assignment.id] = submission.score
     }
-  })
+  }
 
-  return { sources, scoresByStudentIdAndAssignmentId }
+  return {
+    sources,
+    assignments: allAssignments.map((a) => ({ assignmentId: a.id, label: a.title, maxScore: a.maxScore, isArchived: a.isArchived })),
+    scoresByStudentIdAndAssignmentId,
+  }
+}
+
+// ==================================================
+// Source mapping — "which assignments feed this column" (the column's
+// saved calculation_formula IS the mapping; there is no separate mapping
+// table, on purpose).
+// ==================================================
+
+/** Every distinct source assignment id a formula reads, in the formula's
+ * own order. */
+export function listFormulaSourceIds(formula: SgsScoreCalculationFormula): string[] {
+  const ids =
+    formula.mode === 'proportional'
+      ? formula.sourceAssignmentIds
+      : formula.mode === 'weighted_groups'
+        ? formula.groups.flatMap((g) => g.sourceAssignmentIds)
+        : formula.weights.map((w) => w.assignmentId)
+  return Array.from(new Set(ids))
+}
+
+export type SgsFormulaSourceStatus = 'active' | 'archived' | 'missing'
+
+export interface SgsFormulaSourceDescription {
+  assignmentId: string
+  /** The assignment's CURRENT title, or a placeholder when it no longer
+   * exists. */
+  label: string
+  maxScore: number | null
+  /** Group label (weighted_groups) — null otherwise. */
+  groupLabel: string | null
+  /** Weight % of this source's group (weighted_groups) or of this item
+   * (individual_weights) — null for proportional. */
+  weightPercent: number | null
+  status: SgsFormulaSourceStatus
+}
+
+/** One row per linked source for the "ที่มาคะแนน" panels — never throws
+ * on a deleted/archived source, it reports it (status) instead. */
+export function describeFormulaSources(
+  formula: SgsScoreCalculationFormula,
+  assignments: SgsScoreCalculationAssignmentMeta[],
+): SgsFormulaSourceDescription[] {
+  const byId = new Map(assignments.map((a) => [a.assignmentId, a]))
+  function describe(assignmentId: string, groupLabel: string | null, weightPercent: number | null): SgsFormulaSourceDescription {
+    const meta = byId.get(assignmentId)
+    return {
+      assignmentId,
+      label: meta?.label ?? 'งานที่ถูกลบไปแล้ว',
+      maxScore: meta?.maxScore ?? null,
+      groupLabel,
+      weightPercent,
+      status: !meta ? 'missing' : meta.isArchived ? 'archived' : 'active',
+    }
+  }
+  if (formula.mode === 'proportional') return formula.sourceAssignmentIds.map((id) => describe(id, null, null))
+  if (formula.mode === 'weighted_groups') {
+    return formula.groups.flatMap((g) => g.sourceAssignmentIds.map((id) => describe(id, g.label, g.weightPercent)))
+  }
+  return formula.weights.map((w) => describe(w.assignmentId, null, w.weightPercent))
+}
+
+export interface SgsSourceContribution {
+  assignmentId: string
+  label: string
+  maxScore: number
+  /** The student's raw score; null = no score (never shown as 0). */
+  rawScore: number | null
+  /** Points this source adds to the (unrounded) calculated score, or
+   * null when it is excluded (missing under the "exclude" policy) or the
+   * student's result is not calculable. */
+  contribution: number | null
+}
+
+/**
+ * Per-source breakdown for ONE student — what each linked assignment
+ * contributed to the calculated score, using exactly
+ * calculateStudentSgsScore's rules. Contributions are unrounded, so their
+ * sum can differ from the rounded calculated score by the rounding step
+ * only. Sources that are not currently available (archived/deleted) are
+ * left out, matching how the calculation itself ignores them.
+ */
+export function explainStudentCalculation(
+  formula: SgsScoreCalculationFormula,
+  scoresByAssignmentId: Record<string, number | null>,
+  sources: SgsScoreCalculationSource[],
+): SgsSourceContribution[] {
+  const sourcesById = new Map(sources.map((s) => [s.assignmentId, s]))
+  const result = calculateStudentSgsScore(formula, scoresByAssignmentId, sources)
+  const ok = result.status === 'ok'
+
+  function rawOf(id: string): number | null {
+    return scoresByAssignmentId[id] ?? null
+  }
+  function row(id: string, contribution: number | null): SgsSourceContribution | null {
+    const source = sourcesById.get(id)
+    if (!source) return null
+    return { assignmentId: id, label: source.label, maxScore: source.maxScore, rawScore: rawOf(id), contribution: ok ? contribution : null }
+  }
+  function counted(id: string): boolean {
+    return rawOf(id) !== null || formula.missingScorePolicy === 'treat_as_zero'
+  }
+
+  const rows: (SgsSourceContribution | null)[] = []
+  if (formula.mode === 'proportional') {
+    const usedMax = formula.sourceAssignmentIds.filter((id) => sourcesById.has(id) && counted(id)).reduce((sum, id) => sum + sourcesById.get(id)!.maxScore, 0)
+    for (const id of formula.sourceAssignmentIds) {
+      rows.push(row(id, counted(id) && usedMax > 0 ? ((rawOf(id) ?? 0) / usedMax) * formula.targetMaxScore : null))
+    }
+  } else if (formula.mode === 'weighted_groups') {
+    for (const group of formula.groups) {
+      const groupMax = group.sourceAssignmentIds.filter((id) => sourcesById.has(id) && counted(id)).reduce((sum, id) => sum + sourcesById.get(id)!.maxScore, 0)
+      for (const id of group.sourceAssignmentIds) {
+        rows.push(
+          row(id, counted(id) && groupMax > 0 ? ((rawOf(id) ?? 0) / groupMax) * (group.weightPercent / 100) * formula.targetMaxScore : null),
+        )
+      }
+    }
+  } else {
+    for (const weight of formula.weights) {
+      const source = sourcesById.get(weight.assignmentId)
+      const raw = rawOf(weight.assignmentId)
+      rows.push(
+        row(
+          weight.assignmentId,
+          source && counted(weight.assignmentId) ? ((raw ?? 0) / source.maxScore) * (weight.weightPercent / 100) * formula.targetMaxScore : null,
+        ),
+      )
+    }
+  }
+  return rows.filter((r): r is SgsSourceContribution => r !== null)
+}
+
+/**
+ * The CURRENT calculated value per roster student from the column's
+ * saved formula and today's source scores — what the persisted
+ * calculated_score is compared against to flag "คะแนนต้นทางเปลี่ยน".
+ * Returns null when the formula cannot run as saved (a source was
+ * archived/deleted, weights no longer valid, or the column's max score
+ * changed since the formula was saved) — the caller then reports "ต้อง
+ * ตั้งค่าใหม่" instead of guessing. `null` per student = not calculable.
+ */
+export function computeLiveCalculatedScores(
+  formula: SgsScoreCalculationFormula,
+  columnMaxScore: number,
+  studentIds: string[],
+  scoresByStudentIdAndAssignmentId: Record<string, Record<string, number | null>>,
+  sources: SgsScoreCalculationSource[],
+): Record<string, number | null> | null {
+  if (formula.targetMaxScore !== columnMaxScore) return null
+  if (!validateCalculationConfig(formula, sources.map((s) => s.assignmentId)).ok) return null
+  const live: Record<string, number | null> = {}
+  for (const studentId of studentIds) {
+    const result = calculateStudentSgsScore(formula, scoresByStudentIdAndAssignmentId[studentId] ?? {}, sources)
+    live[studentId] = result.status === 'ok' ? result.calculatedScore : null
+  }
+  return live
+}
+
+// ==================================================
+// Origin-aware apply (migration 0027)
+// ==================================================
+
+/**
+ * Turns an approved apply plan into recalculate_sgs_score_column's input:
+ *   write               -> the calculated value, clearOverride (the cell
+ *                          becomes AUTO; this is only planned for an
+ *                          empty/AUTO cell or after the teacher confirmed
+ *                          "เขียนทับคะแนนเดิม")
+ *   skip_existing       -> the calculated value, overrides/suppression
+ *                          KEPT (calculated_score still updates, so the
+ *                          teacher can see the source value next to their
+ *                          own)
+ *   skip_not_calculable -> null (an AUTO cell becomes EMPTY instead of
+ *                          keeping a stale number; an override is kept)
+ */
+export function buildRecalculationValuesFromPlan(plan: SgsScoreCalculationApplyPlanRow[]): SgsScoreRecalculationValue[] {
+  return plan.map((row) => ({
+    studentId: row.studentId,
+    calculatedScore: row.action === 'skip_not_calculable' ? null : row.calculatedScore,
+    clearOverride: row.action === 'write',
+  }))
+}
+
+/**
+ * The 0027 counterpart of applySgsScoreCalculation: the WHOLE plan in one
+ * all-or-nothing transaction. Same result shape, so the modal's success/
+ * read-back rules are unchanged: on failure every planned write is
+ * reported failed (nothing was written — the transaction rolled back),
+ * never a partial class.
+ */
+export async function applySgsScoreCalculationWithOrigin(
+  columnId: string,
+  plan: SgsScoreCalculationApplyPlanRow[],
+  recalculate: (columnId: string, values: SgsScoreRecalculationValue[]) => Promise<number> = recalculateSgsScoreColumn,
+): Promise<SgsScoreCalculationApplyResult> {
+  const toWrite = plan.filter((row) => row.action === 'write')
+  try {
+    await recalculate(columnId, buildRecalculationValuesFromPlan(plan))
+    return { written: toWrite.length, failed: [] }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    // Never an empty `failed` on a failed transaction — even a plan with
+    // no 'write' rows (only calculated-value refreshes) must be reported
+    // as a failure, not read by the caller as success.
+    const attempted = toWrite.length > 0 ? toWrite : plan
+    return { written: 0, failed: attempted.map((row) => ({ studentId: row.studentId, message })) }
+  }
 }
