@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, Download } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
+import { exportStudentSummaryPng } from '@/features/student-analytics/student-summary-export'
 import {
   buildStudentAnalyticsPath,
   buildSubjectClassroomPath,
@@ -50,6 +51,11 @@ export function StudentAnalyticsPage() {
   const [classroom, setClassroom] = useState<Classroom | null | undefined>(undefined)
   const [roster, setRoster] = useState<ClassroomStudent[]>([])
   const [snapshot, setSnapshot] = useState<StudentAnalyticsSnapshot | null>(null)
+  /** Which student `snapshot` belongs to — the export is only enabled
+   * when it matches the student in the URL, so it can never produce an
+   * image of the previously-viewed student. */
+  const [snapshotStudentId, setSnapshotStudentId] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
   const [notes, setNotes] = useState<StudentFollowUpNote[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +79,7 @@ export function StudentAnalyticsPage() {
         setClassroom(classroomRow)
         setRoster(rosterRows)
         setSnapshot(snapshotResult)
+        setSnapshotStudentId(studentId)
         setNotes(notesResult)
       })
       .catch((err: unknown) => {
@@ -116,6 +123,29 @@ export function StudentAnalyticsPage() {
     navigate(buildStudentAnalyticsPath(subjectId!, classroomId!, nextStudentId))
   }
 
+  /** "ดาวน์โหลดภาพสรุป" — built at click time from exactly what this page
+   * is showing (currentStudent, subject, classroom, snapshot); no new
+   * analytics query. */
+  const canExport = snapshot !== null && snapshotStudentId === studentId && !exporting
+  async function handleExportSummary() {
+    if (!snapshot || snapshotStudentId !== studentId || !currentStudent || !subject || !classroom) return
+    setExporting(true)
+    try {
+      const filename = await exportStudentSummaryPng({
+        student: currentStudent,
+        subjectName: subject.name,
+        classroom,
+        snapshot,
+        generatedAt: new Date(),
+      })
+      toast(`ดาวน์โหลด ${filename} แล้ว`)
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'สร้างภาพสรุปไม่สำเร็จ'))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   async function refreshNotes() {
     const rows = await getStudentFollowUpNotes(studentId!, classroomId!, subjectId!)
     setNotes(rows)
@@ -124,14 +154,20 @@ export function StudentAnalyticsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <button
-          type="button"
-          onClick={() => navigate(buildSubjectClassroomTabPath(subjectId, classroomId, 'students'))}
-          className="mb-2 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" />
-          กลับไปรายชื่อนักเรียน
-        </button>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => navigate(buildSubjectClassroomTabPath(subjectId, classroomId, 'students'))}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="size-3.5" />
+            กลับไปรายชื่อนักเรียน
+          </button>
+          <Button size="sm" onClick={() => void handleExportSummary()} disabled={!canExport} aria-label="ดาวน์โหลดภาพสรุปนักเรียนรายบุคคล">
+            <Download className="size-3.5" />
+            {exporting ? 'กำลังสร้างภาพ...' : 'ดาวน์โหลดภาพสรุป'}
+          </Button>
+        </div>
 
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-3">
