@@ -37,6 +37,7 @@ import { SettingsPage } from '@/pages/teacher/settings/settings-page'
 import { StudentLinkRequestsPage } from '@/pages/teacher/student-link-requests/student-link-requests-page'
 import { StudentsSectionLayout } from '@/pages/teacher/students/students-section-layout'
 import { StudentsPage } from '@/pages/teacher/students/students-page'
+import { StudentAnalyticsPage } from '@/pages/teacher/subjects/student-analytics-page'
 import { SubjectClassroomAssignmentDetailPage } from '@/pages/teacher/subjects/subject-classroom-assignment-detail-page'
 import { SubjectClassroomWorkspacePage } from '@/pages/teacher/subjects/subject-classroom-workspace-page'
 import { SubjectDetailPage } from '@/pages/teacher/subjects/subject-detail-page'
@@ -122,6 +123,10 @@ const router = createBrowserRouter([
       {
         path: 'subjects/:subjectId/classrooms/:classroomId/assignments/:assignmentId',
         element: <SubjectClassroomAssignmentDetailPage />,
+      },
+      {
+        path: 'subjects/:subjectId/classrooms/:classroomId/students/:studentId/analytics',
+        element: <StudentAnalyticsPage />,
       },
       { path: 'attendance', element: <AttendanceRedirectPage /> },
       { path: 'assignments', element: <AssignmentsRedirectPage /> },

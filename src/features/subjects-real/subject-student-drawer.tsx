@@ -1,4 +1,6 @@
+import { ChartSpline } from 'lucide-react'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import { Avatar } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -6,10 +8,13 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useToast } from '@/components/ui/toast'
 import { SendNotificationDialog } from '@/features/student-notifications/send-notification-dialog'
+import { buildStudentAnalyticsPath } from '@/features/subjects-shared/subject-classroom-nav'
 import type { ClassroomStudent } from '@/types/student'
 
 interface SubjectStudentDrawerProps {
+  subjectId: string
   subjectName: string
+  classroomId: string
   classroomName: string
   student: ClassroomStudent | null
   onOpenChange: (open: boolean) => void
@@ -20,8 +25,9 @@ interface SubjectStudentDrawerProps {
  * classroom-scoped (see subject-classroom-workspace-page-real.tsx), the
  * viewed student is always a plain ClassroomStudent from the selected
  * classroom, not a merged SubjectStudentView. */
-export function SubjectStudentDrawer({ subjectName, classroomName, student, onOpenChange }: SubjectStudentDrawerProps) {
+export function SubjectStudentDrawer({ subjectId, subjectName, classroomId, classroomName, student, onOpenChange }: SubjectStudentDrawerProps) {
   const { toast } = useToast()
+  const navigate = useNavigate()
   const [messagingOpen, setMessagingOpen] = useState(false)
 
   if (!student) return null
@@ -70,9 +76,15 @@ export function SubjectStudentDrawer({ subjectName, classroomName, student, onOp
           </div>
         </div>
 
-        <Button variant="outline" onClick={() => setMessagingOpen(true)}>
-          ส่งข้อความ
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => setMessagingOpen(true)}>
+            ส่งข้อความ
+          </Button>
+          <Button variant="outline" onClick={() => navigate(buildStudentAnalyticsPath(subjectId, classroomId, student.id))}>
+            <ChartSpline className="size-4" />
+            วิเคราะห์นักเรียน
+          </Button>
+        </div>
       </SheetContent>
 
       <SendNotificationDialog

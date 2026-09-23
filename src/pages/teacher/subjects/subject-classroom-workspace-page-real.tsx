@@ -293,6 +293,7 @@ export function SubjectClassroomWorkspacePageReal() {
         {activeTab === 'overview' && <OverviewTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'students' && (
           <StudentsTab
+            subjectId={subject.id}
             subjectName={subject.name}
             classroomId={activeClassroomId}
             classroomName={currentLink.classroomName ?? ''}

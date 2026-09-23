@@ -8,6 +8,7 @@ import type { ClassroomStudent } from '@/types/student'
 import { SubjectStudentDrawer } from '../subject-student-drawer'
 
 interface StudentsTabProps {
+  subjectId: string
   subjectName: string
   classroomId: string
   classroomName: string
@@ -21,7 +22,7 @@ interface StudentsTabProps {
  * every other classroom-scoped screen in the app uses, rather than the
  * subject-wide getSubjectStudents derivation.
  */
-export function StudentsTab({ subjectName, classroomId, classroomName }: StudentsTabProps) {
+export function StudentsTab({ subjectId, subjectName, classroomId, classroomName }: StudentsTabProps) {
   const [students, setStudents] = useState<ClassroomStudent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -98,7 +99,9 @@ export function StudentsTab({ subjectName, classroomId, classroomName }: Student
       </Card>
 
       <SubjectStudentDrawer
+        subjectId={subjectId}
         subjectName={subjectName}
+        classroomId={classroomId}
         classroomName={classroomName}
         student={viewingStudent}
         onOpenChange={(open) => !open && setViewingStudent(null)}
