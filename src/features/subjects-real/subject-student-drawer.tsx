@@ -82,7 +82,7 @@ export function SubjectStudentDrawer({ subjectId, subjectName, classroomId, clas
           </Button>
           <Button variant="outline" onClick={() => navigate(buildStudentAnalyticsPath(subjectId, classroomId, student.id))}>
             <ChartSpline className="size-4" />
-            วิเคราะห์นักเรียน
+            วิเคราะห์รายบุคคล
           </Button>
         </div>
       </SheetContent>

@@ -75,8 +75,9 @@ export function buildAssignmentDetailPath(subjectId: string, classroomId: string
 }
 
 /** The one canonical place the วิเคราะห์นักเรียน (Student Analytics) route
- * shape is built — used by the subject workspace's Students tab drawer
- * (subject-student-drawer.tsx) to link into StudentAnalyticsPage. */
+ * shape is built — used by the subject workspace's Students tab (its
+ * "วิเคราะห์รายบุคคล" ⋮ item and subject-student-drawer.tsx's button) to
+ * link into StudentAnalyticsPage. */
 export function buildStudentAnalyticsPath(subjectId: string, classroomId: string, studentId: string): string {
   return `${buildSubjectClassroomPath(subjectId, classroomId)}/students/${studentId}/analytics`
 }

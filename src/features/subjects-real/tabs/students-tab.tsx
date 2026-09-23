@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import { Card, CardContent } from '@/components/ui/card'
+import { RowActionsMenu } from '@/components/ui/row-actions-menu'
+import { buildStudentAnalyticsPath } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { getStudentsByClassroom } from '@/services/student-service'
 import type { ClassroomStudent } from '@/types/student'
@@ -27,6 +30,7 @@ export function StudentsTab({ subjectId, subjectName, classroomId, classroomName
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [viewingStudent, setViewingStudent] = useState<ClassroomStudent | null>(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     let active = true
@@ -60,18 +64,19 @@ export function StudentsTab({ subjectId, subjectName, classroomId, classroomName
                   <th className="px-5 py-3 font-medium">เลขที่</th>
                   <th className="px-5 py-3 font-medium">ชื่อ-นามสกุล</th>
                   <th className="px-5 py-3 font-medium">สถานะ</th>
+                  <th className="w-12 px-3 py-3" aria-label="ตัวเลือก" />
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={3} className="px-5 py-6 text-center text-muted-foreground">
+                    <td colSpan={4} className="px-5 py-6 text-center text-muted-foreground">
                       กำลังโหลด...
                     </td>
                   </tr>
                 ) : students.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-5 py-6 text-center text-muted-foreground">
+                    <td colSpan={4} className="px-5 py-6 text-center text-muted-foreground">
                       ยังไม่มีนักเรียนในห้องเรียนนี้
                     </td>
                   </tr>
@@ -88,6 +93,21 @@ export function StudentsTab({ subjectId, subjectName, classroomId, classroomName
                       </td>
                       <td className="px-5 py-3 text-muted-foreground">
                         {student.status === 'active' ? 'กำลังเรียน' : 'ไม่ได้ใช้งาน'}
+                      </td>
+                      <td className="px-3 py-2">
+                        {/* The row click still opens the drawer; the ⋮ trigger
+                         * stops propagation (RowActionsMenu), so choosing an
+                         * item never also triggers the row. */}
+                        <RowActionsMenu
+                          actions={[
+                            { key: 'view', label: 'ดูรายละเอียด', onSelect: () => setViewingStudent(student) },
+                            {
+                              key: 'analytics',
+                              label: 'วิเคราะห์รายบุคคล',
+                              onSelect: () => navigate(buildStudentAnalyticsPath(subjectId, classroomId, student.id)),
+                            },
+                          ]}
+                        />
                       </td>
                     </tr>
                   ))
