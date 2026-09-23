@@ -7,12 +7,20 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { ScoreCalculationModal } from '@/features/subjects-real/score-calculation-modal'
+import { SgsColumnSourcesDialog, type SgsColumnOriginCounts } from '@/features/subjects-real/sgs-column-sources-dialog'
 import { SgsScoreCell } from '@/features/subjects-real/sgs-score-cell'
 import { SgsScoreCellDialog, type SgsScoreCellDialogAction } from '@/features/subjects-real/sgs-score-cell-dialog'
 import { parseScoreInput } from '@/services/assignment-service'
 import {
+  convertSgsScoreColumnToAuto,
+  countSgsOverrideCells,
+  recalculateSgsCellFromSources,
+  sgsAutoRecalculation,
+} from '@/services/sgs-score-auto-service'
+import {
+  buildStudentSourceScoreRows,
   computeLiveCalculatedScores,
-  explainStudentCalculation,
+  describeFormulaSources,
   getSgsScoreCalculationSources,
   listFormulaSourceIds,
   type SgsScoreCalculationAssignmentMeta,
@@ -120,7 +128,12 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
   const refresh = useCallback(() => {
     setLoading(true)
     setError(null)
-    return Promise.all([getSgsScoreColumns(subjectId, classroomId), getStudentsByClassroom(classroomId)])
+    // A source-assignment score saved moments ago (another tab of this
+    // workspace) may still be recalculating its SGS columns — wait for
+    // that first so this load never shows the pre-save values.
+    return sgsAutoRecalculation
+      .flush(subjectId, classroomId)
+      .then(() => Promise.all([getSgsScoreColumns(subjectId, classroomId), getStudentsByClassroom(classroomId)]))
       .then(async ([columnRows, studentRows]) => {
         setColumns(columnRows)
         setStudents(studentRows)
@@ -142,7 +155,7 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
     setFormulaLoadError(null)
     return getSgsScoreColumnFormulas(subjectId, classroomId)
       .then((formulas) => setFormulasByColumnId(formulas))
-      .catch((err: unknown) => setFormulaLoadError(toFriendlyErrorMessage(err, 'ไม่สามารถโหลดสูตรคำนวณที่บันทึกไว้ได้ — ยังคำนวณคะแนนใหม่ได้ตามปกติ')))
+      .catch((err: unknown) => setFormulaLoadError(`ไม่สามารถโหลดงานที่เชื่อมกับช่อง SGS ได้ (${toFriendlyErrorMessage(err, 'โหลดสูตรคำนวณไม่สำเร็จ')}) — จึงแสดงงานที่เชื่อมและคำนวณอัตโนมัติไม่ได้ หากฐานข้อมูลยังไม่มีคอลัมน์ calculation_formula ต้องติดตั้ง migration 0025 ก่อน`))
   }, [subjectId, classroomId])
 
   useEffect(() => {
@@ -160,10 +173,17 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
     scoresByStudentIdAndAssignmentId: Record<string, Record<string, number | null>>
   } | null>(null)
   const hasAnyFormula = Object.values(formulasByColumnId).some((f) => f !== null)
+  const [sourceLoadError, setSourceLoadError] = useState<string | null>(null)
   const refreshSources = useCallback(() => {
     return getSgsScoreCalculationSources(subjectId, classroomId)
-      .then((data) => setSourceData(data))
-      .catch(() => setSourceData(null))
+      .then((data) => {
+        setSourceData(data)
+        setSourceLoadError(null)
+      })
+      .catch((err: unknown) => {
+        setSourceData(null)
+        setSourceLoadError(toFriendlyErrorMessage(err, 'ไม่สามารถโหลดงานต้นทางได้'))
+      })
   }, [subjectId, classroomId])
   useEffect(() => {
     if (hasAnyFormula) void refreshSources()
@@ -282,6 +302,22 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
         await reloadCell(column.id, studentId)
         return
       }
+      const mappedFormula = formulasByColumnId[column.id]
+      if (action === 'clear_override' && mappedFormula) {
+        // "กลับไปใช้คะแนนคำนวณ": recalculate from FRESH source scores and
+        // clear the override in the same RPC call, so the effective score
+        // is today's calculated value — never a calculated_score stored
+        // before a source score changed (or never stored, for a legacy
+        // cell backfilled as an override).
+        const restored = await recalculateSgsCellFromSources(subjectId, classroomId, column, mappedFormula, studentId, true)
+        if (restored) {
+          setSourceData(restored.sourceData)
+          await reloadCell(column.id, studentId)
+          return
+        }
+        // The mapping can't run as saved — fall through to the plain
+        // clear_override (uses the stored calculated value).
+      }
       const record = await setSgsScoreCell(column.id, studentId, action, action === 'override' ? (value ?? null) : null)
       storeCellRecord(column.id, studentId, record)
     })
@@ -289,6 +325,46 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
 
   const [detailCell, setDetailCell] = useState<{ columnId: string; studentId: string } | null>(null)
   const [detailBusy, setDetailBusy] = useState(false)
+
+  /** "🔗 N งาน · Auto" — the column-sources dialog (see
+   * sgs-column-sources-dialog.tsx). Opening it re-reads the source
+   * assignments so names/max scores are current. */
+  const [sourcesColumn, setSourcesColumn] = useState<SgsScoreColumn | null>(null)
+  const [convertBusy, setConvertBusy] = useState(false)
+
+  function openSourcesDialog(column: SgsScoreColumn) {
+    setSourcesColumn(column)
+    void refreshSources()
+  }
+
+  function originCountsFor(columnId: string): SgsColumnOriginCounts {
+    const counts: SgsColumnOriginCounts = { auto: 0, override: 0, suppressed: 0, empty: 0 }
+    for (const cell of Object.values(resolvedByColumnId[columnId] ?? {})) {
+      if (cell.origin === 'auto') counts.auto += 1
+      else if (cell.origin === 'override') counts.override += 1
+      else if (cell.autoSuppressed) counts.suppressed += 1
+      else counts.empty += 1
+    }
+    return counts
+  }
+
+  /** "เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ" (confirmed in the dialog) —
+   * ONE column, fresh sources, one atomic RPC; a per-student
+   * "ยกเลิกการคำนวณ" is kept. */
+  async function handleConvertToAuto(column: SgsScoreColumn) {
+    const formula = formulasByColumnId[column.id]
+    if (!formula) return
+    setConvertBusy(true)
+    try {
+      const outcome = await convertSgsScoreColumnToAuto(subjectId, classroomId, column, formula)
+      toast(`เปลี่ยน "${column.label}" เป็นคำนวณอัตโนมัติแล้ว — ล้างคะแนนที่ครูกำหนดเอง ${outcome.overridesCleared} คน`)
+      await Promise.all([refresh(), refreshSources()])
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'เปลี่ยนเป็นคำนวณอัตโนมัติไม่สำเร็จ'))
+    } finally {
+      setConvertBusy(false)
+    }
+  }
 
   const selectedExportColumnIds = useMemo(
     () => columns.filter((column) => !deselectedExportColumnIds.includes(column.id)).map((column) => column.id),
@@ -365,8 +441,8 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
         await performCellAction(column, studentId, 'override', intent.value)
       } else {
         await performCellAction(column, studentId, 'clear_override')
-        if (supportsScoreOrigin && cell.calculatedScore !== null && formulasByColumnId[column.id]) {
-          toast(`กลับไปใช้คะแนนคำนวณ (${cell.calculatedScore})`)
+        if (supportsScoreOrigin && formulasByColumnId[column.id]) {
+          toast('กลับไปใช้คะแนนคำนวณจากงานต้นทางแล้ว')
         }
       }
     } catch (err) {
@@ -524,15 +600,25 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
                        * linked sources. */}
                       <button
                         type="button"
-                        onClick={() => setCalcColumn(column)}
+                        onClick={() => (formulasByColumnId[column.id] ? openSourcesDialog(column) : setCalcColumn(column))}
                         className="mx-auto mt-0.5 flex items-center justify-center gap-1 text-xs font-normal text-muted-foreground hover:text-foreground"
-                        title={formulasByColumnId[column.id] ? 'ดู/แก้ไขงานที่เชื่อม และคำนวณใหม่' : 'คำนวณคะแนนจากคะแนนต้นทาง'}
+                        title={formulasByColumnId[column.id] ? 'ดูงานที่เชื่อม วิธีคำนวณ และคะแนนเต็ม' : 'คำนวณคะแนนจากคะแนนต้นทาง'}
                       >
                         {formulasByColumnId[column.id] ? <Link2 className="size-3" /> : <Calculator className="size-3" />}
                         {formulasByColumnId[column.id]
                           ? `${listFormulaSourceIds(formulasByColumnId[column.id]!).length} งาน · ${supportsScoreOrigin ? 'Auto' : 'มีสูตร'}`
                           : 'คำนวณ'}
                       </button>
+                      {supportsScoreOrigin && formulasByColumnId[column.id] && countSgsOverrideCells(resolvedByColumnId[column.id] ?? {}) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => openSourcesDialog(column)}
+                          className="mx-auto mt-0.5 flex items-center gap-1 text-[11px] font-normal text-violet-700 hover:underline"
+                          title="คะแนนที่ครูกำหนดเองไม่เปลี่ยนตามงานต้นทาง — เปิดเพื่อเปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ"
+                        >
+                          ครูกำหนดเอง {countSgsOverrideCells(resolvedByColumnId[column.id] ?? {})} คน
+                        </button>
+                      )}
                       {(driftCountByColumnId[column.id] ?? 0) > 0 && (
                         <button
                           type="button"
@@ -595,7 +681,11 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
                               inputKey={`${cellKey}-${cell.origin}-${cell.effectiveScore}-${resetTicks[cellKey] ?? 0}`}
                               ariaLabel={`${column.label} ${row.fullName}`}
                               onCommit={(raw) => handleScoreBlur(column, row.studentId, raw)}
-                              onOpenDetails={() => setDetailCell({ columnId: column.id, studentId: row.studentId })}
+                              onOpenDetails={() => {
+                                setDetailCell({ columnId: column.id, studentId: row.studentId })
+                                // Current source scores for "งานที่ใช้คำนวณ".
+                                if (formulasByColumnId[column.id]) void refreshSources()
+                              }}
                             />
                           </td>
                         )
@@ -793,6 +883,27 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
         />
       )}
 
+      {sourcesColumn && formulasByColumnId[sourcesColumn.id] && (
+        <SgsColumnSourcesDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setSourcesColumn(null)
+          }}
+          column={sourcesColumn}
+          formula={formulasByColumnId[sourcesColumn.id]!}
+          sources={sourceData ? describeFormulaSources(formulasByColumnId[sourcesColumn.id]!, sourceData.assignments) : null}
+          sourcesError={sourceData ? null : sourceLoadError}
+          supportsOrigin={supportsScoreOrigin}
+          counts={originCountsFor(sourcesColumn.id)}
+          busy={convertBusy}
+          onConvertToAuto={() => handleConvertToAuto(sourcesColumn)}
+          onOpenCalculator={() => {
+            setCalcColumn(sourcesColumn)
+            setSourcesColumn(null)
+          }}
+        />
+      )}
+
       {detailCell &&
         (() => {
           const column = columns.find((c) => c.id === detailCell.columnId)
@@ -814,9 +925,14 @@ export function SgsScoresTab({ subjectId, subjectName, classroomId, classroomNam
               formula={supportsScoreOrigin ? formula : null}
               supportsOrigin={supportsScoreOrigin}
               liveCalculated={live ? (live[student.id] ?? null) : undefined}
-              contributions={
+              sourceRows={
                 formula && sourceData
-                  ? explainStudentCalculation(formula, sourceData.scoresByStudentIdAndAssignmentId[student.id] ?? {}, sourceData.sources)
+                  ? buildStudentSourceScoreRows(
+                      formula,
+                      sourceData.assignments,
+                      sourceData.scoresByStudentIdAndAssignmentId[student.id] ?? {},
+                      sourceData.sources,
+                    )
                   : []
               }
               busy={detailBusy}

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { parseScoreInput } from '@/services/assignment-service'
-import type { SgsSourceContribution } from '@/services/sgs-score-calculation-service'
+import type { SgsStudentSourceScoreRow } from '@/services/sgs-score-calculation-service'
 import { getSgsScoreCellMenuActions, SGS_SCORE_CELL_MENU_LABEL, SGS_SCORE_ORIGIN_TOOLTIP, type SgsScoreCellMenuAction } from '@/services/sgs-score-origin'
 import {
   SGS_SCORE_CALCULATION_MISSING_POLICY_LABEL,
@@ -29,7 +29,9 @@ interface SgsScoreCellDialogProps {
   /** What today's source scores calculate to — undefined when it can't
    * be computed (no formula / formula needs re-configuring). */
   liveCalculated: number | null | undefined
-  contributions: SgsSourceContribution[]
+  /** Every linked source with THIS student's current raw score (see
+   * buildStudentSourceScoreRows). */
+  sourceRows: SgsStudentSourceScoreRow[]
   busy: boolean
   onAction: (action: SgsScoreCellDialogAction, value?: number) => Promise<void>
 }
@@ -41,9 +43,10 @@ function formatScore(value: number | null | undefined): string {
 const ORIGIN_LABEL = { auto: 'อัตโนมัติ', override: 'ครูกำหนดเอง', empty: 'ว่าง' } as const
 
 /**
- * "ที่มาคะแนน" — explains ONE cell (effective / calculated / override,
- * the linked sources and what each contributed, the rule, when it was
- * last calculated) and offers exactly the actions that apply to it (see
+ * "ที่มาคะแนน" — explains ONE cell: every linked source with this
+ * student's real score ("งานที่ใช้คำนวณ"), then คะแนนคำนวณปัจจุบัน /
+ * คะแนนที่ครูกำหนด (override only) / คะแนนที่ใช้ส่ง SGS, the rule and when
+ * it was last calculated, and offers exactly the actions that apply to it (see
  * getSgsScoreCellMenuActions). Every write goes through the tab's
  * onAction, which uses the atomic set_sgs_score_cell /
  * recalculate_sgs_score_column RPCs (0027).
@@ -58,7 +61,7 @@ export function SgsScoreCellDialog({
   formula,
   supportsOrigin,
   liveCalculated,
-  contributions,
+  sourceRows,
   busy,
   onAction,
 }: SgsScoreCellDialogProps) {
@@ -66,8 +69,11 @@ export function SgsScoreCellDialog({
   const [draft, setDraft] = useState('')
   const [draftError, setDraftError] = useState<string | null>(null)
 
-  const actions = getSgsScoreCellMenuActions(cell, formula !== null, supportsOrigin)
-  const liveDiffers = liveCalculated !== undefined && cell.calculatedAt !== null && liveCalculated !== cell.calculatedScore
+  const actions = getSgsScoreCellMenuActions(cell, formula !== null, supportsOrigin, liveCalculated)
+  /** What today's source scores calculate to; falls back to the stored
+   * calculated value when the sources couldn't be evaluated. */
+  const currentCalculated = liveCalculated !== undefined ? liveCalculated : cell.calculatedScore
+  const storedDiffers = liveCalculated !== undefined && cell.calculatedAt !== null && liveCalculated !== cell.calculatedScore
 
   function startEditing() {
     setDraft(cell.effectiveScore !== null ? String(cell.effectiveScore) : '')
@@ -115,32 +121,77 @@ export function SgsScoreCellDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <dl className="space-y-1.5 text-sm">
-          <div className="flex items-center justify-between gap-2">
-            <dt className="text-muted-foreground">คะแนนที่ใช้ (ส่งไป SGS)</dt>
-            <dd className="flex items-center gap-2 font-semibold">
-              {formatScore(cell.effectiveScore)}
-              <Badge variant="outline" title={cell.origin === 'empty' ? undefined : SGS_SCORE_ORIGIN_TOOLTIP[cell.origin]}>
-                {ORIGIN_LABEL[cell.origin]}
-              </Badge>
-            </dd>
-          </div>
+        {formula ? (
+          <section className="space-y-1.5" aria-label="งานที่ใช้คำนวณ">
+            <h3 className="text-sm font-semibold">งานที่ใช้คำนวณ</h3>
+            {sourceRows.length === 0 ? (
+              <p className="text-xs text-muted-foreground">ยังไม่ได้โหลดงานต้นทาง หรือไม่มีงานที่เชื่อมไว้</p>
+            ) : (
+              <ul className="divide-y divide-border rounded-lg border border-border text-sm">
+                {sourceRows.map((row, index) => (
+                  <li key={`${row.assignmentId}-${index}`} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                    <span className="min-w-0">
+                      <span className="break-words">{row.label}</span>
+                      {(row.groupLabel || row.weightPercent !== null) && (
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          ({[row.groupLabel, row.weightPercent !== null ? `น้ำหนัก ${row.weightPercent}%` : null].filter(Boolean).join(' · ')})
+                        </span>
+                      )}
+                      {row.status !== 'active' && (
+                        <span className="ml-1 text-xs text-destructive">{row.status === 'archived' ? 'เก็บถาวรแล้ว — ไม่นำมาคำนวณ' : 'ถูกลบแล้ว — ไม่นำมาคำนวณ'}</span>
+                      )}
+                    </span>
+                    <span className="shrink-0 font-medium tabular-nums">
+                      {row.status === 'active' ? formatScore(row.rawScore) : '—'} / {row.maxScore ?? '—'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {SGS_SCORE_CALCULATION_MODE_LABEL[formula.mode]} · ไม่มีคะแนน: {SGS_SCORE_CALCULATION_MISSING_POLICY_LABEL[formula.missingScorePolicy]} · ปัดคะแนน{' '}
+              {SGS_SCORE_CALCULATION_ROUNDING_LABEL[formula.rounding]}
+            </p>
+          </section>
+        ) : (
+          <p className="text-xs text-muted-foreground">ช่องนี้ยังไม่ได้เชื่อมกับงาน — คะแนนมาจากการกรอกเองเท่านั้น</p>
+        )}
+
+        <dl className="space-y-1.5 rounded-lg border border-border bg-muted/20 p-3 text-sm">
           {supportsOrigin && formula && (
             <div className="flex items-center justify-between gap-2">
-              <dt className="text-muted-foreground">คะแนนจากงานต้นทาง</dt>
-              <dd>
-                {formatScore(cell.calculatedScore)}
-                {liveDiffers && <span className="ml-2 text-xs text-amber-700">ต้นทางปัจจุบัน: {formatScore(liveCalculated)} (ยังไม่ได้คำนวณใหม่)</span>}
+              <dt className="text-muted-foreground">คะแนนคำนวณปัจจุบัน</dt>
+              <dd className="text-right tabular-nums">
+                {formatScore(currentCalculated)} / {maxScore}
+                {storedDiffers && (
+                  <span className="block text-xs text-amber-700">ที่บันทึกไว้: {formatScore(cell.calculatedScore)} (ยังไม่ได้อัปเดต)</span>
+                )}
               </dd>
             </div>
           )}
           {supportsOrigin && cell.overrideScore !== null && (
             <div className="flex items-center justify-between gap-2">
               <dt className="text-muted-foreground">คะแนนที่ครูกำหนด</dt>
-              <dd>{formatScore(cell.overrideScore)}</dd>
+              <dd className="tabular-nums">
+                {formatScore(cell.overrideScore)} / {maxScore}
+              </dd>
             </div>
           )}
+          <div className="flex items-center justify-between gap-2">
+            <dt className="font-medium">คะแนนที่ใช้ส่ง SGS</dt>
+            <dd className="flex items-center gap-2 font-semibold tabular-nums">
+              {formatScore(cell.effectiveScore)} / {maxScore}
+              <Badge variant="outline" title={cell.origin === 'empty' ? undefined : SGS_SCORE_ORIGIN_TOOLTIP[cell.origin]}>
+                {ORIGIN_LABEL[cell.origin]}
+              </Badge>
+            </dd>
+          </div>
           {cell.autoSuppressed && <p className="text-xs text-muted-foreground">ยกเลิกการคำนวณสำหรับนักเรียนคนนี้ไว้ — ช่องนี้จึงว่าง (การเชื่อมงานของคอลัมน์ยังอยู่)</p>}
+          {cell.origin === 'override' && formula && currentCalculated !== null && currentCalculated !== cell.overrideScore && (
+            <p className="text-xs text-muted-foreground">
+              ครูกำหนดคะแนนเองไว้ — กด "กลับไปใช้คะแนนคำนวณ" เพื่อใช้ {formatScore(currentCalculated)} / {maxScore} จากงานต้นทาง
+            </p>
+          )}
           {cell.calculatedAt && (
             <div className="flex items-center justify-between gap-2">
               <dt className="text-muted-foreground">คำนวณล่าสุด</dt>
@@ -148,40 +199,6 @@ export function SgsScoreCellDialog({
             </div>
           )}
         </dl>
-
-        {formula && (
-          <section className="space-y-1.5" aria-label="งานที่เชื่อม">
-            <h3 className="text-sm font-semibold">งานที่เชื่อม</h3>
-            {contributions.length === 0 ? (
-              <p className="text-xs text-muted-foreground">ไม่มีงานต้นทางที่ใช้งานอยู่</p>
-            ) : (
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="text-xs text-muted-foreground">
-                    <th className="py-1 pr-2 font-medium">งาน</th>
-                    <th className="py-1 pr-2 font-medium">คะแนน</th>
-                    <th className="py-1 font-medium">ส่วนที่ได้</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contributions.map((c) => (
-                    <tr key={c.assignmentId} className="border-t border-border">
-                      <td className="py-1 pr-2">{c.label}</td>
-                      <td className="py-1 pr-2 tabular-nums">
-                        {formatScore(c.rawScore)}/{c.maxScore}
-                      </td>
-                      <td className="py-1 tabular-nums">{c.contribution === null ? '—' : c.contribution.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            <p className="text-xs text-muted-foreground">
-              {SGS_SCORE_CALCULATION_MODE_LABEL[formula.mode]} · {SGS_SCORE_CALCULATION_MISSING_POLICY_LABEL[formula.missingScorePolicy]} · ปัดคะแนน{' '}
-              {SGS_SCORE_CALCULATION_ROUNDING_LABEL[formula.rounding]}
-            </p>
-          </section>
-        )}
 
         {editing ? (
           <div className="space-y-1.5 rounded-lg border border-border p-3">

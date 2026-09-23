@@ -44,6 +44,7 @@ import {
   type SubmissionCheckMode,
 } from '@/services/assignment-service'
 import { bulkSetAssignmentScores, buildBulkScoreUpdates } from '@/services/score-bulk-service'
+import { afterSourceScoresSaved } from '@/services/sgs-score-auto-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { bulkMarkSubmissionStatus, buildBulkSubmissionStatusUpdates } from '@/services/submission-bulk-service'
 import type { Assignment, AssignmentCopyOutcome, AssignmentSubmission, SubmissionStatus } from '@/types/assignment'
@@ -464,6 +465,10 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
     setBulkScoreResult(null)
     try {
       const result = await bulkSetAssignmentScores(updates)
+      // Some scores may have landed even when others failed — the
+      // recalculation always reads the real saved scores, so run it for
+      // any change.
+      if (result.changedCount > 0) afterSourceScoresSaved(subject.id, classroomId, [assignmentId], toast)
       await refresh()
 
       setBulkScoreResult({
@@ -566,6 +571,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
       if (score !== originalScore) {
         await setSubmissionScore(assignment.id, student.id, score, effectiveStatus)
         effectiveStatus = nextStatusAfterScore(effectiveStatus, score)
+        afterSourceScoresSaved(subject.id, classroomId, [assignment.id], toast)
       }
       if (noteDraft !== originalNote) {
         await setSubmissionNote(assignment.id, student.id, noteDraft)

@@ -715,3 +715,53 @@ export async function applySgsScoreCalculationWithOrigin(
     return { written: 0, failed: attempted.map((row) => ({ studentId: row.studentId, message })) }
   }
 }
+
+// ==================================================
+// Per-student source rows ("งานที่ใช้คำนวณ" in the cell dialog)
+// ==================================================
+
+export interface SgsStudentSourceScoreRow extends SgsFormulaSourceDescription {
+  /** This student's CURRENT raw score on the source; null = no score
+   * (shown as "—", never 0). Always null for an archived/deleted source. */
+  rawScore: number | null
+  /** Points this source adds to the unrounded calculated score (see
+   * explainStudentCalculation); null when excluded/not calculable or the
+   * source is not active. */
+  contribution: number | null
+}
+
+/**
+ * EVERY linked source of `formula` for one student — active ones with the
+ * student's real raw score and contribution, archived/deleted ones listed
+ * with their status (they are not part of the calculation). Order is the
+ * formula's own order, one row per linked source.
+ */
+export function buildStudentSourceScoreRows(
+  formula: SgsScoreCalculationFormula,
+  assignments: SgsScoreCalculationAssignmentMeta[],
+  scoresByAssignmentId: Record<string, number | null>,
+  sources: SgsScoreCalculationSource[],
+): SgsStudentSourceScoreRow[] {
+  const contributions = new Map(explainStudentCalculation(formula, scoresByAssignmentId, sources).map((c) => [c.assignmentId, c]))
+  return describeFormulaSources(formula, assignments).map((source) => {
+    const contribution = source.status === 'active' ? contributions.get(source.assignmentId) : undefined
+    return {
+      ...source,
+      rawScore: contribution ? contribution.rawScore : null,
+      contribution: contribution ? contribution.contribution : null,
+    }
+  })
+}
+
+/** Human-readable rule for the column-sources panel, e.g.
+ * "(คะแนนรวมที่ได้ ÷ 20) × 10". */
+export function describeFormulaRule(formula: SgsScoreCalculationFormula, sources: SgsFormulaSourceDescription[], columnMaxScore: number): string {
+  if (formula.mode === 'proportional') {
+    const total = sources.filter((s) => s.status === 'active').reduce((sum, s) => sum + (s.maxScore ?? 0), 0)
+    return `(คะแนนรวมที่ได้ ÷ ${total}) × ${columnMaxScore}`
+  }
+  if (formula.mode === 'weighted_groups') {
+    return `ผลรวมของ (สัดส่วนคะแนนในแต่ละกลุ่ม × น้ำหนักกลุ่ม) × ${columnMaxScore}`
+  }
+  return `ผลรวมของ (คะแนนที่ได้ ÷ คะแนนเต็มของงาน × น้ำหนัก) × ${columnMaxScore}`
+}

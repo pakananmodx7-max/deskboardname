@@ -55,6 +55,7 @@ import {
   type AssignmentDetailFilter,
 } from '@/services/assignment-service'
 import { getClassroomById } from '@/services/classroom-service'
+import { afterSourceScoresSaved } from '@/services/sgs-score-auto-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { getSubjectById } from '@/services/subject-service'
 import { getSubmissionResourceCounts } from '@/services/submission-service'
@@ -425,6 +426,9 @@ export function SubjectClassroomAssignmentDetailPageReal() {
     setScoreSaveStateFor(studentId, 'saving')
     try {
       await setSubmissionScore(currentAssignmentId, studentId, score, current.status)
+      // SGS columns mapped to this assignment follow automatically
+      // (never able to fail this save — see afterSourceScoresSaved).
+      afterSourceScoresSaved(currentAssignment.subjectId, currentAssignment.classroomId, [currentAssignmentId], toast)
       setSubmissions((prev) => ({
         ...prev,
         [studentId]: { ...current, score, status: nextStatusAfterScore(current.status, score) },
@@ -514,6 +518,9 @@ export function SubjectClassroomAssignmentDetailPageReal() {
       for (const row of validRows) setScoreSaveStateFor(row.studentId, 'error')
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกคะแนนที่วางได้'))
     }
+    // Part of a paste may have saved even if another row failed — the
+    // recalculation reads the real saved scores either way.
+    afterSourceScoresSaved(currentAssignment.subjectId, currentAssignment.classroomId, [currentAssignmentId], toast)
   }
 
   async function handleCopySelectedScores() {
@@ -575,6 +582,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
       for (const id of targetIds) setScoreSaveStateFor(id, 'error')
       toast(toFriendlyErrorMessage(err, 'ไม่สามารถใส่คะแนนได้'))
     }
+    afterSourceScoresSaved(currentAssignment.subjectId, currentAssignment.classroomId, [currentAssignmentId], toast)
   }
 
   async function handleNoteBlur(studentId: string) {

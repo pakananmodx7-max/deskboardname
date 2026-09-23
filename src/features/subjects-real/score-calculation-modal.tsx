@@ -18,6 +18,7 @@ import {
   verifySgsScoreCalculationApply,
   type SgsScoreCalculationAssignmentMeta,
 } from '@/services/sgs-score-calculation-service'
+import { convertSgsScoreColumnToAuto } from '@/services/sgs-score-auto-service'
 import { computeSgsScoreColumnResetImpact } from '@/services/sgs-score-origin'
 import { getSgsScores, resetSgsScoreColumnToAuto, updateSgsScoreColumnFormula } from '@/services/sgs-score-workspace-service'
 import { toFriendlyErrorMessage } from '@/lib/errors'
@@ -457,7 +458,15 @@ export function ScoreCalculationModal({
 
   async function doResetToAuto() {
     try {
-      const changed = await resetSgsScoreColumnToAuto(targetColumn.id)
+      // With a saved mapping: recalculate from FRESH source scores and
+      // clear overrides + suppressions in one atomic call, so nobody falls
+      // back to a calculated value stored before a source score changed
+      // (or never stored, for legacy cells). Without one: the plain reset.
+      const changed = existingFormula
+        ? await convertSgsScoreColumnToAuto(subjectId, classroomId, targetColumn, existingFormula, { clearSuppressed: true }).then(
+            (outcome) => outcome.overridesCleared + outcome.suppressedCleared,
+          )
+        : await resetSgsScoreColumnToAuto(targetColumn.id)
       toast(`กลับไปใช้คะแนนคำนวณแล้ว ${changed} คน`)
       setConfirmResetOpen(false)
       await onApplied()
@@ -860,7 +869,7 @@ export function ScoreCalculationModal({
         open={confirmResetOpen}
         onOpenChange={setConfirmResetOpen}
         title="กลับไปใช้คะแนนคำนวณทั้งคอลัมน์?"
-        description={`ช่อง "${targetColumn.label}": จะลบคะแนนที่ครูกำหนดเอง ${resetImpact.overrides} คน และยกเลิกการงดคำนวณ ${resetImpact.suppressed} คน (รวม ${resetCount} คน)\nนักเรียนกลุ่มนี้จะใช้คะแนนที่คำนวณจากงานต้นทางแทน${resetImpact.becomeEmpty > 0 ? `\nในจำนวนนี้ ${resetImpact.becomeEmpty} คนยังไม่มีคะแนนคำนวณ — ช่องจะกลายเป็นว่าง` : ''}`}
+        description={`ช่อง "${targetColumn.label}": จะลบคะแนนที่ครูกำหนดเอง ${resetImpact.overrides} คน และยกเลิกการงดคำนวณ ${resetImpact.suppressed} คน (รวม ${resetCount} คน)\nนักเรียนกลุ่มนี้จะใช้คะแนนที่คำนวณจากงานต้นทาง${existingFormula ? 'ปัจจุบัน (คำนวณใหม่ก่อนบันทึก)' : 'แทน'}${!existingFormula && resetImpact.becomeEmpty > 0 ? `\nในจำนวนนี้ ${resetImpact.becomeEmpty} คนยังไม่มีคะแนนคำนวณ — ช่องจะกลายเป็นว่าง` : ''}`}
         confirmLabel={`ยืนยัน (${resetCount} คน)`}
         destructive
         onConfirm={doResetToAuto}

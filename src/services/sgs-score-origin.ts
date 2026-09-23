@@ -233,8 +233,17 @@ export const SGS_SCORE_ORIGIN_TOOLTIP = {
  * source mapping (calculation_formula). `supportsOrigin` = migration
  * 0027 is applied; without it only plain edit/clear exist (the pre-0027
  * behavior). Never offers an action that would be a no-op.
+ * `liveCalculated` = what today's source scores calculate to (when
+ * known): a legacy override with no stored calculated value still gets
+ * "กลับไปใช้คะแนนคำนวณ" when the sources produce one, because restoring
+ * recalculates from the sources first.
  */
-export function getSgsScoreCellMenuActions(cell: ResolvedSgsScoreCell, hasFormula: boolean, supportsOrigin: boolean): SgsScoreCellMenuAction[] {
+export function getSgsScoreCellMenuActions(
+  cell: ResolvedSgsScoreCell,
+  hasFormula: boolean,
+  supportsOrigin: boolean,
+  liveCalculated?: number | null,
+): SgsScoreCellMenuAction[] {
   if (!supportsOrigin) {
     return cell.effectiveScore !== null ? ['edit', 'clear'] : ['edit']
   }
@@ -246,7 +255,8 @@ export function getSgsScoreCellMenuActions(cell: ResolvedSgsScoreCell, hasFormul
     // Removing the teacher value falls back to the calculated value when
     // there is one ("กลับไปใช้คะแนนคำนวณ"), otherwise the cell simply
     // becomes empty ("ล้างคะแนน") — same underlying clear_override.
-    actions.push('edit', cell.calculatedScore !== null ? 'restore_auto' : 'clear', 'suppress_auto')
+    const hasCalculated = cell.calculatedScore !== null || (liveCalculated !== undefined && liveCalculated !== null)
+    actions.push('edit', hasCalculated ? 'restore_auto' : 'clear', 'suppress_auto')
   } else if (cell.origin === 'auto') {
     actions.push('override', 'suppress_auto')
   } else if (cell.autoSuppressed) {

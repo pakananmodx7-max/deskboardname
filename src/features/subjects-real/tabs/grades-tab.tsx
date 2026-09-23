@@ -20,6 +20,7 @@ import {
   parseScoreInput,
   setSubmissionScore,
 } from '@/services/assignment-service'
+import { afterSourceScoresSaved } from '@/services/sgs-score-auto-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import type { Assignment, AssignmentSubmission } from '@/types/assignment'
 import type { Subject } from '@/types/subject'
@@ -102,6 +103,9 @@ export function GradesTab({ subject, classroomId, classroomName }: GradesTabProp
     const currentStatus = submissionsByAssignment[assignment.id]?.[studentId]?.status ?? 'not_submitted'
     try {
       await setSubmissionScore(assignment.id, studentId, score, currentStatus)
+      // SGS columns mapped to this assignment follow automatically
+      // (never able to fail this save — see afterSourceScoresSaved).
+      afterSourceScoresSaved(subject.id, classroomId, [assignment.id], toast)
       setSubmissionsByAssignment((prev) => {
         const existing = prev[assignment.id]?.[studentId] ?? {
           studentId,

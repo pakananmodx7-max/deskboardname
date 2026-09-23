@@ -2481,3 +2481,31 @@ Postgres 16. Not applied to any live database.
 
 Yes — 0027 must be applied manually after review. It has **not** been
 applied anywhere.
+
+## Keeping AUTO columns current (no new migration)
+
+Built entirely on 0027's existing RPCs (`src/services/sgs-score-auto-service.ts`):
+
+- **After an assignment score is saved** (assignment detail page: single
+  cell, paste, bulk fill; ตรวจงานและคะแนน grid; ตรวจงาน dialog and the
+  bulk agent tool), `afterSourceScoresSaved` schedules a recalculation of
+  ONLY the SGS columns whose saved mapping reads that assignment. It is
+  debounced per subject+classroom, never runs twice at once, is never
+  awaited by the save and can never fail it. Requests per run: columns +
+  formulas, then (only if a column is affected) sources (assignments + ONE
+  submissions request), roster, the affected columns' cells (ONE request)
+  and one `recalculate_sgs_score_column` per affected column. It never
+  sends `clear_override`: an OVERRIDE keeps its effective value while
+  `calculated_score` stays current underneath; suppression is kept.
+- **"เปลี่ยนคอลัมน์นี้เป็นคำนวณอัตโนมัติ"** (column sources dialog, confirmed
+  with the affected count): recalculates from fresh sources and clears
+  that column's overrides in ONE `recalculate_sgs_score_column` call.
+- **"กลับไปใช้คะแนนคำนวณ"** on a mapped cell recalculates from fresh
+  sources with `clear_override`, so it never restores a stale value.
+
+Requires the saved mapping (`sgs_score_columns.calculation_formula`,
+migration **0025**) as well as 0027. Without 0025 no mapping can be stored
+or read: nothing is recalculated automatically and the tab says so.
+Scores written outside this app (e.g. directly in the database) are not
+seen until the next save or a manual "คำนวณใหม่" — the drift badge
+("ต้นทางเปลี่ยน N คน") still flags them.

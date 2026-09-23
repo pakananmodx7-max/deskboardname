@@ -116,8 +116,9 @@ describe('4. source score changes while OVERRIDE', () => {
     expect(cell.calculatedScore).toBe(7.5)
     expect(cell.overrideScore).toBe(9)
     const dialog = readSource('../features/subjects-real/sgs-score-cell-dialog.tsx')
-    expect(dialog).toContain('คะแนนจากงานต้นทาง')
+    expect(dialog).toContain('คะแนนคำนวณปัจจุบัน')
     expect(dialog).toContain('คะแนนที่ครูกำหนด')
+    expect(dialog).toContain('คะแนนที่ใช้ส่ง SGS')
   })
 })
 
@@ -591,7 +592,7 @@ describe('UI — cell origin indicators and actions', () => {
     expect(cell).toContain('<title>{SGS_SCORE_ORIGIN_TOOLTIP.override}</title>')
   })
 
-  it('the column header shows the linked-source count and opens the calculator (which lists the sources)', () => {
+  it('the column header shows the linked-source count; the calculator also lists the sources', () => {
     const tab = readSource('../features/subjects-real/tabs/sgs-scores-tab.tsx')
     expect(tab).toContain("listFormulaSourceIds(formulasByColumnId[column.id]!).length} งาน · ${supportsScoreOrigin ? 'Auto' : 'มีสูตร'}")
     const modal = readSource('../features/subjects-real/score-calculation-modal.tsx')
