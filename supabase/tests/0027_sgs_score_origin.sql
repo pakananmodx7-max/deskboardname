@@ -28,6 +28,8 @@
 --   O13 invalid value aborts the WHOLE recalculation (all-or-nothing)
 --   O14 another teacher cannot touch this column via any RPC
 --   O15 override above the column max is rejected
+--   O16 anon has NO EXECUTE privilege on the three application RPCs
+--       (authenticated still does)
 
 \set ON_ERROR_STOP 1
 
@@ -263,5 +265,31 @@ select pg_temp.check(
   (select score = 9.5 from public.sgs_scores
    where column_id = '27270000-0000-0000-0000-00000000c001' and student_id = '27270000-0000-0000-0000-000000005001'),
   'O14d the column is unchanged after the other teacher''s attempts');
+
+-- O16 privileges — checked against the role itself, independent of
+-- whatever default privileges the environment grants to new functions.
+select pg_temp.check(
+  not has_function_privilege('anon', 'public.set_sgs_score_cell(uuid, uuid, text, numeric)', 'EXECUTE'),
+  'O16a anon cannot EXECUTE set_sgs_score_cell');
+select pg_temp.check(
+  not has_function_privilege('anon', 'public.recalculate_sgs_score_column(uuid, jsonb)', 'EXECUTE'),
+  'O16b anon cannot EXECUTE recalculate_sgs_score_column');
+select pg_temp.check(
+  not has_function_privilege('anon', 'public.reset_sgs_score_column_to_auto(uuid)', 'EXECUTE'),
+  'O16c anon cannot EXECUTE reset_sgs_score_column_to_auto');
+select pg_temp.check(
+  has_function_privilege('authenticated', 'public.set_sgs_score_cell(uuid, uuid, text, numeric)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.recalculate_sgs_score_column(uuid, jsonb)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.reset_sgs_score_column_to_auto(uuid)', 'EXECUTE'),
+  'O16d authenticated can still EXECUTE all three RPCs');
+do $$
+begin
+  set local role anon;
+  perform public.set_sgs_score_cell('27270000-0000-0000-0000-00000000c001', '27270000-0000-0000-0000-000000005001', 'override', 1);
+  raise exception 'FAIL: O16e anon executed set_sgs_score_cell';
+exception when insufficient_privilege then
+  raise notice 'PASS: O16e an anon call is refused with permission denied (42501), before the function body runs';
+end;
+$$;
 
 \echo '0027 origin verification: ALL PASS'

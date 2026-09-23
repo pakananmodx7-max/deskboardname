@@ -685,7 +685,11 @@ describe('migration 0027 — SQL mirrors the TypeScript rules', () => {
     expect(sql).not.toMatch(/security definer/i)
     for (const fn of ['set_sgs_score_cell(uuid, uuid, text, numeric)', 'recalculate_sgs_score_column(uuid, jsonb)', 'reset_sgs_score_column_to_auto(uuid)']) {
       expect(sql).toContain(`revoke all on function public.${fn} from public;`)
+      // Supabase's default privileges grant new functions to anon directly
+      // — `from public` alone does not remove that (see 0010/0022).
+      expect(sql).toContain(`revoke all on function public.${fn} from anon;`)
       expect(sql).toContain(`grant execute on function public.${fn} to authenticated;`)
+      expect(sql).not.toContain(`grant execute on function public.${fn} to anon`)
     }
   })
 

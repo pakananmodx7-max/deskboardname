@@ -257,6 +257,10 @@ end;
 $$;
 
 revoke all on function public.set_sgs_score_cell(uuid, uuid, text, numeric) from public;
+-- Supabase's default privileges grant EXECUTE on new public functions
+-- to anon directly, which `from public` does not remove — revoked
+-- explicitly, matching 0010/0022.
+revoke all on function public.set_sgs_score_cell(uuid, uuid, text, numeric) from anon;
 grant execute on function public.set_sgs_score_cell(uuid, uuid, text, numeric) to authenticated;
 
 -- ==================================================
@@ -368,6 +372,10 @@ end;
 $$;
 
 revoke all on function public.recalculate_sgs_score_column(uuid, jsonb) from public;
+-- Supabase's default privileges grant EXECUTE on new public functions
+-- to anon directly, which `from public` does not remove — revoked
+-- explicitly, matching 0010/0022.
+revoke all on function public.recalculate_sgs_score_column(uuid, jsonb) from anon;
 grant execute on function public.recalculate_sgs_score_column(uuid, jsonb) to authenticated;
 
 -- ==================================================
@@ -424,4 +432,8 @@ end;
 $$;
 
 revoke all on function public.reset_sgs_score_column_to_auto(uuid) from public;
+-- Supabase's default privileges grant EXECUTE on new public functions
+-- to anon directly, which `from public` does not remove — revoked
+-- explicitly, matching 0010/0022.
+revoke all on function public.reset_sgs_score_column_to_auto(uuid) from anon;
 grant execute on function public.reset_sgs_score_column_to_auto(uuid) to authenticated;
