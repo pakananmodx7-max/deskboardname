@@ -1,11 +1,13 @@
-import { Download, LayoutDashboard } from 'lucide-react'
+import { CalendarDays, School } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 
-import { NativeSelect } from '@/components/ui/select'
+import { SEMESTER_SELECT_ID, SemesterSelect } from '@/features/semester/semester-select'
 
 import {
+  ALL_SEMESTERS,
+  attendanceDateSpan,
   attendanceUnit,
+  buildClassroomCards,
   buildTeacherInsights,
   cleanAttendanceRecords,
   computeAssignmentProgress,
@@ -14,33 +16,43 @@ import {
   computeStudentAttendanceStats,
   computeSummary,
   computeWeeklyTrend,
+  formatThaiShortDate,
   listSemesterOptions,
   rankHighestAttendance,
   rankMostAbsences,
-  resolveSemesterScope,
   type AnalyticsAssignmentData,
   type AnalyticsAttendanceRecord,
   type AnalyticsContext,
   type AnalyticsRoster,
   type AttendanceUnit,
+  type SemesterScope,
 } from '../analytics'
-import { combineResources, countValue, LOADING, success, type Resource } from '../resource'
+import { combineResources, countValue, formatCount, LOADING, success, type Resource } from '../resource'
 import { SectionError, SectionSkeleton } from './analytics-card'
 import { AssignmentStatusCard, TeacherInsightsCard } from './assignment-insights'
 import { AttendanceOverviewCard, MostAbsencesCard, RiskCard, TopAttendanceCard, WeeklyTrendCard, type StudentLinkBuilder } from './attendance-sections'
+import { ClassroomSection } from './classroom-section'
 import { SummaryCards } from './summary-cards'
+import { WidgetBoundary } from './widget-boundary'
 
 export interface ClassroomAnalyticsDashboardProps {
+  /** Classrooms/subjects/links — shared with the header's semester selector. */
   context: Resource<AnalyticsContext>
   onRetryContext: () => void
-  semesterKey: string | null
-  onSemesterChange: (key: string) => void
+  /** The selected semester (from the shared SemesterProvider); null while
+   * the context loads. Every widget below reads this one value. */
+  scope: SemesterScope | null
   roster: Resource<AnalyticsRoster>
   onRetryRoster: () => void
   attendance: Resource<AnalyticsAttendanceRecord[]>
   onRetryAttendance: () => void
   assignments: Resource<AnalyticsAssignmentData>
   onRetryAssignments: () => void
+  teacherName: string
+  /** Real mode: create/edit/archive classrooms with the existing dialogs. */
+  classroomsEditable: boolean
+  /** After a classroom was created/edited/archived/restored. */
+  onClassroomsChanged: () => void
   /** Student Analytics link (real mode only). */
   studentLink?: StudentLinkBuilder
   /** YYYY-MM-DD — records after it are ignored; due dates compare to it. */
@@ -51,21 +63,33 @@ function mapResource<T, U>(resource: Resource<T>, fn: (data: T) => U): Resource<
   return resource.status === 'success' ? success(fn(resource.data)) : resource
 }
 
+function focusSemesterSelect() {
+  const select = document.getElementById(SEMESTER_SELECT_ID) as HTMLSelectElement | null
+  if (!select) return
+  select.focus()
+  try {
+    select.showPicker?.()
+  } catch {
+    // showPicker needs a user gesture / is unsupported — focus is enough.
+  }
+}
+
+function scopePhrase(scope: SemesterScope): string {
+  return scope.key === ALL_SEMESTERS ? 'รวมทุกภาคเรียน' : `ใน${scope.label}`
+}
+
 /**
- * ระบบจัดการห้องเรียน → ภาพรวม — layout + derivations only. Each section
- * renders from its own resource, so one slow or failed request never
- * blanks another section, and a pending request shows a skeleton, never
- * an empty state.
+ * The unified teacher dashboard (หน้าภาพรวม) — replaces the former home,
+ * classroom overview and classroom list pages. Layout + derivations only:
+ * each widget renders from its own resource (one slow or failed request
+ * never blanks another; pending shows a skeleton, never an empty state)
+ * and sits in its own error boundary. All widgets, including the
+ * classroom list at the bottom, follow the same selected semester.
  */
 export function ClassroomAnalyticsDashboard(props: ClassroomAnalyticsDashboardProps) {
-  const { context, semesterKey, roster, attendance, assignments, today } = props
+  const { context, scope, roster, attendance, assignments, today } = props
   const [trendClassroomId, setTrendClassroomId] = useState<string | null>(null)
-
-  const scope = useMemo(
-    () => (context.status === 'success' && semesterKey ? resolveSemesterScope(context.data, semesterKey) : null),
-    [context, semesterKey],
-  )
-  const semesterOptions = useMemo(() => (context.status === 'success' ? listSemesterOptions(context.data) : []), [context])
+  const [assignmentSubjectId, setAssignmentSubjectId] = useState<string | null>(null)
 
   const cleaned = useMemo(
     () => (scope ? mapResource(attendance, (records) => cleanAttendanceRecords(records, scope.classroomIds, today)) : LOADING),
@@ -88,10 +112,19 @@ export function ClassroomAnalyticsDashboard(props: ClassroomAnalyticsDashboardPr
   const topAttendance = useMemo(() => mapResource(stats, (s) => rankHighestAttendance(s)), [stats])
   const risk = useMemo(() => mapResource(stats, (s) => computeRiskList(s, unit)), [stats, unit])
 
+  // The subject filter only applies while that subject is in the semester.
+  const effectiveAssignmentSubject = scope && assignmentSubjectId && scope.subjects.some((s) => s.id === assignmentSubjectId) ? assignmentSubjectId : null
   const progress = useMemo(
     () => (scope ? mapResource(combineResources(assignments, roster), ([a, r]) => computeAssignmentProgress(a, r, scope, today)) : LOADING),
     [assignments, roster, scope, today],
   ) as Resource<ReturnType<typeof computeAssignmentProgress>>
+  const subjectProgress = useMemo(
+    () =>
+      scope && effectiveAssignmentSubject
+        ? mapResource(combineResources(assignments, roster), ([a, r]) => computeAssignmentProgress(a, r, scope, today, effectiveAssignmentSubject))
+        : progress,
+    [scope, effectiveAssignmentSubject, assignments, roster, today, progress],
+  )
 
   const insightParts = [breakdown, risk, progress]
   const insightsLoading = insightParts.some((r) => r.status === 'loading')
@@ -114,6 +147,11 @@ export function ClassroomAnalyticsDashboard(props: ClassroomAnalyticsDashboardPr
   }, [scope, insightsLoading, insightsFailedAll, cleaned, breakdown, risk, progress, unit])
   const insightsPartial = !insightsLoading && insightParts.some((r) => r.status === 'error')
 
+  const classroomCards = useMemo(
+    () => (scope && context.status === 'success' ? buildClassroomCards(context.data, scope, roster.status === 'success' ? roster.data : null) : null),
+    [scope, context, roster],
+  )
+
   const retryAttendanceSide = () => {
     if (attendance.status === 'error') props.onRetryAttendance()
     if (roster.status === 'error') props.onRetryRoster()
@@ -127,41 +165,19 @@ export function ClassroomAnalyticsDashboard(props: ClassroomAnalyticsDashboardPr
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex items-start gap-3.5">
-          <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/12 text-primary">
-            <LayoutDashboard className="size-6" />
+      <div className="grid gap-4 lg:grid-cols-[1fr_minmax(20rem,26rem)] [&>*]:min-w-0">
+        <div className="flex items-center gap-3.5">
+          <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/12 text-2xl" aria-hidden="true">
+            👋
           </span>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">ภาพรวมการจัดการห้องเรียน</h1>
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-bold tracking-tight text-foreground sm:text-2xl">สวัสดี, {props.teacherName}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              สรุปข้อมูลนักเรียน การเข้าเรียน และการส่งงานของคุณ{scope ? ` ใน${scope.label === 'ทุกภาคเรียน' ? 'ทุกภาคเรียน' : scope.label}` : ''}
+              ภาพรวมห้องเรียน การเข้าเรียน และการส่งงานของคุณ{scope ? ` ${scopePhrase(scope)}` : ''}
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            to="/teacher/reports"
-            className="flex h-9 items-center gap-1.5 rounded-xl border border-border bg-card px-3.5 text-sm font-medium text-primary shadow-soft hover:bg-accent"
-          >
-            <Download className="size-4" />
-            ส่งออกรายงาน
-          </Link>
-          <NativeSelect
-            value={semesterKey ?? ''}
-            onChange={(e) => props.onSemesterChange(e.target.value)}
-            disabled={context.status !== 'success'}
-            aria-label="เลือกภาคเรียน"
-            className="h-9 w-auto min-w-44"
-          >
-            {context.status !== 'success' && <option value="">กำลังโหลดภาคเรียน...</option>}
-            {semesterOptions.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.label}
-              </option>
-            ))}
-          </NativeSelect>
-        </div>
+        <SemesterInfoCard context={context} scope={scope} attendance={cleaned} />
       </div>
 
       {context.status === 'error' ? (
@@ -172,51 +188,155 @@ export function ClassroomAnalyticsDashboard(props: ClassroomAnalyticsDashboardPr
         <>
           {scope.classrooms.length === 0 && (
             <p className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
-              ยังไม่มีห้องเรียนใน{scope.label} — เลือกภาคเรียนอื่น หรือกำหนดปีการศึกษา/ภาคเรียนให้ห้องเรียนในหน้าห้องเรียน
+              ยังไม่มีห้องเรียนใน{scope.label} — เลือกภาคเรียนอื่นที่มุมขวาบน หรือกำหนดปีการศึกษา/ภาคเรียนให้ห้องเรียนในส่วน “ห้องเรียนของฉัน”
             </p>
           )}
 
-          <SummaryCards
-            students={summary ? countValue(summary.uniqueStudents, 'คน', `กำลังเรียน ${summary.activeStudents} คน (ไม่นับซ้ำ)`) : null}
-            studentsError={roster.status === 'error'}
-            classrooms={countValue(scope.classrooms.filter((c) => c.isActive).length, 'ห้อง', `ทั้งหมด ${scope.classrooms.length} ห้องในภาคเรียนนี้`)}
-            subjects={countValue(scope.subjects.length, 'วิชา', 'รวมทุกห้องเรียน')}
-            assignments={assignments.status === 'success' && progress.status === 'success' ? countValue(progress.data.assignmentCount, 'รายการ', `ยังไม่ถึงกำหนดส่ง ${progress.data.openAssignmentCount} รายการ`) : null}
-            assignmentsError={assignments.status === 'error'}
-          />
+          <WidgetBoundary title="สรุปภาพรวม">
+            <SummaryCards
+              students={summary ? countValue(summary.uniqueStudents, 'คน', `กำลังเรียน ${formatCount(summary.activeStudents)} คน (ไม่นับซ้ำ)`) : null}
+              studentsError={roster.status === 'error'}
+              classrooms={countValue(scope.classrooms.length, 'ห้อง', `ใช้งานอยู่ ${formatCount(scope.classrooms.filter((c) => c.isActive).length)} ห้อง`)}
+              subjects={countValue(scope.subjects.length, 'วิชา', 'รวมทุกห้องเรียน')}
+              assignments={
+                assignments.status === 'success' && progress.status === 'success'
+                  ? countValue(progress.data.assignmentCount, 'รายการ', `ยังไม่ถึงกำหนด ${formatCount(progress.data.openAssignmentCount)} รายการ`)
+                  : null
+              }
+              assignmentsError={assignments.status === 'error'}
+            />
+          </WidgetBoundary>
 
           <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-[1fr_1.3fr_1fr] [&>*]:min-w-0">
-            <AttendanceOverviewCard resource={breakdown} unit={unit} onRetry={props.onRetryAttendance} />
-            <WeeklyTrendCard
-              resource={weekly}
-              classrooms={scope.classrooms}
-              classroomId={effectiveTrendClassroom}
-              onClassroomChange={setTrendClassroomId}
-              onRetry={props.onRetryAttendance}
-            />
+            <WidgetBoundary title="ภาพรวมการเข้าเรียน">
+              <AttendanceOverviewCard resource={breakdown} unit={unit} onRetry={props.onRetryAttendance} />
+            </WidgetBoundary>
+            <WidgetBoundary title="แนวโน้มการเข้าเรียนรายสัปดาห์">
+              <WeeklyTrendCard
+                resource={weekly}
+                classrooms={scope.classrooms}
+                classroomId={effectiveTrendClassroom}
+                onClassroomChange={setTrendClassroomId}
+                onRetry={props.onRetryAttendance}
+              />
+            </WidgetBoundary>
             <div className="lg:col-span-2 2xl:col-span-1">
-              <AssignmentStatusCard resource={progress} onRetry={retryAssignmentSide} />
+              <WidgetBoundary title="สถานะการส่งงาน">
+                <AssignmentStatusCard
+                  resource={subjectProgress}
+                  onRetry={retryAssignmentSide}
+                  subjects={scope.subjects}
+                  subjectId={effectiveAssignmentSubject}
+                  onSubjectChange={setAssignmentSubjectId}
+                />
+              </WidgetBoundary>
             </div>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3 [&>*]:min-w-0">
-            <MostAbsencesCard resource={mostAbsences} unit={unit} link={props.studentLink} onRetry={retryAttendanceSide} />
-            <TopAttendanceCard resource={topAttendance} unit={unit} link={props.studentLink} onRetry={retryAttendanceSide} />
+            <WidgetBoundary title="ขาดเรียนมากที่สุด">
+              <MostAbsencesCard resource={mostAbsences} unit={unit} link={props.studentLink} onRetry={retryAttendanceSide} />
+            </WidgetBoundary>
+            <WidgetBoundary title="มาเรียนสม่ำเสมอ">
+              <TopAttendanceCard resource={topAttendance} unit={unit} link={props.studentLink} onRetry={retryAttendanceSide} />
+            </WidgetBoundary>
             <div className="lg:col-span-2 xl:col-span-1">
-              <RiskCard resource={risk} unit={unit} link={props.studentLink} onRetry={retryAttendanceSide} />
+              <WidgetBoundary title="นักเรียนที่ต้องติดตาม">
+                <RiskCard resource={risk} unit={unit} link={props.studentLink} onRetry={retryAttendanceSide} />
+              </WidgetBoundary>
             </div>
           </div>
 
-          <TeacherInsightsCard
-            resource={insights}
-            partial={insightsPartial}
-            onRetry={() => {
-              retryAttendanceSide()
-              retryAssignmentSide()
-            }}
-          />
+          <WidgetBoundary title="ข้อเสนอแนะสำหรับครู">
+            <TeacherInsightsCard
+              resource={insights}
+              partial={insightsPartial}
+              onRetry={() => {
+                retryAttendanceSide()
+                retryAssignmentSide()
+              }}
+            />
+          </WidgetBoundary>
         </>
       )}
+
+      {context.status !== 'error' && (
+        <WidgetBoundary title="ห้องเรียนของฉัน">
+          <ClassroomSection
+            cards={classroomCards}
+            countsReady={roster.status === 'success'}
+            classroomRecords={context.status === 'success' ? context.data.classroomRecords : undefined}
+            editable={props.classroomsEditable}
+            scopeLabel={scope ? (scope.key === ALL_SEMESTERS ? 'ทุกภาคเรียน' : scope.label) : ''}
+            scopeKey={scope?.key ?? null}
+            onChanged={props.onClassroomsChanged}
+          />
+        </WidgetBoundary>
+      )}
     </div>
+  )
+}
+
+/** ภาคเรียนปัจจุบัน — what the dashboard is aggregating, from real data. */
+function SemesterInfoCard({
+  context,
+  scope,
+  attendance,
+}: {
+  context: Resource<AnalyticsContext>
+  scope: SemesterScope | null
+  attendance: Resource<AnalyticsAttendanceRecord[]>
+}) {
+  const semesterCount = context.status === 'success' ? listSemesterOptions(context.data).filter((o) => o.key !== ALL_SEMESTERS).length : 0
+  const span = attendance.status === 'success' ? attendanceDateSpan(attendance.data) : null
+  const isAll = scope?.key === ALL_SEMESTERS
+
+  return (
+    <section aria-label="ภาคเรียนที่เลือก" className="rounded-2xl border border-border bg-card p-4 shadow-soft">
+      <div className="flex items-start gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
+          <CalendarDays className="size-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs text-muted-foreground">{isAll ? 'ช่วงข้อมูลที่แสดง' : 'ภาคเรียนที่เลือก'}</p>
+          {scope ? (
+            <p className="truncate text-base font-bold text-foreground">
+              {isAll ? `ทุกภาคเรียน (รวม ${formatCount(semesterCount)} ภาคเรียน)` : scope.label}
+            </p>
+          ) : context.status === 'error' ? (
+            <p className="text-sm text-destructive">โหลดภาคเรียนไม่สำเร็จ</p>
+          ) : (
+            <div className="mt-1 h-5 w-40 animate-pulse rounded bg-muted" role="status" aria-label="กำลังโหลด" />
+          )}
+          {scope && (
+            <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <School className="size-3.5" aria-hidden="true" />
+                {formatCount(scope.classrooms.length)} ห้องเรียน · {formatCount(scope.subjects.length)} รายวิชา
+              </span>
+              <span>
+                {attendance.status === 'loading'
+                  ? 'กำลังโหลดช่วงวันที่เช็คชื่อ...'
+                  : attendance.status === 'error'
+                    ? 'โหลดช่วงวันที่เช็คชื่อไม่สำเร็จ'
+                    : span
+                      ? `เช็คชื่อ ${formatThaiShortDate(span.first)} – ${formatThaiShortDate(span.last)}`
+                      : 'ยังไม่มีบันทึกเช็คชื่อ'}
+              </span>
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={focusSemesterSelect}
+          disabled={!scope}
+          className="hidden shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-accent disabled:opacity-50 sm:block"
+        >
+          เปลี่ยนภาคเรียน
+        </button>
+      </div>
+      {/* The header selector is hidden on phones — same shared state here. */}
+      <SemesterSelect id="dashboard-semester-select" className="mt-3 sm:hidden [&_select]:w-full [&_select]:max-w-none" />
+    </section>
   )
 }

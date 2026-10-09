@@ -8,9 +8,8 @@ interface DisclosureProps extends React.ComponentProps<'details'> {
 }
 
 /** Plain native <details>/<summary> — no JS state, no new dependency.
- * Used to tuck archived classrooms/subjects out of the everyday list
- * without hiding them entirely (see classrooms-page-real.tsx,
- * subjects-page-real.tsx). */
+ * Used to tuck archived subjects out of the everyday list without
+ * hiding them entirely (see subjects-page-real.tsx). */
 export function Disclosure({ summary, className, children, ...props }: DisclosureProps) {
   return (
     <details className={cn('group', className)} {...props}>

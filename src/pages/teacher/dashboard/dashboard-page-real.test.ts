@@ -6,7 +6,7 @@ function readSource(file: string): string {
   return readFileSync(new URL(file, import.meta.url), 'utf-8')
 }
 
-describe('ระบบจัดการห้องเรียน → ภาพรวม — Classroom Analytics Dashboard', () => {
+describe('ภาพรวม — unified teacher dashboard', () => {
   const real = readSource('./dashboard-page-real.tsx')
   const demo = readSource('./dashboard-page-demo.tsx')
 
@@ -15,10 +15,28 @@ describe('ระบบจัดการห้องเรียน → ภา�
     expect(demo).toContain('<ClassroomAnalyticsDashboard')
   })
 
-  it('real mode loads through the RLS-scoped analytics service hook; demo mode never touches Supabase', () => {
-    expect(real).toContain('useClassroomAnalyticsData()')
+  it('both modes read the shared semester (the header selector) — no page-local semester state', () => {
+    for (const source of [real, demo]) {
+      expect(source).toContain('useSemester()')
+      expect(source).toContain('scope={semester.scope}')
+      expect(source).not.toMatch(/useState|pickDefaultSemester|onSemesterChange/)
+    }
+  })
+
+  it('real mode loads the semester\'s data through the RLS-scoped analytics hook; demo mode never touches Supabase', () => {
+    expect(real).toContain('useSemesterAnalyticsData(semester.scope?.classroomIds ?? null)')
     expect(demo).toContain('buildDemoAnalyticsDataset(')
-    expect(demo).not.toMatch(/supabase|classroom-analytics-service|useClassroomAnalyticsData/)
+    expect(demo).not.toMatch(/supabase|classroom-analytics-service|useSemesterAnalyticsData/)
+  })
+
+  it('classroom changes refresh the shared classroom list and the semester data; demo is read-only', () => {
+    expect(real).toContain('classroomsEditable')
+    expect(real).toMatch(/refreshContext\(\)\s+reloadAll\(\)/)
+    expect(demo).toContain('classroomsEditable={false}')
+  })
+
+  it('old /teacher/classrooms bookmarks land on the classroom section', () => {
+    for (const source of [real, demo]) expect(source).toContain('useScrollToHashSection(')
   })
 
   it('the long worklist / recent-activity lists are no longer on the overview page', () => {

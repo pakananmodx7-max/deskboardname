@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '@/lib/supabase'
+import { mapClassroom, type ClassroomRow } from '@/services/classroom-service'
 import type {
   AnalyticsAssignmentData,
   AnalyticsAttendanceRecord,
@@ -85,9 +86,7 @@ export async function getAnalyticsContext(): Promise<AnalyticsContext> {
   const supabase = getSupabaseClient()
   const [classrooms, subjects, links] = await withTimeout(
     Promise.all([
-      fetchAllPages<{ id: string; name: string; academic_year: string | null; semester: string | null; is_active: boolean }>((from, to) =>
-        supabase.from('classrooms').select('id, name, academic_year, semester, is_active').order('id').range(from, to),
-      ),
+      fetchAllPages<ClassroomRow>((from, to) => supabase.from('classrooms').select('*').order('created_at').order('id').range(from, to)),
       fetchAllPages<{ id: string; name: string; academic_year: string | null; semester: string | null }>((from, to) =>
         supabase.from('subjects').select('id, name, academic_year, semester').order('id').range(from, to),
       ),
@@ -96,8 +95,17 @@ export async function getAnalyticsContext(): Promise<AnalyticsContext> {
       ),
     ]),
   )
+  const classroomRecords = classrooms.map(mapClassroom)
   return {
-    classrooms: classrooms.map((c) => ({ id: c.id, name: c.name, academicYear: c.academic_year, semester: c.semester, isActive: c.is_active })),
+    classrooms: classroomRecords.map((c) => ({
+      id: c.id,
+      name: c.name,
+      academicYear: c.academicYear,
+      semester: c.semester,
+      isActive: c.isActive,
+      gradeLevel: c.gradeLevel,
+    })),
+    classroomRecords,
     subjects: subjects.map((s) => ({ id: s.id, name: s.name, academicYear: s.academic_year, semester: s.semester })),
     links: links.map((l) => ({ subjectId: l.subject_id, classroomId: l.classroom_id })),
   }

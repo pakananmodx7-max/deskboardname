@@ -183,25 +183,29 @@ export function WeeklyAttendanceChart({ points }: { points: WeeklyAttendancePoin
           </p>
         </div>
       )}
-      <table className="sr-only">
-        <caption>อัตรามาเรียนรายสัปดาห์</caption>
-        <thead>
-          <tr>
-            <th>สัปดาห์</th>
-            <th>ช่วงวันที่</th>
-            <th>อัตรามาเรียน</th>
-          </tr>
-        </thead>
-        <tbody>
-          {points.map((p) => (
-            <tr key={p.weekStart}>
-              <td>{p.index}</td>
-              <td>{weekRange(p)}</td>
-              <td>{p.rate === null ? 'ไม่มีการเช็คชื่อ' : `${formatPercent(p.rate, 1)} (มา ${p.present}/${p.total})`}</td>
+      {/* .sr-only on a <table> itself does not shrink it (tables ignore the
+          1px width) and caused horizontal scroll on phones — clip a wrapper. */}
+      <div className="sr-only">
+        <table>
+          <caption>อัตรามาเรียนรายสัปดาห์</caption>
+          <thead>
+            <tr>
+              <th>สัปดาห์</th>
+              <th>ช่วงวันที่</th>
+              <th>อัตรามาเรียน</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {points.map((p) => (
+              <tr key={p.weekStart}>
+                <td>{p.index}</td>
+                <td>{weekRange(p)}</td>
+                <td>{p.rate === null ? 'ไม่มีการเช็คชื่อ' : `${formatPercent(p.rate, 1)} (มา ${p.present}/${p.total})`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

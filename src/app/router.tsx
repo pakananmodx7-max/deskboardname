@@ -23,14 +23,12 @@ import { StudentSubjectDetailPage } from '@/pages/student/subjects/student-subje
 import { StudentSubjectsPage } from '@/pages/student/subjects/student-subjects-page'
 import { AssignmentsRedirectPage } from '@/pages/teacher/assignments/assignments-redirect-page'
 import { AttendanceRedirectPage } from '@/pages/teacher/attendance/attendance-redirect-page'
-import { ClassroomOverviewPage } from '@/pages/teacher/classroom-management/classroom-overview-page'
 import { ClassroomDetailPage } from '@/pages/teacher/classrooms/classroom-detail-page'
-import { ClassroomsPage } from '@/pages/teacher/classrooms/classrooms-page'
 import { ComingSoonModulePage } from '@/pages/teacher/coming-soon/coming-soon-module-page'
+import { DashboardPage } from '@/pages/teacher/dashboard/dashboard-page'
 import { AgentToolsDevPage } from '@/pages/teacher/dev/agent-tools-dev-page'
 import { GradesRedirectPage } from '@/pages/teacher/grades/grades-redirect-page'
 import { HermesAgentPage } from '@/pages/teacher/hermes/hermes-agent-page'
-import { HomePage } from '@/pages/teacher/home/home-page'
 import { IntegrationsPage } from '@/pages/teacher/integrations/integrations-page'
 import { ReportsPage } from '@/pages/teacher/reports/reports-page'
 import { SettingsPage } from '@/pages/teacher/settings/settings-page'
@@ -102,9 +100,12 @@ const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Navigate to="/teacher/dashboard" replace /> },
-      { path: 'dashboard', element: <HomePage /> },
-      { path: 'classroom-management', element: <ClassroomOverviewPage /> },
-      { path: 'classrooms', element: <ClassroomsPage /> },
+      // The unified dashboard — former home, classroom overview and
+      // classroom list in one page. The two retired URLs redirect here
+      // (one hop, to a route that never redirects back — no loop).
+      { path: 'dashboard', element: <DashboardPage /> },
+      { path: 'classroom-management', element: <Navigate to="/teacher/dashboard" replace /> },
+      { path: 'classrooms', element: <Navigate to="/teacher/dashboard#classrooms" replace /> },
       { path: 'classrooms/:classroomId', element: <ClassroomDetailPage /> },
       {
         path: 'students',

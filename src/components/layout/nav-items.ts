@@ -1,11 +1,10 @@
 import {
   BarChart3,
+  BookOpen,
   Bot,
-  FileText,
-  Home,
-  ListChecks,
-  Plus,
-  School,
+  CalendarCheck,
+  ClipboardList,
+  LayoutDashboard,
   Settings,
   type LucideIcon,
 } from 'lucide-react'
@@ -20,6 +19,10 @@ export interface NavLink {
    * module that isn't built yet) — never affects navigation, purely a
    * visual hint set expectations before the teacher clicks through. */
   badge?: string
+  /** Extra path prefixes that also mark this link active — e.g. a
+   * classroom's own page (/teacher/classrooms/:id) belongs to ภาพรวม,
+   * where the classroom list now lives. */
+  activePrefixes?: string[]
 }
 
 /**
@@ -51,58 +54,26 @@ export interface NavSection {
 export type NavEntry = NavLink | NavGroup | NavSection
 
 /**
- * The global sidebar's structure — a personal management PLATFORM, with
- * the existing classroom features grouped under exactly one module
- * ("ระบบจัดการชั้นเรียน"). New systems are added as more entries inside
- * the "ระบบของฉัน" section (ระบบเอกสาร/งานและเตือนความจำ today are
- * placeholders — see coming-soon-module-page.tsx), never as additional
- * top-level rows, so the sidebar itself does not grow more cluttered as
- * more systems arrive. Hermes Agent and Settings stay OUTSIDE "ระบบของฉัน"
- * deliberately: Hermes is a cross-system agent (it may eventually act on
- * more than just classroom management), not a feature that belongs to
- * any one module — see hermes-agent-page.tsx's own doc comment.
+ * The global sidebar — one flat list (no nested module group any more):
  *
- * The classroom module keeps only 4 sidebar children now — ภาพรวม,
- * ห้องเรียน, รายวิชา, รายงาน. นักเรียน, งานและการบ้าน, เช็กชื่อ, and
- * คะแนนและการประเมิน are NOT deleted features: they moved from being
- * their own sidebar destinations into tabs of each classroom's own
- * workspace (ห้องเรียน → เลือกห้อง → [ภาพรวม | นักเรียน | งานและการบ้าน |
- * เช็กชื่อ | คะแนนและการประเมิน] — see classroom-detail-page-real.tsx),
- * since all four are things a teacher does FOR one specific classroom,
- * never as a classroom-less, sidebar-wide concept. รายวิชา and รายงาน
- * stay top-level on purpose: one subject can span multiple classrooms
- * (and carries its own Google Drive materials/config), and reports can
- * aggregate across every classroom — neither fits inside a single
- * classroom's workspace.
+ *   ภาพรวม → the unified dashboard (former หน้าหลัก + ภาพรวมห้องเรียน +
+ *     รายการห้องเรียน, all on /teacher/dashboard; the old
+ *     /teacher/classroom-management and /teacher/classrooms URLs redirect
+ *     there — see router.tsx). A classroom's own page
+ *     (/teacher/classrooms/:id) still exists and highlights ภาพรวม.
+ *   รายวิชา, งานและสื่อการสอน, การเช็คชื่อ, รายงาน, Hermes Agent, ตั้งค่า.
  *
- * The old /teacher/students, /teacher/assignments, /teacher/attendance,
- * and /teacher/grades routes are untouched (still real, reachable
- * pages/redirects — see router.tsx) so no bookmark breaks; they're just
- * no longer linked from this sidebar.
+ * งานและสื่อการสอน and การเช็คชื่อ open the existing "เลือกรายวิชาก่อน"
+ * entry pages (both are taken per subject + classroom). The coming-soon
+ * modules (/teacher/documents, /teacher/tasks, /teacher/add-module) keep
+ * their routes so no bookmark breaks; they are just not linked here.
  */
 export const navItems: NavEntry[] = [
-  { type: 'link', label: 'หน้าหลัก', to: '/teacher/dashboard', icon: Home },
-  {
-    type: 'section',
-    label: 'ระบบของฉัน',
-    entries: [
-      {
-        type: 'group',
-        label: 'ระบบจัดการชั้นเรียน',
-        to: '/teacher/classroom-management',
-        icon: School,
-        children: [
-          { type: 'link', label: 'ภาพรวม', to: '/teacher/classroom-management', icon: Home },
-          { type: 'link', label: 'ห้องเรียน', to: '/teacher/classrooms', icon: School },
-          { type: 'link', label: 'รายวิชา', to: '/teacher/subjects', icon: FileText },
-          { type: 'link', label: 'รายงาน', to: '/teacher/reports', icon: BarChart3 },
-        ],
-      },
-      { type: 'link', label: 'ระบบเอกสาร', to: '/teacher/documents', icon: FileText, badge: 'เร็ว ๆ นี้' },
-      { type: 'link', label: 'งานและเตือนความจำ', to: '/teacher/tasks', icon: ListChecks, badge: 'เร็ว ๆ นี้' },
-      { type: 'link', label: 'เพิ่มระบบใหม่', to: '/teacher/add-module', icon: Plus },
-    ],
-  },
+  { type: 'link', label: 'ภาพรวม', to: '/teacher/dashboard', icon: LayoutDashboard, activePrefixes: ['/teacher/classrooms'] },
+  { type: 'link', label: 'รายวิชา', to: '/teacher/subjects', icon: BookOpen },
+  { type: 'link', label: 'งานและสื่อการสอน', to: '/teacher/assignments', icon: ClipboardList },
+  { type: 'link', label: 'การเช็คชื่อ', to: '/teacher/attendance', icon: CalendarCheck },
+  { type: 'link', label: 'รายงาน', to: '/teacher/reports', icon: BarChart3 },
   { type: 'link', label: 'Hermes Agent', to: '/teacher/hermes', icon: Bot },
   { type: 'link', label: 'ตั้งค่า', to: '/teacher/settings', icon: Settings },
 ]
@@ -128,4 +99,10 @@ export function flattenNavLinks(entries: NavEntry[] = navItems): NavLink[] {
  * than reached by clicking through the sidebar. */
 export function isGroupActive(group: NavGroup, pathname: string): boolean {
   return group.children.some((child) => pathname === child.to || pathname.startsWith(`${child.to}/`))
+}
+
+/** NavLink's own exact/sub-path match, plus the link's activePrefixes. */
+export function isLinkActive(link: NavLink, pathname: string): boolean {
+  const matches = (to: string) => pathname === to || pathname.startsWith(`${to}/`)
+  return matches(link.to) || (link.activePrefixes ?? []).some(matches)
 }

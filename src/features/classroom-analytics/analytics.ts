@@ -19,6 +19,8 @@
  * separately and does not count as "มา").
  */
 
+import type { Classroom } from '@/types/classroom'
+
 // ==================================================
 // Input model
 // ==================================================
@@ -32,6 +34,8 @@ export interface AnalyticsClassroom {
   academicYear: string | null
   semester: string | null
   isActive: boolean
+  /** e.g. "ม.1" — used by the classroom section's grade filter. */
+  gradeLevel?: string | null
 }
 
 export interface AnalyticsSubject {
@@ -87,6 +91,9 @@ export interface AnalyticsContext {
   classrooms: AnalyticsClassroom[]
   subjects: AnalyticsSubject[]
   links: { subjectId: string; classroomId: string }[]
+  /** Full classroom rows (real mode) — what the existing edit dialog
+   * needs; absent in Demo Mode. */
+  classroomRecords?: Classroom[]
 }
 
 export interface AnalyticsRoster {
@@ -130,6 +137,8 @@ export const ANALYTICS_RULES = {
 // ==================================================
 
 export const ALL_SEMESTERS = 'all'
+/** Key of records that explicitly have no academic year and no semester. */
+export const UNASSIGNED_SEMESTER = '|'
 
 export interface SemesterOption {
   key: string
@@ -576,6 +585,7 @@ export function computeAssignmentProgress(
   roster: AnalyticsRoster,
   scope: SemesterScope,
   today: string,
+  subjectId: string | null = null,
 ): AssignmentProgress {
   const activeIds = new Set(roster.students.filter((s) => s.status !== 'inactive').map((s) => s.id))
   const rosterByClassroom = new Map<string, string[]>()
@@ -586,7 +596,7 @@ export function computeAssignmentProgress(
     rosterByClassroom.set(m.classroomId, list)
   }
   const statusByKey = new Map(data.submissions.map((s) => [`${s.assignmentId}:${s.studentId}`, s.status]))
-  const assignments = data.assignments.filter((a) => scope.classroomIds.has(a.classroomId))
+  const assignments = data.assignments.filter((a) => scope.classroomIds.has(a.classroomId) && (subjectId === null || a.subjectId === subjectId))
 
   const result: AssignmentProgress = {
     assignmentCount: assignments.length,
@@ -730,4 +740,78 @@ export function buildTeacherInsights(input: InsightInputs): TeacherInsight[] {
   }
 
   return insights.slice(0, ANALYTICS_RULES.MAX_INSIGHTS)
+}
+
+// ==================================================
+// Classroom section (integrated classroom management)
+// ==================================================
+
+export interface ClassroomCardSummary {
+  classroom: AnalyticsClassroom
+  studentCount: number
+  subjectNames: string[]
+  semesterLabel: string
+  gradeLabel: string
+}
+
+/** "ม.1" from gradeLevel, else from the name ("ม.1/2" -> "ม.1"), else "-". */
+export function classroomGradeLabel(classroom: AnalyticsClassroom): string {
+  const explicit = classroom.gradeLevel?.trim()
+  if (explicit) return explicit
+  const fromName = /^(.+?)\s*\/\s*\d+$/.exec(classroom.name.trim())?.[1]
+  return fromName?.trim() || '-'
+}
+
+/** One card per classroom in scope — counts from the already-loaded
+ * roster and subject links (no per-classroom request). */
+export function buildClassroomCards(context: AnalyticsContext, scope: SemesterScope, roster: AnalyticsRoster | null): ClassroomCardSummary[] {
+  const subjectName = new Map(context.subjects.map((s) => [s.id, s.name]))
+  const studentsByClassroom = new Map<string, Set<string>>()
+  for (const m of roster?.memberships ?? []) {
+    if (!studentsByClassroom.has(m.classroomId)) studentsByClassroom.set(m.classroomId, new Set())
+    studentsByClassroom.get(m.classroomId)!.add(m.studentId)
+  }
+  return scope.classrooms
+    .map((classroom) => ({
+      classroom,
+      studentCount: studentsByClassroom.get(classroom.id)?.size ?? 0,
+      subjectNames: context.links
+        .filter((l) => l.classroomId === classroom.id)
+        .map((l) => subjectName.get(l.subjectId))
+        .filter((n): n is string => Boolean(n))
+        .sort((a, b) => a.localeCompare(b, 'th')),
+      semesterLabel: semesterLabel(classroom.academicYear, classroom.semester),
+      gradeLabel: classroomGradeLabel(classroom),
+    }))
+    .sort((a, b) => Number(b.classroom.isActive) - Number(a.classroom.isActive) || a.classroom.name.localeCompare(b.classroom.name, 'th', { numeric: true }))
+}
+
+export type ClassroomStatusFilter = 'all' | 'active' | 'archived'
+
+export function filterClassroomCards(
+  cards: ClassroomCardSummary[],
+  filters: { search: string; grade: string; status: ClassroomStatusFilter },
+): ClassroomCardSummary[] {
+  const query = filters.search.trim().toLowerCase()
+  return cards.filter((card) => {
+    if (filters.status === 'active' && !card.classroom.isActive) return false
+    if (filters.status === 'archived' && card.classroom.isActive) return false
+    if (filters.grade && card.gradeLabel !== filters.grade) return false
+    if (query && !card.classroom.name.toLowerCase().includes(query) && !card.subjectNames.some((n) => n.toLowerCase().includes(query))) return false
+    return true
+  })
+}
+
+/** Date span of the recorded roll calls in scope (for the semester card)
+ * — null without records. */
+export function attendanceDateSpan(records: AnalyticsAttendanceRecord[]): { first: string; last: string } | null {
+  if (records.length === 0) return null
+  let first = records[0].date.slice(0, 10)
+  let last = first
+  for (const r of records) {
+    const d = r.date.slice(0, 10)
+    if (d < first) first = d
+    if (d > last) last = d
+  }
+  return { first, last }
 }

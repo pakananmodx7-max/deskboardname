@@ -1,8 +1,8 @@
 import { ChevronDown, GraduationCap, X } from 'lucide-react'
 import { useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 
-import { flattenNavLinks, isGroupActive, navItems, type NavEntry, type NavGroup, type NavLink as NavLinkItem } from '@/components/layout/nav-items'
+import { flattenNavLinks, isGroupActive, isLinkActive, navItems, type NavEntry, type NavGroup, type NavLink as NavLinkItem } from '@/components/layout/nav-items'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -19,11 +19,16 @@ const LINK_ACTIVE = 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'
 const LINK_INACTIVE = 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground'
 
 function NavLeafRow({ item, indent, onNavigate }: { item: NavLinkItem; indent?: boolean; onNavigate?: () => void }) {
+  const { pathname } = useLocation()
+  const active = isLinkActive(item, pathname)
+  // Plain Link: NavLink would set aria-current from its own exact match
+  // only, ignoring activePrefixes.
   return (
-    <NavLink
+    <Link
       to={item.to}
       onClick={onNavigate}
-      className={({ isActive }) => cn(LINK_CLASSES, indent && 'pl-9', isActive ? LINK_ACTIVE : LINK_INACTIVE)}
+      aria-current={active ? 'page' : undefined}
+      className={cn(LINK_CLASSES, indent && 'pl-9', active ? LINK_ACTIVE : LINK_INACTIVE)}
     >
       <item.icon className="size-4 shrink-0" />
       <span className="truncate">{item.label}</span>
@@ -32,7 +37,7 @@ function NavLeafRow({ item, indent, onNavigate }: { item: NavLinkItem; indent?: 
           {item.badge}
         </span>
       )}
-    </NavLink>
+    </Link>
   )
 }
 
@@ -125,6 +130,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
  * icon + tooltip, exactly like before this redesign. */
 function CompactSidebarContent() {
   const links = flattenNavLinks()
+  const { pathname } = useLocation()
   return (
     <div className="flex h-full flex-col items-center bg-sidebar text-sidebar-foreground">
       <div className="flex h-16 w-full items-center justify-center border-b border-sidebar-border">
@@ -135,22 +141,21 @@ function CompactSidebarContent() {
 
       <nav className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto py-4">
         {links.map((item) => (
-          <NavLink
+          <Link
             key={item.to}
             to={item.to}
             title={item.label}
-            className={({ isActive }) =>
-              cn(
-                'flex size-10 items-center justify-center rounded-full transition-all',
-                isActive
-                  ? 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'
-                  : 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground',
-              )
-            }
+            aria-current={isLinkActive(item, pathname) ? 'page' : undefined}
+            className={cn(
+              'flex size-10 items-center justify-center rounded-full transition-all',
+              isLinkActive(item, pathname)
+                ? 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'
+                : 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground',
+            )}
           >
             <item.icon className="size-5" />
             <span className="sr-only">{item.label}</span>
-          </NavLink>
+          </Link>
         ))}
       </nav>
     </div>

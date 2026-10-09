@@ -39,7 +39,7 @@ export function ClassroomDetailPageDemo() {
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(linkedSubjects[0]?.id ?? null)
 
   if (!classroom) {
-    return <Navigate to="/teacher/classrooms" replace />
+    return <Navigate to="/teacher/dashboard#classrooms" replace />
   }
 
   // Re-bind to a fresh const so the nested renderSubjectScopedTab

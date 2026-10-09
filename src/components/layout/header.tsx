@@ -6,6 +6,7 @@ import { ThemeToggle } from '@/components/layout/theme-toggle'
 import { Avatar } from '@/components/ui/avatar'
 import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
+import { SemesterSelect } from '@/features/semester/semester-select'
 import { useDemoClassroom } from '@/demo/demo-context'
 import { useAuth } from '@/lib/auth-context'
 import { dataMode } from '@/lib/data-mode'
@@ -60,15 +61,6 @@ function GlobalSearchField() {
   )
 }
 
-/** Today's real date — the only "context" this header shows, since no
- * global current-semester setting exists (semester/academic year are
- * per-classroom fields, not a single app-wide value that could be shown
- * truthfully here). */
-function TodayDateLabel() {
-  const label = new Date().toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-  return <span className="hidden shrink-0 text-xs text-muted-foreground lg:block">{label}</span>
-}
-
 function NotificationButton() {
   return (
     <button
@@ -107,9 +99,7 @@ function DemoHeader({ onOpenMobileMenu }: HeaderProps) {
           <option value={classroomName}>{classroomName}</option>
         </NativeSelect>
 
-        <span className="hidden truncate text-sm text-muted-foreground md:block">
-          ภาคเรียนที่ 1 / 2569
-        </span>
+        <SemesterSelect className="hidden sm:flex" />
 
         <span className="hidden shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary sm:block">
           โหมดสาธิต (Demo)
@@ -179,7 +169,7 @@ function RealHeader({ onOpenMobileMenu }: HeaderProps) {
         <GlobalSearchField />
       </div>
 
-      <TodayDateLabel />
+      <SemesterSelect className="hidden sm:flex" />
       <ThemeToggle />
       <NotificationButton />
 

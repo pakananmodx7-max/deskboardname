@@ -9,8 +9,6 @@ import {
 } from '@/services/classroom-analytics-service'
 
 import {
-  pickDefaultSemester,
-  resolveSemesterScope,
   type AnalyticsAssignmentData,
   type AnalyticsAttendanceRecord,
   type AnalyticsContext,
@@ -49,7 +47,10 @@ export function idsFromKey(key: string): string[] {
  * key and never shown for the current one. `retry` drops the cached error
  * so the load runs again.
  */
-export function useKeyedResource<T>(key: string | null, load: (key: string) => Promise<T>): { resource: Resource<T>; retry: () => void } {
+export function useKeyedResource<T>(
+  key: string | null,
+  load: (key: string) => Promise<T>,
+): { resource: Resource<T>; retry: () => void; peek: (key: string) => Resource<T> | undefined } {
   const [results, setResults] = useState<Record<string, Resource<T>>>({})
   const inFlight = useRef(new Set<string>())
 
@@ -73,28 +74,31 @@ export function useKeyedResource<T>(key: string | null, load: (key: string) => P
     })
   }, [key])
 
-  return { resource: key === null ? LOADING : (results[key] ?? LOADING), retry }
+  const peek = useCallback((other: string) => results[other], [results])
+
+  return { resource: key === null ? LOADING : (results[key] ?? LOADING), retry, peek }
 }
 
-/** All data for the real (Supabase) dashboard, each part independent. */
-export function useClassroomAnalyticsData(loaders: ClassroomAnalyticsLoaders = supabaseAnalyticsLoaders) {
-  const loadContext = useCallback(() => loaders.context(), [loaders])
+/**
+ * Roster, attendance and assignments for the selected semester's
+ * classrooms (real mode) — each loaded and cached independently, keyed by
+ * the classroom ids, so a response for a previously selected semester can
+ * never be shown for the current one.
+ */
+export function useSemesterAnalyticsData(classroomIds: ReadonlySet<string> | null, loaders: ClassroomAnalyticsLoaders = supabaseAnalyticsLoaders) {
   const loadRoster = useCallback((key: string) => loaders.roster(idsFromKey(key)), [loaders])
   const loadAttendance = useCallback((key: string) => loaders.attendance(idsFromKey(key)), [loaders])
   const loadAssignments = useCallback((key: string) => loaders.assignments(idsFromKey(key)), [loaders])
-
-  const context = useKeyedResource('context', loadContext)
-  const [selectedSemester, setSelectedSemester] = useState<string | null>(null)
-  const semesterKey = selectedSemester ?? (context.resource.status === 'success' ? pickDefaultSemester(context.resource.data) : null)
-
-  const idsKey = useMemo(() => {
-    if (context.resource.status !== 'success' || semesterKey === null) return null
-    return classroomIdsKey(resolveSemesterScope(context.resource.data, semesterKey).classroomIds)
-  }, [context.resource, semesterKey])
-
+  const idsKey = useMemo(() => (classroomIds ? classroomIdsKey(classroomIds) : null), [classroomIds])
   const roster = useKeyedResource(idsKey, loadRoster)
   const attendance = useKeyedResource(idsKey, loadAttendance)
   const assignments = useKeyedResource(idsKey, loadAssignments)
-
-  return { context, semesterKey, setSemester: setSelectedSemester, roster, attendance, assignments }
+  /** Reload everything for the current semester (e.g. after a classroom
+   * was created/edited/archived). */
+  const reloadAll = useCallback(() => {
+    roster.retry()
+    attendance.retry()
+    assignments.retry()
+  }, [roster, attendance, assignments])
+  return { roster, attendance, assignments, reloadAll }
 }

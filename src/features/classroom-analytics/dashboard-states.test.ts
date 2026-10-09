@@ -7,7 +7,9 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { AnalyticsTimeoutError, chunk, fetchAllPages, withTimeout } from '@/services/classroom-analytics-service'
 
-import type { AnalyticsAssignmentData, AnalyticsAttendanceRecord, AnalyticsContext, AnalyticsRoster } from './analytics'
+import { ToastProvider } from '@/components/ui/toast'
+
+import { resolveSemesterScope, type AnalyticsAssignmentData, type AnalyticsAttendanceRecord, type AnalyticsContext, type AnalyticsRoster } from './analytics'
 import { ClassroomAnalyticsDashboard, type ClassroomAnalyticsDashboardProps } from './components/classroom-analytics-dashboard'
 import { classroomIdsKey, idsFromKey } from './use-classroom-analytics'
 import { combineResources, LOADING, success, type Resource } from './resource'
@@ -34,22 +36,27 @@ const RECORDS: AnalyticsAttendanceRecord[] = [
 const ASSIGNMENTS: AnalyticsAssignmentData = { assignments: [], submissions: [] }
 const noop = () => {}
 
-function render(overrides: Partial<ClassroomAnalyticsDashboardProps> = {}): string {
+function render(overrides: Partial<ClassroomAnalyticsDashboardProps> = {}, semesterKey: string | null = '2569|1'): string {
+  const context = overrides.context ?? success(CONTEXT)
   const props: ClassroomAnalyticsDashboardProps = {
-    context: success(CONTEXT),
+    context,
     onRetryContext: noop,
-    semesterKey: '2569|1',
-    onSemesterChange: noop,
+    scope: context.status === 'success' && semesterKey !== null ? resolveSemesterScope(context.data, semesterKey) : null,
     roster: success(ROSTER),
     onRetryRoster: noop,
     attendance: success(RECORDS),
     onRetryAttendance: noop,
     assignments: success(ASSIGNMENTS),
     onRetryAssignments: noop,
+    teacherName: 'ครูทดสอบ',
+    classroomsEditable: false,
+    onClassroomsChanged: noop,
     today: '2026-09-30',
     ...overrides,
   }
-  return renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ClassroomAnalyticsDashboard, props)))
+  return renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(ToastProvider, null, createElement(ClassroomAnalyticsDashboard, props))),
+  )
 }
 
 describe('loading, empty and error states (rendered)', () => {
@@ -60,10 +67,12 @@ describe('loading, empty and error states (rendered)', () => {
     expect(html).not.toContain('0 คน')
   })
 
-  it('context still loading: semester select disabled with a loading option', () => {
-    const html = render({ context: LOADING, semesterKey: null })
-    expect(html).toContain('กำลังโหลดภาคเรียน...')
+  it('context still loading: greeting stays, semester card and widgets show skeletons', () => {
+    const html = render({ context: LOADING }, null)
+    expect(html).toContain('สวัสดี, ครูทดสอบ')
     expect(html).toContain('data-testid="section-loading"')
+    expect(html).toContain('aria-label="กำลังโหลดห้องเรียน"')
+    expect(html).not.toContain('ยังไม่มีห้องเรียน')
   })
 
   it('an error shows the message and a retry button, and only in the affected sections', () => {
@@ -77,7 +86,7 @@ describe('loading, empty and error states (rendered)', () => {
   })
 
   it('context failure: page-level error with retry instead of an endless spinner', () => {
-    const html = render({ context: { status: 'error', error: 'โหลดข้อมูลนานเกินไป' }, semesterKey: null })
+    const html = render({ context: { status: 'error', error: 'โหลดข้อมูลนานเกินไป' } }, null)
     expect(html).toContain('โหลดข้อมูลนานเกินไป')
     expect(html).toContain('ลองใหม่')
   })
@@ -91,7 +100,7 @@ describe('loading, empty and error states (rendered)', () => {
 
   it('with data: real numbers, Thai labels, unit derived from the data (subject records -> คาบ)', () => {
     const html = render()
-    expect(html).toContain('ภาพรวมการจัดการห้องเรียน')
+    expect(html).toContain('สวัสดี, ครูทดสอบ')
     expect(html).toContain('ภาคเรียนที่ 1/2569')
     expect(html).toContain('50%') // 1 present of 2 entries
     expect(html).toContain('ขาด 1 คาบ')

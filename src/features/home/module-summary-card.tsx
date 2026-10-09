@@ -16,8 +16,8 @@ interface ModuleSummaryCardProps {
   subtitle?: string
   to: string
   /** Real counts pulled from an existing data source — NEVER a
-   * hardcoded number (see home-page-real.tsx/home-page-demo.tsx, the
-   * only two callers that pass this). */
+   * hardcoded number. (Its former callers, the old home pages, were
+   * merged into the unified dashboard; the card is kept for reuse.) */
   stats?: ModuleStat[]
   badge?: string
   description?: string

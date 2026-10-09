@@ -25,12 +25,28 @@ describe('router — backward-compatible redirects for reorganized routes (Requi
 describe('router — new routes for the redesigned IA', () => {
   const source = readSource()
 
-  it('renders the new global Home page at /teacher/dashboard', () => {
-    expect(source).toContain("{ path: 'dashboard', element: <HomePage /> }")
+  it('renders the unified dashboard at /teacher/dashboard', () => {
+    expect(source).toContain("{ path: 'dashboard', element: <DashboardPage /> }")
   })
 
-  it('adds /teacher/classroom-management as the classroom module\'s overview', () => {
-    expect(source).toContain("{ path: 'classroom-management', element: <ClassroomOverviewPage /> }")
+  it('the retired overview and list URLs redirect to the dashboard (one hop, no loop)', () => {
+    expect(source).toContain(`{ path: 'classroom-management', element: <Navigate to="/teacher/dashboard" replace /> }`)
+    expect(source).toContain(`{ path: 'classrooms', element: <Navigate to="/teacher/dashboard#classrooms" replace /> }`)
+    // The redirect target itself never redirects.
+    expect(source).not.toMatch(/path: 'dashboard', element: <Navigate/)
+    expect(source).not.toMatch(/HomePage|ClassroomOverviewPage|ClassroomsPage\b/)
+  })
+
+  it('classroom detail pages (and their bookmarks) are kept', () => {
+    expect(source).toContain("{ path: 'classrooms/:classroomId', element: <ClassroomDetailPage /> }")
+  })
+
+  it('a missing classroom falls back straight to the dashboard\'s classroom section (no redirect chain)', () => {
+    for (const file of ['../pages/teacher/classrooms/classroom-detail-page-real.tsx', '../pages/teacher/classrooms/classroom-detail-page-demo.tsx']) {
+      const page = readFileSync(new URL(file, import.meta.url), 'utf-8')
+      expect(page).toContain('<Navigate to="/teacher/dashboard#classrooms" replace />')
+      expect(page).not.toContain('<Navigate to="/teacher/classrooms" replace />')
+    }
   })
 
   it('adds /teacher/hermes for the Hermes Agent Control Center', () => {

@@ -1,20 +1,46 @@
 import { ArrowRight, ClipboardList, Lightbulb } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
+import { NativeSelect } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
-import type { AssignmentProgress, TeacherInsight } from '../analytics'
+import type { AnalyticsSubject, AssignmentProgress, TeacherInsight } from '../analytics'
 import { formatCount, type Resource } from '../resource'
 import { AnalyticsCard, SectionBody, SectionEmpty } from './analytics-card'
 import { AnalyticsDonut } from './charts'
 
-export function AssignmentStatusCard({ resource, onRetry }: { resource: Resource<AssignmentProgress>; onRetry: () => void }) {
+export interface AssignmentStatusCardProps {
+  resource: Resource<AssignmentProgress>
+  onRetry: () => void
+  /** Subjects in the selected semester, for the "ทุกวิชา" filter. */
+  subjects?: AnalyticsSubject[]
+  subjectId?: string | null
+  onSubjectChange?: (subjectId: string | null) => void
+}
+
+export function AssignmentStatusCard({ resource, onRetry, subjects = [], subjectId = null, onSubjectChange }: AssignmentStatusCardProps) {
+  const filter =
+    onSubjectChange && subjects.length > 0 ? (
+      <NativeSelect
+        value={subjectId ?? ''}
+        onChange={(e) => onSubjectChange(e.target.value || null)}
+        aria-label="กรองตามรายวิชา"
+        className="h-8 w-auto max-w-40 text-xs"
+      >
+        <option value="">ทุกวิชา</option>
+        {subjects.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </NativeSelect>
+    ) : null
   return (
-    <AnalyticsCard title="สถานะการส่งงาน (ทุกวิชา)" icon={ClipboardList}>
+    <AnalyticsCard title="สถานะการส่งงาน" icon={ClipboardList} tone="orange" action={filter}>
       <SectionBody resource={resource} onRetry={onRetry} skeleton="chart">
         {(p) =>
           p.assignmentCount === 0 ? (
-            <SectionEmpty message="ยังไม่มีงานหรือแบบทดสอบในภาคเรียนนี้" />
+            <SectionEmpty message={subjectId ? 'ยังไม่มีงานหรือแบบทดสอบในรายวิชานี้' : 'ยังไม่มีงานหรือแบบทดสอบในภาคเรียนนี้'} />
           ) : p.slots === 0 ? (
             <SectionEmpty message={`มีงาน ${formatCount(p.assignmentCount)} รายการ แต่ยังไม่มีนักเรียนในห้องเรียน`} />
           ) : (

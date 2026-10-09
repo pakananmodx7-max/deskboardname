@@ -1,7 +1,7 @@
 import { getSupabaseClient } from '@/lib/supabase'
 import type { Classroom, CreateClassroomInput, UpdateClassroomInput } from '@/types/classroom'
 
-interface ClassroomRow {
+export interface ClassroomRow {
   id: string
   teacher_id: string
   name: string
@@ -14,7 +14,7 @@ interface ClassroomRow {
   updated_at: string
 }
 
-function mapClassroom(row: ClassroomRow): Classroom {
+export function mapClassroom(row: ClassroomRow): Classroom {
   return {
     id: row.id,
     teacherId: row.teacher_id,

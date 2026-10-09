@@ -51,7 +51,7 @@ export function SummaryCards({ students, studentsError, classrooms, subjects, as
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <SummaryCard label="นักเรียนทั้งหมด" icon={Users} tone="blue" data={students} error={studentsError} />
-      <SummaryCard label="ห้องเรียนที่ใช้งาน" icon={School} tone="violet" data={classrooms} />
+      <SummaryCard label="ห้องเรียนทั้งหมด" icon={School} tone="violet" data={classrooms} />
       <SummaryCard label="รายวิชาที่สอน" icon={BookOpen} tone="green" data={subjects} />
       <SummaryCard label="งาน/แบบทดสอบ" icon={FileText} tone="orange" data={assignments} error={assignmentsError} />
     </div>

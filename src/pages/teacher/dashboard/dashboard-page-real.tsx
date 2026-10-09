@@ -1,31 +1,50 @@
-import { ClassroomAnalyticsDashboard } from '@/features/classroom-analytics/components/classroom-analytics-dashboard'
+import { useCallback } from 'react'
+
 import { todayIso } from '@/features/classroom-analytics/analytics'
-import { useClassroomAnalyticsData } from '@/features/classroom-analytics/use-classroom-analytics'
+import { ClassroomAnalyticsDashboard } from '@/features/classroom-analytics/components/classroom-analytics-dashboard'
+import { useSemesterAnalyticsData } from '@/features/classroom-analytics/use-classroom-analytics'
+import { useSemester } from '@/features/semester/semester-store'
 import { buildStudentAnalyticsPath } from '@/features/subjects-shared/subject-classroom-nav'
+import { useAuth } from '@/lib/auth-context'
+
+import { useScrollToHashSection } from './use-scroll-to-hash'
 
 /**
- * ระบบจัดการห้องเรียน → ภาพรวม (real Supabase data) — the Classroom
- * Analytics Dashboard. Every figure is computed by
- * features/classroom-analytics/analytics.ts from data loaded by
- * classroom-analytics-service.ts (RLS-scoped to this teacher, batched and
- * paged, each section loading and failing independently). The previous
- * worklist/recent-activity lists are gone from this page; classroom
- * management itself stays on its own pages.
+ * หน้าภาพรวม (real Supabase data) — the unified teacher dashboard that
+ * replaces the former home, classroom overview and classroom list pages.
+ * The semester comes from the shared SemesterProvider (the header's
+ * selector); classrooms/subjects are loaded once there, and the
+ * semester's roster/attendance/assignments here (RLS-scoped to this
+ * teacher, batched and paged, cached per semester, each section loading
+ * and failing independently).
  */
 export function DashboardPageReal() {
-  const data = useClassroomAnalyticsData()
+  const { profile } = useAuth()
+  const semester = useSemester()
+  const data = useSemesterAnalyticsData(semester.scope?.classroomIds ?? null)
+  const { refreshContext } = semester
+  const { reloadAll } = data
+  useScrollToHashSection(semester.context.status === 'success')
+
+  const handleClassroomsChanged = useCallback(() => {
+    refreshContext()
+    reloadAll()
+  }, [refreshContext, reloadAll])
+
   return (
     <ClassroomAnalyticsDashboard
-      context={data.context.resource}
-      onRetryContext={data.context.retry}
-      semesterKey={data.semesterKey}
-      onSemesterChange={data.setSemester}
+      context={semester.context}
+      onRetryContext={semester.retryContext}
+      scope={semester.scope}
       roster={data.roster.resource}
       onRetryRoster={data.roster.retry}
       attendance={data.attendance.resource}
       onRetryAttendance={data.attendance.retry}
       assignments={data.assignments.resource}
       onRetryAssignments={data.assignments.retry}
+      teacherName={profile?.displayName?.trim() || 'คุณครู'}
+      classroomsEditable
+      onClassroomsChanged={handleClassroomsChanged}
       studentLink={(stat) => (stat.analyticsSubjectId ? buildStudentAnalyticsPath(stat.analyticsSubjectId, stat.classroomId, stat.studentId) : null)}
       today={todayIso()}
     />

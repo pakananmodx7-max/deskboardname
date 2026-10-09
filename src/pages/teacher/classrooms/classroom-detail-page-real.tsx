@@ -133,15 +133,15 @@ export function ClassroomDetailPageReal() {
   }, [classroomId])
 
   if (!classroomId) {
-    return <Navigate to="/teacher/classrooms" replace />
+    return <Navigate to="/teacher/dashboard#classrooms" replace />
   }
 
   if (classroom === undefined) {
-    return error ? <Navigate to="/teacher/classrooms" replace /> : <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
+    return error ? <Navigate to="/teacher/dashboard#classrooms" replace /> : <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
   }
 
   if (classroom === null) {
-    return <Navigate to="/teacher/classrooms" replace />
+    return <Navigate to="/teacher/dashboard#classrooms" replace />
   }
 
   // Re-bind to a fresh const so the nested function declaration below
