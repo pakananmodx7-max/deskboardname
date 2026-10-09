@@ -2,36 +2,42 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-function readSource(): string {
-  return readFileSync(new URL('./dashboard-page-real.tsx', import.meta.url), 'utf-8')
+function readSource(file: string): string {
+  return readFileSync(new URL(file, import.meta.url), 'utf-8')
 }
 
-describe('DashboardPageReal — unified worklist replaces the old 4 misleading/overlapping cards (C1)', () => {
-  const source = readSource()
+describe('ระบบจัดการห้องเรียน → ภาพรวม — Classroom Analytics Dashboard', () => {
+  const real = readSource('./dashboard-page-real.tsx')
+  const demo = readSource('./dashboard-page-demo.tsx')
 
-  it('no longer renders Quick Actions (4 of its 6 buttons pointed at the identical URL regardless of label)', () => {
-    expect(source).not.toContain('<QuickActions')
+  it('both modes render the same ClassroomAnalyticsDashboard (one set of calculations)', () => {
+    expect(real).toContain('<ClassroomAnalyticsDashboard')
+    expect(demo).toContain('<ClassroomAnalyticsDashboard')
   })
 
-  it('no longer renders the 3 separate cards now merged into one WorklistCard', () => {
-    expect(source).not.toContain('<TodayAttendanceCard')
-    expect(source).not.toContain('<AssignmentActionCard')
-    expect(source).not.toContain('<DashboardFollowUpCard')
+  it('real mode loads through the RLS-scoped analytics service hook; demo mode never touches Supabase', () => {
+    expect(real).toContain('useClassroomAnalyticsData()')
+    expect(demo).toContain('buildDemoAnalyticsDataset(')
+    expect(demo).not.toMatch(/supabase|classroom-analytics-service|useClassroomAnalyticsData/)
   })
 
-  it('no longer renders the Upcoming list — it overlapped the same assignment data the worklist already covers', () => {
-    expect(source).not.toContain('<UpcomingAssignmentsCard')
+  it('the long worklist / recent-activity lists are no longer on the overview page', () => {
+    for (const source of [real, demo]) {
+      expect(source).not.toContain('<WorklistCard')
+      expect(source).not.toContain('<RecentActivityCard')
+      expect(source).not.toContain('<QuickActions')
+    }
   })
 
-  it('renders one WorklistCard fed by all 3 existing data sources merged, plus a compact StatStrip', () => {
-    expect(source).toContain('<WorklistCard')
-    expect(source).toContain('<StatStrip')
-    expect(source).toContain('attendanceToWorklistItems(attendanceItems)')
-    expect(source).toContain('assignmentsToWorklistItems(assignmentItems)')
-    expect(source).toContain('followUpToWorklistItems(followUpRows)')
+  it('no hardcoded semester label or example statistics', () => {
+    for (const source of [real, demo]) {
+      expect(source).not.toContain('1 / 2569')
+      expect(source).not.toMatch(/262|241 คน/)
+    }
   })
 
-  it('keeps Recent Activity — a log of the past is not redundant with a to-do worklist', () => {
-    expect(source).toContain('<RecentActivityCard')
+  it('links ranked students to the existing Student Analytics route in real mode only', () => {
+    expect(real).toContain('buildStudentAnalyticsPath(stat.analyticsSubjectId, stat.classroomId, stat.studentId)')
+    expect(demo).not.toContain('studentLink=')
   })
 })
