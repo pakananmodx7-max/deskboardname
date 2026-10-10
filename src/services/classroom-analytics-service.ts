@@ -118,6 +118,7 @@ export async function getAnalyticsContext(): Promise<AnalyticsContext> {
 interface RosterRow {
   classroom_id: string
   student_id: string
+  joined_at: string | null
   students: { id: string; student_code: string | null; number: number | null; first_name: string; last_name: string; status: 'active' | 'inactive' } | null
 }
 
@@ -127,7 +128,7 @@ export async function getAnalyticsRoster(classroomIds: string[]): Promise<Analyt
     fetchByIdChunks<RosterRow>(classroomIds, (ids, from, to) =>
       supabase
         .from('classroom_students')
-        .select('classroom_id, student_id, students(id, student_code, number, first_name, last_name, status)')
+        .select('classroom_id, student_id, joined_at, students(id, student_code, number, first_name, last_name, status)')
         .in('classroom_id', ids)
         .order('id')
         .range(from, to) as unknown as PageResult<RosterRow>,
@@ -146,7 +147,7 @@ export async function getAnalyticsRoster(classroomIds: string[]): Promise<Analyt
     })
   }
   return {
-    memberships: rows.map((r) => ({ studentId: r.student_id, classroomId: r.classroom_id })),
+    memberships: rows.map((r) => ({ studentId: r.student_id, classroomId: r.classroom_id, joinedAt: r.joined_at })),
     students: [...students.values()],
   }
 }

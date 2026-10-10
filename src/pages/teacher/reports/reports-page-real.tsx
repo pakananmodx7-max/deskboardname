@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { AttendanceSummaryReport } from '@/features/reports-real/attendance-summary-report'
 import { FollowUpReport } from '@/features/reports-real/followup-report'
 import { GradeSummaryReport } from '@/features/reports-real/grade-summary-report'
-import { MissingAssignmentReport } from '@/features/reports-real/missing-assignment-report'
 import { ReportFiltersBar } from '@/features/reports-real/report-filters-bar'
+import { MissingAssignmentsReport } from '@/features/reports-missing/missing-assignments-report'
+import { useMissingReportData } from '@/features/reports-missing/missing-report-data-source'
+import { useReportTeacherName } from '@/features/reports-missing/use-report-teacher-name'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { getDefaultReportFilters, getReportFilterOptions, type ReportFilterOptions } from '@/services/report-service'
@@ -21,6 +24,10 @@ const TABS: { key: ReportTab; label: string }[] = [
 
 const EMPTY_OPTIONS: ReportFilterOptions = { classrooms: [], subjects: [] }
 
+function isReportTab(value: string | null): value is ReportTab {
+  return TABS.some((tab) => tab.key === value)
+}
+
 /**
  * Real, Supabase-backed teacher reports. Every report below reads
  * exclusively through this schema's existing RLS (see
@@ -30,7 +37,23 @@ const EMPTY_OPTIONS: ReportFilterOptions = { classrooms: [], subjects: [] }
  * the real Grades tab.
  */
 export function ReportsPageReal() {
-  const [activeTab, setActiveTab] = useState<ReportTab>('attendance')
+  // ?tab= keeps the open tab across refreshes and lets the print preview's
+  // "กลับไปรายงาน" land back on งานค้างส่ง with its filters.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const activeTab: ReportTab = isReportTab(tabParam) ? tabParam : 'attendance'
+  const teacherName = useReportTeacherName()
+
+  function setActiveTab(tab: ReportTab) {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set('tab', tab)
+        return next
+      },
+      { replace: true },
+    )
+  }
   const [options, setOptions] = useState<ReportFilterOptions>(EMPTY_OPTIONS)
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [filters, setFilters] = useState<ReportFilters>(getDefaultReportFilters)
@@ -63,7 +86,8 @@ export function ReportsPageReal() {
 
       {optionsError && <p className="text-sm text-destructive">{optionsError}</p>}
 
-      <ReportFiltersBar filters={filters} options={options} onChange={setFilters} />
+      {/* งานค้างส่ง has its own filter toolbar (semester, status, search...). */}
+      {activeTab !== 'missing' && <ReportFiltersBar filters={filters} options={options} onChange={setFilters} />}
 
       <div className="flex gap-1 overflow-x-auto border-b border-border">
         {TABS.map((tab) => (
@@ -90,7 +114,7 @@ export function ReportsPageReal() {
         <GradeSummaryReport filters={filters} classroomName={classroomName} subjectName={subjectName} />
       )}
       {activeTab === 'missing' && (
-        <MissingAssignmentReport filters={filters} classroomName={classroomName} subjectName={subjectName} />
+        <MissingAssignmentsReport useData={useMissingReportData} teacherName={teacherName} />
       )}
       {activeTab === 'followup' && (
         <FollowUpReport filters={filters} classroomName={classroomName} subjectName={subjectName} />

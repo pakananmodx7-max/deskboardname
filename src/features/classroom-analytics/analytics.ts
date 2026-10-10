@@ -57,6 +57,10 @@ export interface AnalyticsStudent {
 export interface AnalyticsMembership {
   studentId: string
   classroomId: string
+  /** When the student joined this classroom (classroom_students.joined_at);
+   * optional — Demo Mode has none. Used by the missing-assignment report
+   * so a student who joined after a due date is not counted as missing. */
+  joinedAt?: string | null
 }
 
 export interface AnalyticsAttendanceRecord {

@@ -78,7 +78,7 @@ describe('Deep links into the assignment detail page reuse the one canonical pat
   })
 
   it('the missing-assignment report links each row to the exact assignment', () => {
-    const source = readSourceRelativeToThisFile('../../../features/reports-real/missing-assignment-report.tsx')
+    const source = readSourceRelativeToThisFile('../../../features/reports-missing/missing-assignments-report.tsx')
     expect(source).toContain('buildAssignmentDetailPath')
   })
 

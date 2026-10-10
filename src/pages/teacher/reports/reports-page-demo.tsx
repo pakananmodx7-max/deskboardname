@@ -2,13 +2,15 @@ import { BarChart3, ClipboardX, Download, FileText, UserSearch } from 'lucide-re
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { NativeSelect } from '@/components/ui/select'
 import { ATTENDANCE_STATUS_LABEL, ATTENDANCE_STATUS_ORDER } from '@/demo/attendance'
 import { useDemoClassroom } from '@/demo/demo-context'
 import { computeTotal } from '@/demo/grades'
+import { MissingAssignmentsReport } from '@/features/reports-missing/missing-assignments-report'
+import { useMissingReportData } from '@/features/reports-missing/missing-report-data-source'
+import { useReportTeacherName } from '@/features/reports-missing/use-report-teacher-name'
 
 type ReportType = 'attendance' | 'grades' | 'missing' | 'individual'
 
@@ -22,7 +24,12 @@ const REPORT_TYPES: { type: ReportType; title: string; description: string; icon
 export function ReportsPageDemo() {
   const { students, attendanceSummary, gradeStats, grades, missingByStudent } = useDemoClassroom()
   const [searchParams] = useSearchParams()
-  const [generated, setGenerated] = useState<{ type: ReportType; at: string } | null>(null)
+  // ?tab=missing (e.g. "กลับไปรายงาน" from the print preview) opens the
+  // missing-assignment report straight away.
+  const [generated, setGenerated] = useState<{ type: ReportType; at: string } | null>(() =>
+    searchParams.get('tab') === 'missing' ? { type: 'missing', at: new Date().toLocaleTimeString('th-TH') } : null,
+  )
+  const teacherName = useReportTeacherName()
   const [selectedStudentId, setSelectedStudentId] = useState(searchParams.get('student') ?? students[0]?.id ?? '')
 
   useEffect(() => {
@@ -74,10 +81,13 @@ export function ReportsPageDemo() {
               </CardTitle>
               <CardDescription>สร้างเมื่อ {generated.at}</CardDescription>
             </div>
-            <Button variant="outline" size="sm" disabled title="ฟีเจอร์นี้จะพร้อมใช้งานเร็วๆ นี้">
-              <Download className="size-3.5" />
-              ดาวน์โหลด PDF (เร็วๆ นี้)
-            </Button>
+            {/* The missing-assignment report has its own working exports. */}
+            {generated.type !== 'missing' && (
+              <Button variant="outline" size="sm" disabled title="ฟีเจอร์นี้จะพร้อมใช้งานเร็วๆ นี้">
+                <Download className="size-3.5" />
+                ดาวน์โหลด PDF (เร็วๆ นี้)
+              </Button>
+            )}
           </CardHeader>
           <CardContent>
             {generated.type === 'attendance' && (
@@ -115,22 +125,8 @@ export function ReportsPageDemo() {
             )}
 
             {generated.type === 'missing' && (
-              <div className="space-y-2 text-sm">
-                {students
-                  .filter((s) => (missingByStudent[s.id] ?? 0) > 0)
-                  .sort((a, b) => (missingByStudent[b.id] ?? 0) - (missingByStudent[a.id] ?? 0))
-                  .map((s) => (
-                    <div key={s.id} className="flex items-center justify-between border-b border-border py-1.5 last:border-0">
-                      <span>
-                        {s.firstName} {s.lastName}
-                      </span>
-                      <Badge variant="warning">{missingByStudent[s.id]} งาน</Badge>
-                    </div>
-                  ))}
-                {students.every((s) => (missingByStudent[s.id] ?? 0) === 0) && (
-                  <p className="text-muted-foreground">ไม่มีนักเรียนที่มีงานค้าง</p>
-                )}
-              </div>
+              // Same redesigned report as real mode, fed from the demo store.
+              <MissingAssignmentsReport useData={useMissingReportData} teacherName={teacherName} />
             )}
 
             {generated.type === 'individual' && (

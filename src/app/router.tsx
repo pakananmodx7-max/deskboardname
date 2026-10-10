@@ -5,6 +5,7 @@ import { ProtectedRoute } from '@/components/auth/protected-route'
 import { StudentProtectedRoute } from '@/components/auth/student-protected-route'
 import { StudentLayout } from '@/layouts/student-layout'
 import { TeacherLayout } from '@/layouts/teacher-layout'
+import { SemesterProvider } from '@/features/semester/semester-context'
 import { AuthProvider } from '@/lib/auth-context'
 import { ENABLE_TEACHER_REGISTRATION } from '@/lib/feature-flags'
 import { ForgotPasswordPage } from '@/pages/auth/forgot-password-page'
@@ -31,6 +32,7 @@ import { AgentToolsDevPage } from '@/pages/teacher/dev/agent-tools-dev-page'
 import { GradesRedirectPage } from '@/pages/teacher/grades/grades-redirect-page'
 import { HermesAgentPage } from '@/pages/teacher/hermes/hermes-agent-page'
 import { IntegrationsPage } from '@/pages/teacher/integrations/integrations-page'
+import { MissingReportPrintPage } from '@/pages/teacher/reports/missing-report-print-page'
 import { ReportsPage } from '@/pages/teacher/reports/reports-page'
 import { SettingsPage } from '@/pages/teacher/settings/settings-page'
 import { StudentLinkRequestsPage } from '@/pages/teacher/student-link-requests/student-link-requests-page'
@@ -94,6 +96,19 @@ const router = createBrowserRouter([
       { path: 'attendance', element: <StudentAttendancePage /> },
       { path: 'grades', element: <StudentGradesPage /> },
     ],
+  },
+  // A4 print preview of Reports → งานค้างส่ง — outside the teacher layout
+  // so no sidebar/top bar reaches the paper; same auth guard and shared
+  // semester selection as the teacher area.
+  {
+    path: '/teacher/reports/missing/print',
+    element: (
+      <ProtectedRoute>
+        <SemesterProvider>
+          <MissingReportPrintPage />
+        </SemesterProvider>
+      </ProtectedRoute>
+    ),
   },
   {
     path: '/teacher',
