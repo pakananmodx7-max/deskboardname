@@ -25,6 +25,8 @@ import type {
   DemoSubject,
   DemoSubjectAssignment,
   DemoSubjectAttendance,
+  DemoSubjectAttendanceEntry,
+  DemoSubjectAttendanceNotes,
   DemoSubmission,
   DemoTopic,
   SubjectAssignmentType,
@@ -83,6 +85,7 @@ interface DemoClassroomState {
   topics: DemoTopic[]
   subjectAssignments: DemoSubjectAssignment[]
   subjectAttendance: DemoSubjectAttendance
+  subjectAttendanceNotes: DemoSubjectAttendanceNotes
   lessons: DemoLesson[]
 }
 
@@ -105,6 +108,7 @@ function buildInitialState(): DemoClassroomState {
     topics: buildInitialTopics(),
     subjectAssignments: buildInitialSubjectAssignments(studentIdsForClassrooms),
     subjectAttendance: {},
+    subjectAttendanceNotes: {},
     lessons: buildInitialLessons(),
   }
 }
@@ -158,6 +162,9 @@ interface DemoClassroomContextValue extends DemoClassroomState {
     status: DemoAttendanceStatus,
   ) => void
   saveSubjectAttendance: (subjectId: string, classroomId: string, date: string) => void
+  /** Writes several students' status + note for one subject/classroom/date
+   * in one update (only the entries passed; others are left as they are). */
+  saveSubjectAttendanceEntries: (subjectId: string, classroomId: string, date: string, entries: DemoSubjectAttendanceEntry[]) => void
   /** Whether this subject+classroom has ever recorded attendance —
    * mirrors the real hasSubjectClassroomAttendance safeguard check
    * (subject-service.ts) for the demo EditSubjectDialog's unlink warning. */
@@ -516,6 +523,28 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     )
   }
 
+  function saveSubjectAttendanceEntries(subjectId: string, classroomId: string, date: string, entries: DemoSubjectAttendanceEntry[]) {
+    setState((prev) => {
+      const statusBySubject = prev.subjectAttendance[subjectId] ?? {}
+      const statusByClassroom = statusBySubject[classroomId] ?? {}
+      const statuses = { ...(statusByClassroom[date] ?? {}) }
+      const noteBySubject = prev.subjectAttendanceNotes[subjectId] ?? {}
+      const noteByClassroom = noteBySubject[classroomId] ?? {}
+      const notes = { ...(noteByClassroom[date] ?? {}) }
+      for (const entry of entries) {
+        statuses[entry.studentId] = entry.status
+        if (entry.note) notes[entry.studentId] = entry.note
+        else delete notes[entry.studentId]
+      }
+      return {
+        ...prev,
+        subjectAttendance: { ...prev.subjectAttendance, [subjectId]: { ...statusBySubject, [classroomId]: { ...statusByClassroom, [date]: statuses } } },
+        subjectAttendanceNotes: { ...prev.subjectAttendanceNotes, [subjectId]: { ...noteBySubject, [classroomId]: { ...noteByClassroom, [date]: notes } } },
+      }
+    })
+    saveSubjectAttendance(subjectId, classroomId, date)
+  }
+
   function hasSubjectClassroomAttendanceDemo(subjectId: string, classroomId: string): boolean {
     const byClassroom = state.subjectAttendance[subjectId]?.[classroomId]
     return Boolean(byClassroom && Object.keys(byClassroom).length > 0)
@@ -660,6 +689,7 @@ export function DemoClassroomProvider({ children }: { children: ReactNode }) {
     reorderLessonsDemo,
     setSubjectAttendanceStatus,
     saveSubjectAttendance,
+    saveSubjectAttendanceEntries,
     hasSubjectClassroomAttendanceDemo,
     updateSubjectClassroomIdsDemo,
     updateStudentInfoDemo,

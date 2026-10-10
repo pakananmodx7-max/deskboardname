@@ -1,10 +1,12 @@
 import { Users } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { NativeSelect } from '@/components/ui/select'
+import { UNSAVED_ATTENDANCE_MESSAGE } from '@/features/attendance/unsaved-changes-guard'
 import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
 import { CheckAndGradesTab } from '@/features/subjects-real/tabs/check-and-grades-tab'
 import { LessonsTab } from '@/features/subjects-real/tabs/lessons-tab'
@@ -138,7 +140,23 @@ export function SubjectClassroomWorkspacePageReal() {
   // itself also surviving, the page would land back on ภาพรวม first and
   // the inner sub-tab would never even be reached. `replace: true` so
   // clicking through tabs doesn't spam the browser history stack.
+  // Unsaved เช็คชื่อ edits: switching tabs would unmount the attendance tab
+  // and lose them, so ask first (route changes are guarded inside the tab).
+  const attendanceDirtyRef = useRef(false)
+  const handleAttendanceDirtyChange = useCallback((dirty: boolean) => {
+    attendanceDirtyRef.current = dirty
+  }, [])
+  const [pendingTab, setPendingTab] = useState<TabKey | null>(null)
+
   function handleTabClick(key: TabKey) {
+    if (activeTab === 'attendance' && key !== 'attendance' && attendanceDirtyRef.current) {
+      setPendingTab(key)
+      return
+    }
+    switchTab(key)
+  }
+
+  function switchTab(key: TabKey) {
     setActiveTab(key)
     setSearchParams(
       (prev) => {
@@ -300,7 +318,12 @@ export function SubjectClassroomWorkspacePageReal() {
           />
         )}
         {activeTab === 'attendance' && (
-          <AttendanceTab subject={subject} classroomId={activeClassroomId} classroomName={currentLink.classroomName ?? ''} />
+          <AttendanceTab
+            subject={subject}
+            classroomId={activeClassroomId}
+            classroomName={currentLink.classroomName ?? ''}
+            onDirtyChange={handleAttendanceDirtyChange}
+          />
         )}
         {activeTab === 'lessons' && <LessonsTab subject={subject} classroomId={activeClassroomId} />}
         {activeTab === 'checkAndGrades' && (
@@ -315,6 +338,22 @@ export function SubjectClassroomWorkspacePageReal() {
           />
         )}
       </div>
+
+      <ConfirmDialog
+        open={pendingTab !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingTab(null)
+        }}
+        title="ออกจากการเช็คชื่อโดยไม่บันทึก?"
+        description={UNSAVED_ATTENDANCE_MESSAGE}
+        confirmLabel="ออกโดยไม่บันทึก"
+        onConfirm={() => {
+          const target = pendingTab
+          attendanceDirtyRef.current = false
+          setPendingTab(null)
+          if (target) switchTab(target)
+        }}
+      />
     </div>
   )
 }

@@ -49,15 +49,14 @@ describe('AttendanceTab — saved-session race fix (Production Bug fix, Section 
     expect(source).toMatch(/editedIdsRef\.current = new Set\(\)/)
   })
 
-  it('every status/note edit records the student id as edited before updating local state', () => {
-    const setStatusFn = source.slice(source.indexOf('function setStatus'), source.indexOf('function setNote'))
-    const setNoteFn = source.slice(source.indexOf('function setNote'), source.indexOf('async function handleSave'))
-    expect(setStatusFn).toContain('editedIdsRef.current.add(studentId)')
-    expect(setNoteFn).toContain('editedIdsRef.current.add(studentId)')
+  it('every board edit (status, note, bulk action) records the touched student ids as edited before updating local state', () => {
+    const changeFn = source.slice(source.indexOf('function handleBoardChange'), source.indexOf('function requestSelection'))
+    expect(changeFn).toContain('for (const id of touchedIds) editedIdsRef.current.add(id)')
+    expect(changeFn.indexOf('editedIdsRef.current.add')).toBeLessThan(changeFn.indexOf('setEntries(next)'))
   })
 
   it('the delayed saved-session fetch merges through mergeLoadedAttendance instead of blindly replacing records — this is the actual race fix', () => {
-    expect(source).toContain('mergeLoadedAttendance(prev, loaded, editedIdsRef.current)')
+    expect(source).toContain('mergeLoadedEntries(prev, loaded, editedIdsRef.current)')
     // The old, buggy shape directly replaced records with no merge step —
     // guard against ever regressing back to it.
     expect(source).not.toMatch(/setRecords\(buildRecordsForRoster\(activeIds, attendance\)\)/)

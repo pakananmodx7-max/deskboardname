@@ -155,3 +155,16 @@ export type DemoSubjectAttendance = Record<
   string,
   Record<string, Record<string, Record<string, DemoAttendanceStatus>>>
 >
+
+/** Per-student attendance notes, same nesting as DemoSubjectAttendance
+ * (subjectId -> classroomId -> date -> studentId -> note). Mirrors
+ * attendance_records.note in real mode (ลาป่วย uses the same
+ * "[ลาป่วย]" note prefix — see attendance-board-model.ts). */
+export type DemoSubjectAttendanceNotes = Record<string, Record<string, Record<string, Record<string, string>>>>
+
+/** One saved roll-call entry for saveSubjectAttendanceEntries. */
+export interface DemoSubjectAttendanceEntry {
+  studentId: string
+  status: DemoAttendanceStatus
+  note: string | null
+}
