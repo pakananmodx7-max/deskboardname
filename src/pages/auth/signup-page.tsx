@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/lib/auth-context'
 import { dataMode } from '@/lib/data-mode'
+import { ENABLE_TEACHER_REGISTRATION } from '@/lib/feature-flags'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 
 const EMPTY_FORM = { displayName: '', email: '', password: '', confirmPassword: '' }
@@ -19,6 +20,11 @@ export function SignupPage() {
   const [submitting, setSubmitting] = useState(false)
   const [confirmationSent, setConfirmationSent] = useState(false)
 
+  // Defense in depth — the route already redirects when registration is
+  // closed (router.tsx).
+  if (!ENABLE_TEACHER_REGISTRATION) {
+    return <Navigate to="/login" replace />
+  }
   if (dataMode === 'demo' || user) {
     return <Navigate to="/teacher/dashboard" replace />
   }

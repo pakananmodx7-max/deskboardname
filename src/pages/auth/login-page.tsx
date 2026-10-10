@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/lib/auth-context'
 import { dataMode } from '@/lib/data-mode'
+import { ENABLE_TEACHER_REGISTRATION, TEACHER_REGISTRATION_DISABLED_MESSAGE } from '@/lib/feature-flags'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 
 export function LoginPage() {
@@ -41,12 +42,16 @@ export function LoginPage() {
       description="สำหรับคุณครู"
       footer={
         <div className="space-y-1">
-          <p>
-            ยังไม่มีบัญชี?{' '}
-            <Link to="/signup" className="font-medium text-primary hover:underline">
-              สมัครใช้งาน
-            </Link>
-          </p>
+          {ENABLE_TEACHER_REGISTRATION ? (
+            <p>
+              ยังไม่มีบัญชี?{' '}
+              <Link to="/signup" className="font-medium text-primary hover:underline">
+                สมัครใช้งาน
+              </Link>
+            </p>
+          ) : (
+            <p>{TEACHER_REGISTRATION_DISABLED_MESSAGE}</p>
+          )}
           <p>
             เป็นนักเรียน?{' '}
             <Link to="/student/login" className="font-medium text-primary hover:underline">

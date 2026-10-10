@@ -2,6 +2,7 @@ import type { Session, User } from '@supabase/supabase-js'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { dataMode } from '@/lib/data-mode'
+import { ENABLE_TEACHER_REGISTRATION, TeacherRegistrationDisabledError } from '@/lib/feature-flags'
 import { getSupabaseClient, supabase } from '@/lib/supabase'
 import type { Profile } from '@/types/profile'
 
@@ -142,6 +143,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // place). See SignUpInput's doc comment for why trusting this one
       // narrow, lower-privilege-only signal is safe.
       async signUp({ email, password, displayName, intendedRole }) {
+        // A sign-up without intendedRole 'student' creates a teacher —
+        // refused while teacher registration is closed. (The database
+        // trigger refuses it too; this only saves a round trip.)
+        if (intendedRole !== 'student' && !ENABLE_TEACHER_REGISTRATION) {
+          throw new TeacherRegistrationDisabledError()
+        }
         const client = getSupabaseClient()
         const { data, error } = await client.auth.signUp({
           email,

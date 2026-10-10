@@ -1,3 +1,4 @@
+import { TeacherRegistrationDisabledError } from '@/lib/feature-flags'
 import { SupabaseNotConfiguredError } from '@/lib/supabase'
 
 /** Error shape returned by supabase-js / postgrest-js on failed requests. */
@@ -24,6 +25,10 @@ const AUTH_ERROR_MESSAGES: [pattern: RegExp, thai: string][] = [
   [/password should be at least/i, 'รหัสผ่านสั้นเกินไป กรุณาใช้อย่างน้อย 6 ตัวอักษร'],
   [/unable to validate email address/i, 'รูปแบบอีเมลไม่ถูกต้อง'],
   [/for security purposes, you can only request this after/i, 'กรุณารอสักครู่ก่อนลองใหม่อีกครั้ง'],
+  // Supabase Auth hides the trigger's own message behind this generic one
+  // when handle_new_user refuses a sign-up (e.g. teacher registration is
+  // closed — 0028_teacher_registration_flag.sql).
+  [/database error saving new user/i, 'ไม่สามารถสร้างบัญชีได้ในขณะนี้ (อาจปิดรับสมัครชั่วคราว) กรุณาติดต่อผู้ดูแลระบบ'],
 ]
 
 /**
@@ -42,7 +47,7 @@ function looksLikeFriendlyMessage(message: string | undefined): message is strin
  * for developers instead of being shown to the user.
  */
 export function toFriendlyErrorMessage(error: unknown, fallback = 'เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง'): string {
-  if (error instanceof SupabaseNotConfiguredError) {
+  if (error instanceof SupabaseNotConfiguredError || error instanceof TeacherRegistrationDisabledError) {
     return error.message
   }
 

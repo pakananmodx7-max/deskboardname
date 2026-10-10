@@ -6,6 +6,7 @@ import { StudentProtectedRoute } from '@/components/auth/student-protected-route
 import { StudentLayout } from '@/layouts/student-layout'
 import { TeacherLayout } from '@/layouts/teacher-layout'
 import { AuthProvider } from '@/lib/auth-context'
+import { ENABLE_TEACHER_REGISTRATION } from '@/lib/feature-flags'
 import { ForgotPasswordPage } from '@/pages/auth/forgot-password-page'
 import { LoginPage } from '@/pages/auth/login-page'
 import { ResetPasswordPage } from '@/pages/auth/reset-password-page'
@@ -47,7 +48,10 @@ const router = createBrowserRouter([
     element: <RootPage />,
   },
   { path: 'login', element: <LoginPage /> },
-  { path: 'signup', element: <SignupPage /> },
+  // Teacher self-registration is behind ENABLE_TEACHER_REGISTRATION
+  // (off for now): a direct visit goes to the teacher login page. The
+  // database refuses new teacher accounts on its own as well (0028).
+  { path: 'signup', element: ENABLE_TEACHER_REGISTRATION ? <SignupPage /> : <Navigate to="/login" replace /> },
   { path: 'forgot-password', element: <ForgotPasswordPage /> },
   { path: 'reset-password', element: <ResetPasswordPage /> },
   { path: 'student/login', element: <StudentLoginPage /> },

@@ -13,6 +13,10 @@ interface ImportMetaEnv {
    * using the drive.file scope. Not a secret; safe to ship in the
    * client bundle. See google-picker.ts. */
   readonly VITE_GOOGLE_APP_ID?: string
+  /** "true" re-enables public teacher self-registration in the UI
+   * (default off). The database flag must also be on — see
+   * src/lib/feature-flags.ts. */
+  readonly VITE_ENABLE_TEACHER_REGISTRATION?: string
 }
 
 interface ImportMeta {
