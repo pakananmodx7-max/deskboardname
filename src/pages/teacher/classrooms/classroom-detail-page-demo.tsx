@@ -1,12 +1,13 @@
 import { Users } from 'lucide-react'
 import { useState } from 'react'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { NativeSelect } from '@/components/ui/select'
 import { useDemoClassroom } from '@/demo/demo-context'
 import type { DemoSubject } from '@/demo/types'
+import { CLASSROOM_LIST_PATH, ClassroomBreadcrumb } from '@/features/classroom-management/classroom-breadcrumb'
 import { ClassroomStudentsTab } from '@/features/classroom-management-demo/classroom-students-tab'
 import { AssignmentsTab } from '@/features/demo-subjects/tabs/assignments-tab'
 import { AttendanceTab } from '@/features/demo-subjects/tabs/attendance-tab'
@@ -25,6 +26,10 @@ const TABS: { key: TabKey; label: string }[] = [
 
 const SUBJECT_SCOPED_TABS: ReadonlySet<TabKey> = new Set(['assignments', 'attendance', 'grades'])
 
+function isTabKey(value: string | null): value is TabKey {
+  return TABS.some((tab) => tab.key === value)
+}
+
 /** Demo mirror of classroom-detail-page-real.tsx — see that file for the
  * full design rationale on why assignments/attendance/grades need a
  * selected subject and why a subject picker only appears when the
@@ -32,14 +37,18 @@ const SUBJECT_SCOPED_TABS: ReadonlySet<TabKey> = new Set(['assignments', 'attend
 export function ClassroomDetailPageDemo() {
   const { classroomId } = useParams<{ classroomId: string }>()
   const { classrooms, allStudents, subjects } = useDemoClassroom()
-  const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  // Same ?tab= deep link as the real page (e.g. the dashboard's
+  // "ดูนักเรียน / ย้ายนักเรียน" action opens ?tab=students).
+  const [searchParams] = useSearchParams()
+  const initialTabParam = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<TabKey>(isTabKey(initialTabParam) ? initialTabParam : 'overview')
 
   const classroom = classrooms.find((c) => c.id === classroomId)
   const linkedSubjects = subjects.filter((s) => s.classroomIds.includes(classroomId ?? ''))
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(linkedSubjects[0]?.id ?? null)
 
   if (!classroom) {
-    return <Navigate to="/teacher/dashboard#classrooms" replace />
+    return <Navigate to={CLASSROOM_LIST_PATH} replace />
   }
 
   // Re-bind to a fresh const so the nested renderSubjectScopedTab
@@ -80,6 +89,7 @@ export function ClassroomDetailPageDemo() {
         {/* Identity row — see classroom-detail-page-real.tsx for the
          * three-row rationale (identity/actions/scope never share a row). */}
         <div className="pt-1">
+          <ClassroomBreadcrumb classroomName={classroom.name} />
           <h1 className="text-xl font-bold tracking-tight text-foreground">{classroom.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{students.length} คน</p>
         </div>

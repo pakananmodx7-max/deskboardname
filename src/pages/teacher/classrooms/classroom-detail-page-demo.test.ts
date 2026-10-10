@@ -24,4 +24,9 @@ describe('ClassroomDetailPageDemo — Classroom Workspace tabs (demo mirror)', (
     expect(source).toContain('subjects.filter')
     expect(source).toContain('classroomIds.includes')
   })
+
+  it('honours the ?tab= deep link like the real page (dashboard "ดูนักเรียน" opens the นักเรียน tab)', () => {
+    expect(source).toContain("searchParams.get('tab')")
+    expect(source).toContain("useState<TabKey>(isTabKey(initialTabParam) ? initialTabParam : 'overview')")
+  })
 })

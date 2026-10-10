@@ -16,6 +16,11 @@ describe('navItems — unified teacher sidebar', () => {
     ])
   })
 
+  it('has no standalone "ห้องเรียน" entry — ภาพรวม is the entry point for classroom management', () => {
+    expect(flattenNavLinks().map((item) => item.label)).not.toContain('ห้องเรียน')
+    expect(flattenNavLinks()[0]).toMatchObject({ label: 'ภาพรวม', to: '/teacher/dashboard' })
+  })
+
   it('no longer links the retired overview/list pages — both live on the dashboard now', () => {
     const targets = flattenNavLinks().map((item) => item.to)
     expect(targets).not.toContain('/teacher/classroom-management')

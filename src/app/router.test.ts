@@ -44,8 +44,10 @@ describe('router — new routes for the redesigned IA', () => {
   it('a missing classroom falls back straight to the dashboard\'s classroom section (no redirect chain)', () => {
     for (const file of ['../pages/teacher/classrooms/classroom-detail-page-real.tsx', '../pages/teacher/classrooms/classroom-detail-page-demo.tsx']) {
       const page = readFileSync(new URL(file, import.meta.url), 'utf-8')
-      expect(page).toContain('<Navigate to="/teacher/dashboard#classrooms" replace />')
+      expect(page).toContain('<Navigate to={CLASSROOM_LIST_PATH} replace />')
       expect(page).not.toContain('<Navigate to="/teacher/classrooms" replace />')
+      // Breadcrumb back to the dashboard's classroom section.
+      expect(page).toContain('<ClassroomBreadcrumb classroomName={classroom.name} />')
     }
   })
 

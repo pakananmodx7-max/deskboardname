@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
+import { CLASSROOM_LIST_PATH, ClassroomBreadcrumb } from '@/features/classroom-management/classroom-breadcrumb'
 import { EditClassroomDialog } from '@/features/classroom-management/edit-classroom-dialog'
 import { ClassroomOverviewTab } from '@/features/classroom-management/tabs/classroom-overview-tab'
 import { ClassroomStudentsTab } from '@/features/classroom-management/tabs/classroom-students-tab'
@@ -133,15 +134,15 @@ export function ClassroomDetailPageReal() {
   }, [classroomId])
 
   if (!classroomId) {
-    return <Navigate to="/teacher/dashboard#classrooms" replace />
+    return <Navigate to={CLASSROOM_LIST_PATH} replace />
   }
 
   if (classroom === undefined) {
-    return error ? <Navigate to="/teacher/dashboard#classrooms" replace /> : <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
+    return error ? <Navigate to={CLASSROOM_LIST_PATH} replace /> : <p className="text-sm text-muted-foreground">กำลังโหลด...</p>
   }
 
   if (classroom === null) {
-    return <Navigate to="/teacher/dashboard#classrooms" replace />
+    return <Navigate to={CLASSROOM_LIST_PATH} replace />
   }
 
   // Re-bind to a fresh const so the nested function declaration below
@@ -202,6 +203,7 @@ export function ClassroomDetailPageReal() {
          * around anything else (see the header-crowding finding this
          * three-row split fixes). */}
         <div className="pt-1">
+          <ClassroomBreadcrumb classroomName={classroom.name} />
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold tracking-tight text-foreground">{classroom.name}</h1>
             {!classroom.isActive && <Badge variant="outline">เก็บถาวร</Badge>}
