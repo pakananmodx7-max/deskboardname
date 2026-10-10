@@ -8,7 +8,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -155,6 +155,13 @@ export function SubjectClassroomAssignmentDetailPageReal() {
    * "งานออนไลน์" cell falls back to "-", never blanks the roster. */
   const [resourceCounts, setResourceCounts] = useState<Record<string, number>>({})
   const [viewerStudentId, setViewerStudentId] = useState<string | null>(null)
+  // ?student=<id> (e.g. from a "ส่งงานใหม่" notification) opens that
+  // student's submission once the roster has loaded.
+  const [searchParams] = useSearchParams()
+  const [focusStudentId, setFocusStudentId] = useState<string | null>(() => {
+    const value = searchParams.get('student')
+    return value && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null
+  })
 
   const [statusFilter, setStatusFilter] = useState<AssignmentDetailFilter>('all')
   const [search, setSearch] = useState('')
@@ -309,6 +316,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
   }
 
   const roster = deriveAssignmentRoster(students, submissions)
+  const activeViewerId = viewerStudentId ?? (focusStudentId && roster.some((s) => s.id === focusStudentId) ? focusStudentId : null)
   const rosterSubmissions: Record<string, AssignmentSubmission> = {}
   for (const student of roster) {
     if (submissions[student.id]) rosterSubmissions[student.id] = submissions[student.id]
@@ -1060,10 +1068,14 @@ export function SubjectClassroomAssignmentDetailPageReal() {
       />
 
       <SubmissionViewerDrawer
-        open={Boolean(viewerStudentId)}
-        onOpenChange={(open) => !open && setViewerStudentId(null)}
-        studentName={viewerStudentId ? studentLabel(roster.find((s) => s.id === viewerStudentId), viewerStudentId) : ''}
-        submission={viewerStudentId ? (submissions[viewerStudentId] ?? null) : null}
+        open={Boolean(activeViewerId)}
+        onOpenChange={(open) => {
+          if (open) return
+          setViewerStudentId(null)
+          setFocusStudentId(null)
+        }}
+        studentName={activeViewerId ? studentLabel(roster.find((s) => s.id === activeViewerId), activeViewerId) : ''}
+        submission={activeViewerId ? (submissions[activeViewerId] ?? null) : null}
         maxScore={currentAssignment.maxScore}
       />
     </div>

@@ -3,10 +3,10 @@ import { useEffect, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 
 import { AvatarUploadButton } from '@/components/layout/avatar-upload-button'
-import { NotificationBell } from '@/components/layout/notification-bell'
 import { NotificationToast } from '@/components/layout/notification-toast'
 import { StudentSidebar } from '@/components/layout/student-sidebar'
 import { ThemeToggle } from '@/components/layout/theme-toggle'
+import { StudentNotificationBell } from '@/features/notifications/notification-bells'
 import { useAuth } from '@/lib/auth-context'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { StudentNotificationsProvider, useStudentNotificationsContext } from '@/lib/student-notifications-context'
@@ -143,8 +143,6 @@ function StudentTopBar({
   onOpenMobileMenu: () => void
   onSignOut: () => void
 }) {
-  const { notifications, unreadCount, loading, error, markRead, markAllRead } = useStudentNotificationsContext()
-
   return (
     <header className="flex h-16 items-center gap-3 border-b border-border bg-card px-4 sm:px-6">
       <button
@@ -169,14 +167,7 @@ function StudentTopBar({
       </div>
 
       <div className="ml-auto flex items-center gap-1">
-        <NotificationBell
-          notifications={notifications}
-          unreadCount={unreadCount}
-          loading={loading}
-          error={error}
-          onMarkRead={markRead}
-          onMarkAllRead={markAllRead}
-        />
+        <StudentNotificationBell />
         <ThemeToggle />
         <button
           type="button"

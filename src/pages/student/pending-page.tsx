@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/lib/auth-context'
 import { toFriendlyErrorMessage } from '@/lib/errors'
+import { subscribeToMyNotifications } from '@/services/app-notification-service'
 import { deriveMyLinkStatus, getMyLinkRequests } from '@/services/student-link-service'
 import type { StudentLinkRequestStatus } from '@/types/student-link-request'
 
@@ -22,13 +23,27 @@ import type { StudentLinkRequestStatus } from '@/types/student-link-request'
  * in case navigation itself ever fails.
  */
 export function StudentPendingPage() {
-  const { signOut } = useAuth()
+  const { signOut, user } = useAuth()
   const navigate = useNavigate()
 
   const [status, setStatus] = useState<StudentLinkRequestStatus | 'none' | null>(null)
   const [reviewNote, setReviewNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  // Bumped when the teacher's decision arrives live (notifications, 0029)
+  // so the status below is re-read without a page refresh.
+  const [checkCount, setCheckCount] = useState(0)
+
+  const userId = user?.id ?? null
+  useEffect(() => {
+    if (!userId) return
+    return subscribeToMyNotifications(userId, {
+      onChange: (n) => {
+        if (n.type === 'link_approved' || n.type === 'link_rejected') setCheckCount((c) => c + 1)
+      },
+      onStatus: () => {},
+    })
+  }, [userId])
 
   useEffect(() => {
     let active = true
@@ -58,7 +73,7 @@ export function StudentPendingPage() {
     return () => {
       active = false
     }
-  }, [navigate])
+  }, [navigate, checkCount])
 
   if (loading) {
     return (

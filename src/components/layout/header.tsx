@@ -1,4 +1,4 @@
-import { Bell, LogOut, Menu, RotateCcw, Search } from 'lucide-react'
+import { LogOut, Menu, RotateCcw, Search } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -8,6 +8,7 @@ import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
 import { SemesterSelect } from '@/features/semester/semester-select'
 import { useDemoClassroom } from '@/demo/demo-context'
+import { DemoTeacherNotificationBell, TeacherNotificationBell } from '@/features/notifications/notification-bells'
 import { useAuth } from '@/lib/auth-context'
 import { dataMode } from '@/lib/data-mode'
 import { toFriendlyErrorMessage } from '@/lib/errors'
@@ -58,19 +59,6 @@ function GlobalSearchField() {
         className="h-9 w-full rounded-xl border border-input bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
       />
     </div>
-  )
-}
-
-function NotificationButton() {
-  return (
-    <button
-      type="button"
-      className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-      aria-label="การแจ้งเตือน"
-    >
-      <Bell className="size-5" />
-      <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive" />
-    </button>
   )
 }
 
@@ -126,7 +114,7 @@ function DemoHeader({ onOpenMobileMenu }: HeaderProps) {
       </button>
 
       <ThemeToggle />
-      <NotificationButton />
+      <DemoTeacherNotificationBell />
 
       <div className="flex items-center gap-2">
         <Avatar>คส</Avatar>
@@ -171,7 +159,7 @@ function RealHeader({ onOpenMobileMenu }: HeaderProps) {
 
       <SemesterSelect className="hidden sm:flex" />
       <ThemeToggle />
-      <NotificationButton />
+      <TeacherNotificationBell />
 
       <div className="flex items-center gap-2">
         <Avatar>{initials}</Avatar>
