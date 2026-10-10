@@ -1,8 +1,8 @@
 import { ChevronDown, GraduationCap, X } from 'lucide-react'
 import { useState } from 'react'
-import { Link, NavLink, useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 
-import { flattenNavLinks, isGroupActive, isLinkActive, navItems, type NavEntry, type NavGroup, type NavLink as NavLinkItem } from '@/components/layout/nav-items'
+import { isGroupActive, isLinkActive, navItems, resolveGroupExpanded, type NavEntry, type NavGroup, type NavLink as NavLinkItem } from '@/components/layout/nav-items'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -11,14 +11,14 @@ interface SidebarProps {
 }
 
 const LINK_CLASSES =
-  'flex items-center gap-3 rounded-full px-3 py-2 text-sm font-medium transition-all'
+  'flex items-center gap-3 rounded-full px-3 py-2 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50'
 /** A fully filled pill (not just a tint) — the strongest, most obvious
  * "you are here" signal in the nav, matching the same solid-primary
  * pill language used by the segmented filters elsewhere in the app. */
 const LINK_ACTIVE = 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'
 const LINK_INACTIVE = 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground'
 
-function NavLeafRow({ item, indent, onNavigate }: { item: NavLinkItem; indent?: boolean; onNavigate?: () => void }) {
+function NavLeafRow({ item, onNavigate }: { item: NavLinkItem; onNavigate?: () => void }) {
   const { pathname } = useLocation()
   const active = isLinkActive(item, pathname)
   // Plain Link: NavLink would set aria-current from its own exact match
@@ -28,7 +28,7 @@ function NavLeafRow({ item, indent, onNavigate }: { item: NavLinkItem; indent?: 
       to={item.to}
       onClick={onNavigate}
       aria-current={active ? 'page' : undefined}
-      className={cn(LINK_CLASSES, indent && 'pl-9', active ? LINK_ACTIVE : LINK_INACTIVE)}
+      className={cn(LINK_CLASSES, active ? LINK_ACTIVE : LINK_INACTIVE)}
     >
       <item.icon className="size-4 shrink-0" />
       <span className="truncate">{item.label}</span>
@@ -41,38 +41,74 @@ function NavLeafRow({ item, indent, onNavigate }: { item: NavLinkItem; indent?: 
   )
 }
 
-/** The one collapsible entry in the tree today (ระบบจัดการชั้นเรียน) —
- * clicking the row itself navigates to the module's overview page AND
- * toggles its children open/closed; a chevron gives the same toggle
- * without navigating, for a teacher who just wants to peek at the list. */
+function groupStorageKey(id: string): string {
+  return `krunameclass:sidebar-group:${id}`
+}
+
+/** The teacher's last expand/collapse choice for a group (default open). */
+function readGroupExpanded(id: string): boolean {
+  try {
+    return window.localStorage.getItem(groupStorageKey(id)) !== 'collapsed'
+  } catch {
+    return true
+  }
+}
+
+function writeGroupExpanded(id: string, expanded: boolean): void {
+  try {
+    window.localStorage.setItem(groupStorageKey(id), expanded ? 'expanded' : 'collapsed')
+  } catch {
+    // Private mode / blocked storage — the in-memory state still applies.
+  }
+}
+
+/**
+ * A collapsible group (ระบบจัดการชั้นเรียน). The header is a real button
+ * (Enter/Space toggle, aria-expanded + aria-controls); its children are
+ * indented links. It opens by itself when one of its children is the
+ * current page, and the teacher can still collapse or expand it by hand.
+ * The header is never a link, so no destination appears twice.
+ */
 function NavGroupRow({ group, onNavigate }: { group: NavGroup; onNavigate?: () => void }) {
-  const location = useLocation()
-  const active = isGroupActive(group, location.pathname)
-  const [expanded, setExpanded] = useState(true)
+  const { pathname } = useLocation()
+  const active = isGroupActive(group, pathname)
+  const [userExpanded, setUserExpanded] = useState(() => readGroupExpanded(group.id))
+  const [collapsedOnPath, setCollapsedOnPath] = useState<string | null>(null)
+  const expanded = resolveGroupExpanded({ active, userExpanded, collapsedOnPath, pathname })
+  const listId = `sidebar-group-${group.id}`
+
+  function toggle() {
+    const next = !expanded
+    setUserExpanded(next)
+    setCollapsedOnPath(next ? null : pathname)
+    writeGroupExpanded(group.id, next)
+  }
 
   return (
     <div>
-      <div className={cn(LINK_CLASSES, 'pr-1.5', active ? LINK_ACTIVE : LINK_INACTIVE)}>
-        <NavLink to={group.to} onClick={onNavigate} className="flex min-w-0 flex-1 items-center gap-3">
-          <group.icon className="size-4 shrink-0" />
-          <span className="truncate">{group.label}</span>
-        </NavLink>
-        <button
-          type="button"
-          onClick={() => setExpanded((prev) => !prev)}
-          className="shrink-0 rounded-full p-1 hover:bg-accent"
-          aria-label={expanded ? `ย่อ ${group.label}` : `ขยาย ${group.label}`}
-          aria-expanded={expanded}
-        >
-          <ChevronDown className={cn('size-3.5 transition-transform', !expanded && '-rotate-90')} />
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={expanded}
+        aria-controls={listId}
+        className={cn(
+          LINK_CLASSES,
+          'w-full text-left',
+          active ? 'font-semibold text-sidebar-foreground hover:bg-sidebar-active/10' : LINK_INACTIVE,
+        )}
+      >
+        <group.icon className={cn('size-4 shrink-0', active && 'text-primary')} />
+        <span className="min-w-0 flex-1 truncate">{group.label}</span>
+        <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform', !expanded && '-rotate-90')} aria-hidden="true" />
+      </button>
       {expanded && (
-        <div className="mt-0.5 space-y-0.5">
+        <ul id={listId} aria-label={group.label} className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
           {group.children.map((child) => (
-            <NavLeafRow key={child.to} item={child} indent onNavigate={onNavigate} />
+            <li key={child.to}>
+              <NavLeafRow item={child} onNavigate={onNavigate} />
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </div>
   )
@@ -87,7 +123,7 @@ function NavEntryRow({ entry, onNavigate }: { entry: NavEntry; onNavigate?: () =
         {entry.label}
       </p>
       {entry.entries.map((child) => (
-        <NavEntryRow key={child.type === 'group' ? child.to : child.to} entry={child} onNavigate={onNavigate} />
+        <NavEntryRow key={child.type === 'group' ? child.id : child.to} entry={child} onNavigate={onNavigate} />
       ))}
     </div>
   )
@@ -106,9 +142,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+      <nav aria-label="เมนูหลัก" className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
         {navItems.map((entry) => (
-          <NavEntryRow key={entry.type === 'section' ? entry.label : entry.to} entry={entry} onNavigate={onNavigate} />
+          <NavEntryRow key={entry.type === 'section' ? entry.label : entry.type === 'group' ? entry.id : entry.to} entry={entry} onNavigate={onNavigate} />
         ))}
       </nav>
 
@@ -121,15 +157,29 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   )
 }
 
-/** Icon-only rail shown at tablet widths (md–lg) where a full labeled
- * sidebar doesn't fit comfortably but a persistent nav still should,
- * rather than immediately dropping to the mobile hamburger pattern.
- * Renders every real destination FLATTENED (see flattenNavLinks) —
- * there is no room for group/section labels or expand/collapse
- * affordances at icon-only width, so each destination is just its own
- * icon + tooltip, exactly like before this redesign. */
+function CompactRailLink({ item, pathname }: { item: NavLinkItem; pathname: string }) {
+  const active = isLinkActive(item, pathname)
+  return (
+    <Link
+      to={item.to}
+      title={item.label}
+      aria-current={active ? 'page' : undefined}
+      className={cn(
+        'flex size-10 items-center justify-center rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+        active ? 'bg-sidebar-active text-sidebar-active-foreground shadow-sm' : 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground',
+      )}
+    >
+      <item.icon className="size-5" />
+      <span className="sr-only">{item.label}</span>
+    </Link>
+  )
+}
+
+/** Icon-only rail shown at tablet widths (md–lg), where the full labeled
+ * sidebar doesn't fit. Every destination is its own icon + tooltip;
+ * there is no room for expand/collapse here, so a group's children are
+ * always shown, set apart by a divider. */
 function CompactSidebarContent() {
-  const links = flattenNavLinks()
   const { pathname } = useLocation()
   return (
     <div className="flex h-full flex-col items-center bg-sidebar text-sidebar-foreground">
@@ -139,24 +189,28 @@ function CompactSidebarContent() {
         </div>
       </div>
 
-      <nav className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto py-4">
-        {links.map((item) => (
-          <Link
-            key={item.to}
-            to={item.to}
-            title={item.label}
-            aria-current={isLinkActive(item, pathname) ? 'page' : undefined}
-            className={cn(
-              'flex size-10 items-center justify-center rounded-full transition-all',
-              isLinkActive(item, pathname)
-                ? 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'
-                : 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground',
-            )}
-          >
-            <item.icon className="size-5" />
-            <span className="sr-only">{item.label}</span>
-          </Link>
-        ))}
+      <nav aria-label="เมนูหลัก" className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto py-4">
+        {navItems.map((entry) =>
+          entry.type === 'group' ? (
+            // No room for the group's label at icon width — its children
+            // are grouped for assistive tech and set apart by a divider.
+            <div key={entry.id} role="group" aria-label={entry.label} className="flex flex-col items-center gap-1.5 border-b border-sidebar-border pb-2">
+              {entry.children.map((child) => (
+                <CompactRailLink key={child.to} item={child} pathname={pathname} />
+              ))}
+            </div>
+          ) : entry.type === 'link' ? (
+            <CompactRailLink key={entry.to} item={entry} pathname={pathname} />
+          ) : (
+            entry.entries.map((child) =>
+              child.type === 'link' ? (
+                <CompactRailLink key={child.to} item={child} pathname={pathname} />
+              ) : (
+                child.children.map((grandchild) => <CompactRailLink key={grandchild.to} item={grandchild} pathname={pathname} />)
+              ),
+            )
+          ),
+        )}
       </nav>
     </div>
   )

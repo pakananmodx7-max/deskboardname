@@ -1,77 +1,138 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
-import { flattenNavLinks, isGroupActive, isLinkActive, navItems, type NavGroup, type NavLink } from '@/components/layout/nav-items'
+import {
+  CLASSROOM_GROUP_ID,
+  flattenNavLinks,
+  isGroupActive,
+  isLinkActive,
+  navItems,
+  resolveGroupExpanded,
+  type NavGroup,
+  type NavLink,
+} from '@/components/layout/nav-items'
 
-describe('navItems — unified teacher sidebar', () => {
-  it('is one flat list with exactly these destinations, in this order', () => {
-    expect(navItems.every((entry) => entry.type === 'link')).toBe(true)
-    expect(navItems.map((entry) => (entry.type === 'link' ? [entry.label, entry.to] : null))).toEqual([
+const group = navItems[0] as NavGroup
+
+describe('navItems — teacher sidebar hierarchy', () => {
+  it('starts with the collapsible "ระบบจัดการชั้นเรียน" group holding the five classroom items, in order', () => {
+    expect(group).toMatchObject({ type: 'group', id: CLASSROOM_GROUP_ID, label: 'ระบบจัดการชั้นเรียน' })
+    expect(group.children.map((c) => [c.label, c.to])).toEqual([
       ['ภาพรวม', '/teacher/dashboard'],
       ['รายวิชา', '/teacher/subjects'],
       ['งานและสื่อการสอน', '/teacher/assignments'],
       ['การเช็คชื่อ', '/teacher/attendance'],
       ['รายงาน', '/teacher/reports'],
-      ['Hermes Agent', '/teacher/hermes'],
-      ['ตั้งค่า', '/teacher/settings'],
     ])
   })
 
-  it('has no standalone "ห้องเรียน" entry — ภาพรวม is the entry point for classroom management', () => {
-    expect(flattenNavLinks().map((item) => item.label)).not.toContain('ห้องเรียน')
-    expect(flattenNavLinks()[0]).toMatchObject({ label: 'ภาพรวม', to: '/teacher/dashboard' })
+  it('ระบบเอกสาร, Hermes Agent and ตั้งค่า stay outside the group, in this order', () => {
+    const rest = navItems.slice(1)
+    expect(rest.every((e) => e.type === 'link')).toBe(true)
+    expect(rest.map((e) => (e.type === 'link' ? [e.label, e.to] : null))).toEqual([
+      ['ระบบเอกสาร', '/teacher/documents'],
+      ['Hermes Agent', '/teacher/hermes'],
+      ['ตั้งค่า', '/teacher/settings'],
+    ])
+    expect((rest[0] as NavLink).badge).toBe('เร็ว ๆ นี้')
   })
 
-  it('no longer links the retired overview/list pages — both live on the dashboard now', () => {
-    const targets = flattenNavLinks().map((item) => item.to)
-    expect(targets).not.toContain('/teacher/classroom-management')
-    expect(targets).not.toContain('/teacher/classrooms')
+  it('is exactly one group and nothing nested deeper', () => {
+    expect(navItems.filter((e) => e.type === 'group')).toHaveLength(1)
+    expect(navItems.some((e) => e.type === 'section')).toBe(false)
   })
 
-  it('relocated destinations stay out of the sidebar (still reachable by URL)', () => {
-    const targets = flattenNavLinks().map((item) => item.to)
-    for (const path of ['/teacher/integrations', '/teacher/student-link-requests', '/teacher/ai', '/teacher/students', '/teacher/grades']) {
+  it('no duplicate destinations or labels anywhere (the group header is not a link)', () => {
+    const flat = flattenNavLinks()
+    expect(new Set(flat.map((l) => l.to)).size).toBe(flat.length)
+    expect(new Set(flat.map((l) => l.label)).size).toBe(flat.length)
+    expect(flat.map((l) => l.label)).not.toContain('ระบบจัดการชั้นเรียน')
+    expect('to' in group).toBe(false)
+  })
+
+  it('retired or relocated destinations stay out of the sidebar (routes still exist)', () => {
+    const targets = flattenNavLinks().map((l) => l.to)
+    for (const path of ['/teacher/classroom-management', '/teacher/classrooms', '/teacher/integrations', '/teacher/student-link-requests', '/teacher/ai', '/teacher/students', '/teacher/grades']) {
       expect(targets).not.toContain(path)
     }
+    expect(flattenNavLinks().map((l) => l.label)).not.toContain('ห้องเรียน')
   })
 
-  it('produces no duplicate `to` targets', () => {
-    const targets = flattenNavLinks().map((item) => item.to)
-    expect(new Set(targets).size).toBe(targets.length)
+  it('every sidebar destination is a route in the router', () => {
+    const router = readFileSync(new URL('../../app/router.tsx', import.meta.url), 'utf-8')
+    for (const link of flattenNavLinks()) {
+      expect(router).toContain(`path: '${link.to.replace('/teacher/', '')}'`)
+    }
   })
 })
 
-describe('isLinkActive', () => {
-  const overview = navItems[0] as NavLink
-  const subjects = navItems[1] as NavLink
+describe('active state', () => {
+  const overview = group.children[0]
 
-  it('ภาพรวม is active on the dashboard and on a classroom\'s own page (old bookmarks keep a highlighted home)', () => {
+  it('ภาพรวม is active on the dashboard and on a classroom page', () => {
     expect(isLinkActive(overview, '/teacher/dashboard')).toBe(true)
     expect(isLinkActive(overview, '/teacher/classrooms/abc')).toBe(true)
     expect(isLinkActive(overview, '/teacher/subjects')).toBe(false)
   })
 
-  it('a link is active on its own path and sub-paths only', () => {
+  it('a child is active on its own path and sub-paths only', () => {
+    const subjects = group.children[1]
     expect(isLinkActive(subjects, '/teacher/subjects/s1/classrooms/c1')).toBe(true)
     expect(isLinkActive(subjects, '/teacher/subjects-other')).toBe(false)
   })
-})
 
-describe('isGroupActive (kept for future grouped entries)', () => {
-  const group: NavGroup = {
-    type: 'group',
-    label: 'กลุ่ม',
-    to: '/teacher/x',
-    icon: overviewIcon(),
-    children: [{ type: 'link', label: 'ก', to: '/teacher/x/a', icon: overviewIcon() }],
-  }
-
-  it('matches a child path and its sub-paths, not unrelated paths', () => {
-    expect(isGroupActive(group, '/teacher/x/a')).toBe(true)
-    expect(isGroupActive(group, '/teacher/x/a/1')).toBe(true)
-    expect(isGroupActive(group, '/teacher/hermes')).toBe(false)
+  it('the group is active on any child route (including activePrefixes), not elsewhere', () => {
+    for (const path of ['/teacher/dashboard', '/teacher/classrooms/x', '/teacher/subjects/s1', '/teacher/assignments', '/teacher/attendance', '/teacher/reports']) {
+      expect(isGroupActive(group, path)).toBe(true)
+    }
+    for (const path of ['/teacher/hermes', '/teacher/settings', '/teacher/documents']) {
+      expect(isGroupActive(group, path)).toBe(false)
+    }
   })
 })
 
-function overviewIcon() {
-  return (navItems[0] as NavLink).icon
-}
+describe('resolveGroupExpanded — auto-expand + manual collapse', () => {
+  it('opens when a child route is active even if the teacher had collapsed it on another page', () => {
+    expect(resolveGroupExpanded({ active: true, userExpanded: false, collapsedOnPath: '/teacher/reports', pathname: '/teacher/subjects' })).toBe(true)
+  })
+
+  it('stays collapsed on the page where the teacher collapsed it', () => {
+    expect(resolveGroupExpanded({ active: true, userExpanded: false, collapsedOnPath: '/teacher/subjects', pathname: '/teacher/subjects' })).toBe(false)
+  })
+
+  it('outside the group: follows the teacher\'s choice', () => {
+    expect(resolveGroupExpanded({ active: false, userExpanded: true, collapsedOnPath: null, pathname: '/teacher/hermes' })).toBe(true)
+    expect(resolveGroupExpanded({ active: false, userExpanded: false, collapsedOnPath: null, pathname: '/teacher/hermes' })).toBe(false)
+  })
+})
+
+describe('sidebar component (source checks)', () => {
+  const sidebar = readFileSync(new URL('./sidebar.tsx', import.meta.url), 'utf-8')
+
+  it('the group header is a keyboard-operable toggle button with aria-expanded/aria-controls, never a link', () => {
+    const row = sidebar.slice(sidebar.indexOf('function NavGroupRow'), sidebar.indexOf('function NavEntryRow'))
+    expect(row).toContain('<button')
+    expect(row).toContain('aria-expanded={expanded}')
+    expect(row).toContain('aria-controls={listId}')
+    expect(row).not.toMatch(/<Link|<NavLink/)
+    expect(row).toContain('<ul id={listId}')
+  })
+
+  it('children keep the blue filled active pill; links show a keyboard focus ring', () => {
+    expect(sidebar).toContain("const LINK_ACTIVE = 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'")
+    expect(sidebar).toContain('focus-visible:ring-2')
+    expect(sidebar).toContain("aria-current={active ? 'page' : undefined}")
+  })
+
+  it('one sidebar component serves desktop, the tablet rail and the mobile drawer', () => {
+    expect(sidebar.match(/export function Sidebar\(/g)).toHaveLength(1)
+    expect(sidebar).toContain('<SidebarContent />')
+    expect(sidebar).toContain('<CompactSidebarContent />')
+    expect(sidebar).toContain('<SidebarContent onNavigate={onCloseMobile} />')
+  })
+
+  it('no Tailwind dark: variants (the theme switches via data-theme)', () => {
+    expect(sidebar).not.toMatch(/\bdark:/)
+  })
+})
