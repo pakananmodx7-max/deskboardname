@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
+  classifyRefreshFailure,
   createDriveClient,
   DriveStorageError,
   escapeQueryValue,
@@ -260,6 +261,24 @@ describe('tokens and Google errors', () => {
     expect(mapGoogleError(404, null).code).toBe('not_found')
     expect(mapGoogleError(500, null).code).toBe('drive_unavailable')
     expect(mapGoogleError(403, { error: { status: 'PERMISSION_DENIED', details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } }).code).toBe('scope_missing')
+  })
+})
+
+describe('refresh-token failures', () => {
+  it('only a revoked grant removes the connection; outages and misconfiguration keep it', () => {
+    expect(classifyRefreshFailure(new Error('Google token endpoint returned 400: {"error":"invalid_grant","error_description":"Token has been expired or revoked."}'))).toBe('revoked')
+    expect(classifyRefreshFailure(new Error('Google token endpoint returned 401: {"error":"invalid_client"}'))).toBe('misconfigured')
+    expect(classifyRefreshFailure(new Error('Google token endpoint returned 503: backend error'))).toBe('transient')
+    expect(classifyRefreshFailure(new TypeError('fetch failed'))).toBe('transient')
+    expect(classifyRefreshFailure(null)).toBe('transient')
+  })
+
+  it('the token helper deletes the connection only in the revoked branch', () => {
+    const token = readFileSync(new URL('../../supabase/functions/_shared/google-token.ts', import.meta.url), 'utf-8')
+    const del = token.indexOf(".delete().eq('teacher_id', teacherId)")
+    expect(token.indexOf("if (reason === 'revoked') {")).toBeGreaterThan(0)
+    expect(del).toBeGreaterThan(token.indexOf("if (reason === 'revoked') {"))
+    expect(token.match(/\.delete\(\)/g)).toHaveLength(1)
   })
 })
 

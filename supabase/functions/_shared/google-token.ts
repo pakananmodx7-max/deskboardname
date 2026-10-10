@@ -1,5 +1,5 @@
 // deno-lint-ignore-file no-explicit-any
-import { DriveStorageError, hasDriveFileScope } from './drive-storage.ts'
+import { classifyRefreshFailure, DriveStorageError, hasDriveFileScope } from './drive-storage.ts'
 import { refreshAccessToken, requireGoogleEnv } from './google.ts'
 
 // Refresh slightly early so a request never starts with a token about to expire.
@@ -14,8 +14,9 @@ const EXPIRY_BUFFER_MS = 60_000
  *
  * Throws DriveStorageError: not_connected, scope_missing (the teacher
  * unticked Drive access on Google's consent screen), reauth_required
- * (refresh token revoked — the stale connection is removed, exactly like
- * google-drive-access-token does), not_configured (secrets missing).
+ * (refresh token revoked — only then is the stored connection removed),
+ * not_configured (secrets missing / client rejected), drive_unavailable
+ * (transient refresh failure — the connection is kept).
  */
 export async function getDriveAccessToken(admin: any, teacherId: string, forceRefresh: boolean): Promise<string> {
   const { data: connection, error } = await admin
@@ -40,10 +41,18 @@ export async function getDriveAccessToken(admin: any, teacherId: string, forceRe
   let refreshed
   try {
     refreshed = await refreshAccessToken(env, connection.refresh_token)
-  } catch {
-    console.error('[google-drive-files] token refresh failed; removing stale connection')
-    await admin.from('google_oauth_connections').delete().eq('teacher_id', teacherId)
-    throw new DriveStorageError('reauth_required')
+  } catch (err) {
+    const reason = classifyRefreshFailure(err)
+    if (reason === 'revoked') {
+      // The grant is dead for good — remove it so the page shows "reconnect".
+      console.error('[google-drive-files] refresh token revoked; removing stale connection')
+      await admin.from('google_oauth_connections').delete().eq('teacher_id', teacherId)
+      throw new DriveStorageError('reauth_required')
+    }
+    // A network blip, a Google outage or a server misconfiguration must
+    // never cost the teacher their connection.
+    console.error(`[google-drive-files] token refresh failed (${reason}); connection kept`)
+    throw new DriveStorageError(reason === 'misconfigured' ? 'not_configured' : 'drive_unavailable')
   }
 
   const accessTokenExpiresAt = new Date(Date.now() + refreshed.expires_in * 1000).toISOString()

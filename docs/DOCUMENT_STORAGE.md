@@ -129,17 +129,115 @@ not deployed or a secret is missing. **“สิทธิ์ Google Drive ไม
 the teacher unticked Drive access on Google's consent screen — reconnect and
 allow it.
 
+## 5. Token refresh behaviour
+
+The access token is refreshed server-side (60 s before expiry, and once
+more if Google answers 401). If the refresh itself fails:
+
+| Google's answer | Stored connection | Teacher sees |
+|---|---|---|
+| `invalid_grant` (revoked, expired “Testing” token, password change) | **removed** | “เชื่อมต่อ Google ใหม่” |
+| `invalid_client` / `unauthorized_client` (wrong client id/secret) | kept | “ระบบจัดเก็บ… ยังไม่พร้อม” — fix the secrets |
+| anything else (network, Google outage) | kept | temporary error, retry |
+
+Only a definitively dead grant deletes the row, so an outage or a secret
+typo never forces every teacher to reconnect. (The older
+`google-drive-access-token` function used by the Picker still removes the
+connection on any refresh failure — unchanged here; consider the same
+rule there.)
+
+Refresh tokens are stored in `google_oauth_connections` as plain text,
+protected by RLS with **no** client policies (service role only). Moving
+them to Supabase Vault / pgsodium is a recommended later hardening step.
+
+## 6. Upload size limit (10 MB)
+
+The file currently passes through the Edge Function: the function buffers
+the whole file and forwards it to Google with a resumable upload. Supabase
+Edge Functions have 256 MB memory, 2 s CPU time per request, a 150 s
+(Free) / 400 s (paid) wall-clock limit and a 150 s idle timeout
+(<https://supabase.com/docs/guides/functions/limits>). A request-body limit
+is not documented there.
+
+- Raising to ~20–25 MB is plausible but must be load-tested on the real
+  project first (slow school connections hit the 150 s idle timeout well
+  before memory). Change `MAX_UPLOAD_BYTES` in
+  `supabase/functions/_shared/drive-storage.ts` (the browser imports the
+  same constant), then redeploy the function **and** the frontend.
+- Larger files (videos) need a different design: the function creates the
+  resumable session, the browser sends the bytes straight to Google. Not
+  implemented.
+
+## 7. Do existing teachers need to reconnect?
+
+No — if their stored connection already includes `drive.file` (the scope
+the integration has always requested). Check without reading any token
+(SQL editor, read-only):
+
+```sql
+-- 0018 objects exist and RLS is on with no client policies
+select c.relname, c.relrowsecurity,
+       (select count(*) from pg_policies p where p.tablename = c.relname) as policies
+from pg_class c join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public'
+  and c.relname in ('google_oauth_connections', 'google_oauth_states');
+-- expected: 2 rows, relrowsecurity = true, policies = 0
+
+-- each connection: Drive scope granted? (never select refresh_token/access_token)
+select teacher_id, google_email,
+       scope like '%auth/drive.file%' as has_drive_file,
+       access_token_expires_at, updated_at
+from public.google_oauth_connections;
+```
+
+A teacher must reconnect when `has_drive_file` is false, when the OAuth
+app is still in **Testing** and the token is older than 7 days, or when the
+tab shows “เชื่อมต่อ Google ใหม่”.
+
 ## Before production deployment — checklist
 
-- [ ] Review `supabase/functions/google-drive-files/index.ts`,
+Owner-run commands (none of these has been run by the developer):
+
+```bash
+# 0. Code review
+git fetch origin claude/classroom-management-ui-prototype-m8jk44
+git log --oneline -5 origin/claude/classroom-management-ui-prototype-m8jk44
+
+# 1. Link the CLI to the production project
+supabase login
+supabase link --project-ref <PROJECT_REF>
+
+# 2. Secrets — names only, values are hidden by the CLI
+supabase secrets list
+#    expect: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+#            GOOGLE_OAUTH_REDIRECT_URI, ALLOWED_ORIGIN
+#    If ALLOWED_ORIGIN is missing, CORS falls back to "*". Set it (owner decision):
+#    supabase secrets set ALLOWED_ORIGIN=https://<production-domain>
+
+# 3. Deploy the one new function (JWT verification stays on)
+supabase functions deploy google-drive-files
+supabase functions list          # google-drive-files → ACTIVE
+
+# 4. Smoke tests without credentials
+curl -i -X OPTIONS https://<PROJECT_REF>.supabase.co/functions/v1/google-drive-files \
+  -H "Origin: https://<production-domain>"
+#    expect 200 and access-control-allow-origin: https://<production-domain>
+curl -i -X POST https://<PROJECT_REF>.supabase.co/functions/v1/google-drive-files \
+  -H "Content-Type: application/json" -d '{"action":"overview"}'
+#    expect 401 (no session) — never 200
+```
+
+- [ ] Code reviewed: `supabase/functions/google-drive-files/index.ts`,
       `supabase/functions/_shared/drive-storage.ts`,
       `supabase/functions/_shared/google-token.ts`.
-- [ ] Prerequisites in section 1 are in place (0018 applied, OAuth working).
-- [ ] Drive API enabled; scopes unchanged; publishing status decided (§2.3).
-- [ ] `supabase functions deploy google-drive-files`.
-- [ ] `ALLOWED_ORIGIN` set to the production origin.
+- [ ] Section 7 SQL: 0018 present, RLS on, 0 policies; teachers have `drive.file`.
+- [ ] Google Cloud: Drive API enabled; scopes unchanged; publishing status decided (§2.3).
+- [ ] Commands 1–4 above.
+- [ ] Vercel: confirm which branch is the **Production Branch**
+      (Project → Settings → Git). If it is this branch, the frontend is
+      already live; it shows “ยังไม่พร้อม” until step 3 is done.
 - [ ] Run the verification in section 4 with the teacher's real account.
-- [ ] Deploy the frontend build as usual (no new env vars).
+- [ ] No migrations, no new secrets, no new frontend env vars.
 
 Code: `src/features/document-center/` (UI), `src/services/drive-storage-service.ts`
 (browser), `supabase/functions/google-drive-files/` + `_shared/drive-storage.ts`

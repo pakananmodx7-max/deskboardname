@@ -116,6 +116,23 @@ export function mapGoogleError(status: number, body: any): DriveStorageError {
   return new DriveStorageError('drive_unavailable')
 }
 
+/**
+ * Why a refresh-token exchange failed, from the error google.ts throws
+ * ("Google token endpoint returned <status>: <body>"):
+ *   revoked       — invalid_grant: the teacher revoked access / token
+ *                   expired (e.g. 7-day expiry while the OAuth app is in
+ *                   "Testing"). Only this one removes the stored connection.
+ *   misconfigured — invalid_client / unauthorized_client: wrong client
+ *                   id/secret on the server. Keep the connection.
+ *   transient     — network errors, 5xx, rate limits. Keep the connection.
+ */
+export function classifyRefreshFailure(error: unknown): 'revoked' | 'misconfigured' | 'transient' {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  if (/invalid_grant/.test(message)) return 'revoked'
+  if (/invalid_client|unauthorized_client/.test(message)) return 'misconfigured'
+  return 'transient'
+}
+
 // ==================================================
 // Validation
 // ==================================================
