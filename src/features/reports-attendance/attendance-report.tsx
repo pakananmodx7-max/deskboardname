@@ -221,6 +221,13 @@ export function AttendanceReport({ useData, teacherName }: AttendanceReportProps
         </Field>
       </section>
 
+      {context.status === 'success' && scope && scope.classrooms.length < context.data.classrooms.length && (
+        <p className="text-xs text-muted-foreground" data-testid="attendance-scope-note">
+          แสดง {scope.classrooms.length} จาก {context.data.classrooms.length} ห้องเรียน ({scope.label}) — อีก {context.data.classrooms.length - scope.classrooms.length} ห้องอยู่ในภาคเรียนอื่น
+          เลือก “ทุกภาคเรียน” เพื่อดูทุกห้อง
+        </p>
+      )}
+
       {error ? (
         <div role="alert" className="flex flex-col items-center gap-3 rounded-2xl border border-destructive/30 bg-card p-10 text-center">
           <AlertTriangle className="size-6 text-destructive" />

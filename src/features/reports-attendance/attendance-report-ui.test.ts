@@ -66,6 +66,14 @@ describe('สรุปการเข้าเรียน tab (rendered)', () =
     expect(html).toContain('ร้อยละคิดจากรายการเช็คชื่อทั้งหมด 5 รายการ')
   })
 
+  it('states how many classrooms the semester covers when others are outside it', () => {
+    // Fixture: 3 classrooms, the selected semester covers c1 + c2.
+    const html = render(success([ROSTER, RECORDS]))
+    expect(html).toContain('data-testid="attendance-scope-note"')
+    expect(html).toContain('แสดง 2 จาก 3 ห้องเรียน')
+    expect(html).toContain('อีก 1 ห้องอยู่ในภาคเรียนอื่น')
+  })
+
   it('student table: sortable headers, progress bar, follow-up flag, pagination sizes', () => {
     const html = render(success([ROSTER, RECORDS]), '/teacher/reports?tab=attendance&ap=semester')
     expect(html).toContain('aria-sort="ascending"')

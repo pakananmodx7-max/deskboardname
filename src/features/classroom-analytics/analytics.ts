@@ -151,13 +151,39 @@ export interface SemesterOption {
   semester: string | null
 }
 
+const THAI_DIGITS = '๐๑๒๓๔๕๖๗๘๙'
+
+function cleanSemesterText(value: string | null | undefined): string {
+  return (value ?? '').replace(/[๐-๙]/g, (d) => String(THAI_DIGITS.indexOf(d))).replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Academic year / semester are free text on classrooms and subjects, so
+ * the same semester is often typed differently ("1", " 1", "๑",
+ * "ภาคเรียนที่ 1", "1/2568" with the year 2568). Normalised once here so
+ * every screen groups them as one semester. Values that don't match a
+ * known shape are kept as typed (trimmed) — never guessed.
+ */
+export function normalizeSemester(academicYear: string | null, semester: string | null): { academicYear: string; semester: string } {
+  let year = cleanSemesterText(academicYear).replace(/^(ปีการศึกษาที่|ปีการศึกษา|พ\.?\s?ศ\.?)\s*/, '')
+  let term = cleanSemesterText(semester).replace(/^(ภาคเรียนที่|ภาคเรียน|ภาคที่|เทอมที่|เทอม)\s*/, '')
+  const combined = /^(\d)\s*\/\s*(\d{4})$/.exec(term)
+  if (combined && (year === '' || year === combined[2])) {
+    term = combined[1]
+    year = combined[2]
+  }
+  return { academicYear: year, semester: term }
+}
+
 export function semesterKey(academicYear: string | null, semester: string | null): string {
-  return `${academicYear?.trim() ?? ''}|${semester?.trim() ?? ''}`
+  const n = normalizeSemester(academicYear, semester)
+  return `${n.academicYear}|${n.semester}`
 }
 
 export function semesterLabel(academicYear: string | null, semester: string | null): string {
-  const year = academicYear?.trim()
-  const term = semester?.trim()
+  const n = normalizeSemester(academicYear, semester)
+  const year = n.academicYear
+  const term = n.semester
   if (year && term) return `ภาคเรียนที่ ${term}/${year}`
   if (year) return `ปีการศึกษา ${year}`
   if (term) return `ภาคเรียนที่ ${term}`
@@ -175,7 +201,8 @@ export function listSemesterOptions(context: AnalyticsContext): SemesterOption[]
   const byKey = new Map<string, SemesterOption>()
   for (const item of [...context.classrooms, ...context.subjects]) {
     const key = semesterKey(item.academicYear, item.semester)
-    if (!byKey.has(key)) byKey.set(key, { key, label: semesterLabel(item.academicYear, item.semester), academicYear: item.academicYear, semester: item.semester })
+    const n = normalizeSemester(item.academicYear, item.semester)
+    if (!byKey.has(key)) byKey.set(key, { key, label: semesterLabel(item.academicYear, item.semester), academicYear: n.academicYear || null, semester: n.semester || null })
   }
   const sorted = [...byKey.values()].sort(
     (a, b) => numeric(b.academicYear) - numeric(a.academicYear) || numeric(b.semester) - numeric(a.semester) || a.label.localeCompare(b.label, 'th'),
@@ -200,10 +227,34 @@ export interface SemesterScope {
   subjects: AnalyticsSubject[]
 }
 
-/** Classrooms whose own academic year/semester match; subjects linked to
+/**
+ * Whether a classroom belongs to the semester `key`:
+ * - its own (normalised) academic year + semester match; or
+ * - it only has an academic year (no semester) — a year-long classroom
+ *   belongs to every semester of that year, and a year option ("ปีการศึกษา
+ *   2568") covers every semester of that year; or
+ * - it has neither, but is linked to a subject of that semester.
+ * A classroom whose own semester is set to a different one never matches.
+ */
+export function classroomInSemester(
+  classroom: Pick<AnalyticsClassroom, 'id' | 'academicYear' | 'semester'>,
+  key: string,
+  semesterSubjectLinks: ReadonlySet<string> = new Set(),
+): boolean {
+  if (key === ALL_SEMESTERS) return true
+  const own = normalizeSemester(classroom.academicYear, classroom.semester)
+  if (`${own.academicYear}|${own.semester}` === key) return true
+  const [year, term] = key.split('|')
+  if (own.academicYear !== '' && own.academicYear === year && (own.semester === '' || term === '')) return true
+  return own.academicYear === '' && own.semester === '' && key !== UNASSIGNED_SEMESTER && semesterSubjectLinks.has(classroom.id)
+}
+
+/** Classrooms of the semester (see classroomInSemester); subjects linked to
  * those classrooms or whose own year/semester match. */
 export function resolveSemesterScope(context: AnalyticsContext, key: string): SemesterScope {
-  const classrooms = key === ALL_SEMESTERS ? context.classrooms : context.classrooms.filter((c) => semesterKey(c.academicYear, c.semester) === key)
+  const subjectsOfKey = new Set(context.subjects.filter((s) => semesterKey(s.academicYear, s.semester) === key).map((s) => s.id))
+  const linkedToKey = new Set(context.links.filter((l) => subjectsOfKey.has(l.subjectId)).map((l) => l.classroomId))
+  const classrooms = context.classrooms.filter((c) => classroomInSemester(c, key, linkedToKey))
   const classroomIds = new Set(classrooms.map((c) => c.id))
   const linkedSubjectIds = new Set(context.links.filter((l) => classroomIds.has(l.classroomId)).map((l) => l.subjectId))
   const subjects =

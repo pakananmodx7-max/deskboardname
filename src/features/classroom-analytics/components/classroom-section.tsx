@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 import { archiveClassroom, reactivateClassroom } from '@/services/classroom-service'
 import type { Classroom } from '@/types/classroom'
 
-import { ALL_SEMESTERS, filterClassroomCards, semesterKey, semesterLabel, type ClassroomCardSummary, type ClassroomStatusFilter } from '../analytics'
+import { classroomInSemester, filterClassroomCards, semesterLabel, type ClassroomCardSummary, type ClassroomStatusFilter } from '../analytics'
 import { formatCount } from '../resource'
 
 export const CLASSROOMS_SECTION_ID = 'classrooms'
@@ -255,7 +255,7 @@ export function ClassroomSection({ cards, countsReady, classroomRecords, editabl
             open={createOpen}
             onOpenChange={setCreateOpen}
             onCreated={(created) => {
-              const inScope = scopeKey === null || scopeKey === ALL_SEMESTERS || semesterKey(created.academicYear, created.semester) === scopeKey
+              const inScope = scopeKey === null || classroomInSemester(created, scopeKey)
               toast(inScope ? 'สร้างห้องเรียนแล้ว' : `สร้างห้องเรียนแล้ว — ห้องนี้อยู่ใน${semesterLabel(created.academicYear, created.semester)} เลือกภาคเรียนนั้นเพื่อดูห้องนี้`)
               onChanged()
             }}

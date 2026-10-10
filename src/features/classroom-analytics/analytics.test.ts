@@ -6,6 +6,7 @@ import {
   assignRanks,
   attendanceUnit,
   buildTeacherInsights,
+  classroomInSemester,
   classifyAbsenceRisk,
   cleanAttendanceRecords,
   computeAssignmentProgress,
@@ -15,11 +16,13 @@ import {
   computeSummary,
   computeWeeklyTrend,
   listSemesterOptions,
+  normalizeSemester,
   percentOf,
   pickDefaultSemester,
   rankHighestAttendance,
   rankMostAbsences,
   resolveSemesterScope,
+  semesterKey,
   weekStartOf,
   type AnalyticsAttendanceRecord,
   type AnalyticsContext,
@@ -126,6 +129,50 @@ describe('semester filtering', () => {
     expect(old.classrooms.map((c) => c.id)).toEqual(['old'])
     expect(old.subjects.map((s) => s.id)).toEqual(['oldsub'])
     expect(resolveSemesterScope(CONTEXT, ALL_SEMESTERS).classrooms).toHaveLength(3)
+  })
+
+  it('normalises free-text years/semesters so one semester is one option', () => {
+    expect(normalizeSemester(' 2568 ', ' 1 ')).toEqual({ academicYear: '2568', semester: '1' })
+    expect(semesterKey('๒๕๖๘', '๑')).toBe('2568|1')
+    expect(semesterKey('ปีการศึกษา 2568', 'ภาคเรียนที่ 1')).toBe('2568|1')
+    expect(semesterKey('ปีการศึกษาที่ 2568', 'เทอม 2')).toBe('2568|2')
+    expect(semesterKey('2568', '1/2568')).toBe('2568|1')
+    expect(semesterKey(null, '1/2568')).toBe('2568|1')
+    // A different year in the term field is not guessed away.
+    expect(semesterKey('2568', '1/2567')).toBe('2568|1/2567')
+    expect(semesterKey('', null)).toBe('|')
+  })
+
+  it('regression: 9 classrooms with mixed semester text all stay in the default semester', () => {
+    const mk = (id: string, academicYear: string | null, semester: string | null) => ({ id, name: id, academicYear, semester, isActive: true })
+    const ctx: AnalyticsContext = {
+      classrooms: [
+        mk('c1', '2568', '1'),
+        mk('c2', '2568', '1'),
+        mk('c3', '2568', null), // year-long homeroom
+        mk('c4', '2568', ''),
+        mk('c5', ' 2568', null),
+        mk('c6', '๒๕๖๘', '1'),
+        mk('c7', '2568', 'ภาคเรียนที่ 1'),
+        mk('c8', null, null), // undated, but taught a term-1 subject
+        mk('c9', '2568', '1/2568'),
+        mk('other', '2568', '2'), // explicitly another semester
+        mk('older', '2567', null), // another year
+        mk('loose', null, null), // undated, unlinked
+      ],
+      subjects: [{ id: 's', name: 'ภาษาไทย', academicYear: '2568', semester: '1' }],
+      links: [{ subjectId: 's', classroomId: 'c8' }],
+    }
+    expect(listSemesterOptions(ctx).map((o) => o.key)).toEqual(['2568|2', '2568|1', '2568|', '2567|', '|', ALL_SEMESTERS])
+    expect(pickDefaultSemester(ctx)).toBe('2568|2')
+    const term1 = resolveSemesterScope(ctx, '2568|1').classrooms.map((c) => c.id)
+    expect(term1).toEqual(['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c8', 'c9'])
+    // A year option covers every semester of that year (never other years).
+    expect(resolveSemesterScope(ctx, '2568|').classrooms.map((c) => c.id)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7', 'c9', 'other'])
+    expect(resolveSemesterScope(ctx, '2568|2').classrooms.map((c) => c.id)).toEqual(['c3', 'c4', 'c5', 'other'])
+    expect(resolveSemesterScope(ctx, '|').classrooms.map((c) => c.id)).toEqual(['c8', 'loose'])
+    expect(resolveSemesterScope(ctx, ALL_SEMESTERS).classrooms).toHaveLength(12)
+    expect(classroomInSemester(mk('x', '2568', '2'), '2568|1')).toBe(false)
   })
 
   it('records of another semester\'s classrooms never count', () => {

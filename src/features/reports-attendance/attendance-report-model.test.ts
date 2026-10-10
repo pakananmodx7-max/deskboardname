@@ -212,3 +212,59 @@ describe('URL filters and exports', () => {
     expect(meta).toMatchObject({ schoolName: null, classroomLabel: 'ทุกห้องเรียน', semesterLabel: 'ภาคเรียนที่ 1/2569', periodLabel: 'วันที่ 11 กันยายน 2569 – 10 ตุลาคม 2569 (30 วันล่าสุด)' })
   })
 })
+
+describe('regression: every authorised classroom of the semester is reported', () => {
+  // 9 classrooms whose semester was typed differently; only 2 have any
+  // roll calls. 64 students were shown before (2 classrooms) — now all
+  // 9 classrooms and every enrolled student appear.
+  const mk = (id: string, academicYear: string | null, semester: string | null) => ({ id, name: `ม.4/${id.slice(1)}`, academicYear, semester, isActive: true })
+  const classrooms = [
+    mk('k1', '2568', '1'),
+    mk('k2', '2568', '1'),
+    mk('k3', '2568', null),
+    mk('k4', '2568', ''),
+    mk('k5', '๒๕๖๘', '๑'),
+    mk('k6', '2568', 'ภาคเรียนที่ 1'),
+    mk('k7', '2568', '1/2568'),
+    mk('k8', null, null),
+    mk('k9', ' 2568 ', null),
+  ]
+  const context = { classrooms, subjects: [{ id: 'th', name: 'ภาษาไทย', academicYear: '2568', semester: '1' }], links: [{ subjectId: 'th', classroomId: 'k8' }] }
+  const students = classrooms.flatMap((c) => Array.from({ length: 32 }, (_, i) => ({ id: `${c.id}-s${i + 1}`, classroomId: c.id, number: i + 1 })))
+  const roster = {
+    memberships: students.map((s) => ({ studentId: s.id, classroomId: s.classroomId })),
+    students: students.map((s) => ({ id: s.id, firstName: `นักเรียน${s.id}`, lastName: 'ทดสอบ', studentCode: s.id, number: s.number, status: 'active' as const })),
+  }
+  // Only k1 and k2 have roll calls: one session each, first 30 students checked.
+  const records: AnalyticsAttendanceRecord[] = ['k1', 'k2'].flatMap((cid) =>
+    students.filter((s) => s.classroomId === cid && s.number <= 30).map((s) => rec(cid, s.id, s.number <= 27 ? 'present' : 'absent', '2026-10-06', 'th', `${cid}-S`)),
+  )
+
+  it('lists all 9 classrooms and all 288 students; unrecorded ones show ยังไม่มีข้อมูล', async () => {
+    const { resolveSemesterScope } = await import('@/features/classroom-analytics/analytics')
+    const scope = resolveSemesterScope(context, '2568|1')
+    const report = buildAttendanceReport({ context, scope, roster, records, filters: DEFAULT_ATTENDANCE_FILTERS, today: TODAY })
+
+    expect(report.classrooms).toHaveLength(9)
+    expect(report.summary.uniqueStudents).toBe(288)
+    expect(report.students).toHaveLength(288)
+    // No records were fabricated: totals are exactly the 60 real entries.
+    expect(report.summary.total).toBe(60)
+    expect(report.summary.sessions).toBe(2)
+    expect(report.summary.absent).toBe(6)
+    expect(report.summary.rate).toBe(90) // 54 present ÷ 60 recorded
+    expect(report.summary.studentsWithoutRecords).toBe(288 - 60)
+
+    const unrecorded = report.students.filter((r) => r.classroomIds[0] === 'k5')
+    expect(unrecorded).toHaveLength(32)
+    expect(unrecorded.every((r) => r.total === 0 && r.rate === null && r.absent === 0 && r.band === 'no_data')).toBe(true)
+    expect(formatRate(unrecorded[0].rate)).toBe('ยังไม่มีข้อมูล')
+
+    // Classrooms without roll calls are listed with their roster, 0 sessions, no rate.
+    const k9 = report.classrooms.find((c) => c.classroomId === 'k9')!
+    expect(k9).toMatchObject({ students: 32, sessions: 0, total: 0, rate: null })
+    // A checked classroom: unchecked students are not counted as absent.
+    const k1 = report.classrooms.find((c) => c.classroomId === 'k1')!
+    expect(k1).toMatchObject({ students: 32, sessions: 1, total: 30, absent: 3, rate: 90 })
+  })
+})
