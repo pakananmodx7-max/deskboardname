@@ -12,7 +12,9 @@ import { semesterKey, semesterLabel } from '@/features/classroom-analytics/analy
  * as unavailable, never as numbers.
  */
 
-export type DocumentSource = 'assignment' | 'lesson'
+/** `drive` = a file in the teacher's KrunameClass folder on Google Drive
+ * (Phase 2 storage); the other two are attachments (Phase 1). */
+export type DocumentSource = 'assignment' | 'lesson' | 'drive'
 
 export type DocumentKind =
   | 'word'
@@ -28,9 +30,10 @@ export type DocumentKind =
   | 'link'
   | 'other'
 
-/** Folder/category structure. Only `academic` has a data source today
- * (assignment and lesson materials); the rest are Phase 2 categories. */
-export type DocumentCategory = 'academic' | 'homeroom' | 'reports' | 'personal'
+/** Folder/category structure. Attachments are `academic`; a Drive file
+ * takes the category of the top-level KrunameClass folder whose name
+ * matches a category, otherwise `uncategorized`. */
+export type DocumentCategory = 'academic' | 'homeroom' | 'reports' | 'personal' | 'uncategorized'
 
 export interface DocumentItem {
   /** `${source}:${resourceId}` — unique across both tables. */
@@ -48,9 +51,12 @@ export interface DocumentItem {
   /** From Google Drive (picked file or a Drive/Docs URL). */
   inDrive: boolean
   category: DocumentCategory
-  /** The assignment or lesson the document is attached to. */
+  /** The assignment or lesson the document is attached to — or, for a
+   * Drive file, its folder (id + "KrunameClass / …" path). */
   parentId: string
   parentTitle: string
+  /** Drive "open in Google Drive" link (Drive files only). */
+  webViewLink: string | null
   subjectId: string | null
   subjectName: string | null
   classroomId: string | null
@@ -196,11 +202,23 @@ export const DOCUMENT_CATEGORIES: CategoryInfo[] = [
   { key: 'personal', label: 'เอกสารส่วนตัว', supported: false },
 ]
 
-export const CATEGORY_LABEL: Record<DocumentCategory, string> = Object.fromEntries(DOCUMENT_CATEGORIES.map((c) => [c.key, c.label])) as Record<DocumentCategory, string>
+export const UNCATEGORIZED_LABEL = 'ไม่ระบุหมวดหมู่'
+
+export const CATEGORY_LABEL: Record<DocumentCategory, string> = {
+  ...(Object.fromEntries(DOCUMENT_CATEGORIES.map((c) => [c.key, c.label])) as Record<Exclude<DocumentCategory, 'uncategorized'>, string>),
+  uncategorized: UNCATEGORIZED_LABEL,
+}
+
+/** Category whose label equals a top-level folder name, if any. */
+export function categoryForFolderName(name: string | null): DocumentCategory {
+  const match = DOCUMENT_CATEGORIES.find((c) => c.label === name?.trim())
+  return match ? match.key : 'uncategorized'
+}
 
 export const SOURCE_LABEL: Record<DocumentSource, string> = {
   assignment: 'ไฟล์แนบงาน',
   lesson: 'สื่อการสอน',
+  drive: 'Google Drive',
 }
 
 // ==================================================
@@ -247,6 +265,7 @@ export function toDocumentItem(row: ResourceRowInput): DocumentItem {
     category: 'academic',
     parentId: row.parent.id,
     parentTitle: row.parent.title,
+    webViewLink: null,
     subjectId: row.parent.subjectId,
     subjectName: row.parent.subjectName,
     classroomId: row.parent.classroomId,
@@ -374,10 +393,12 @@ export interface DocumentStatsData {
   byCategory: Record<DocumentCategory, number | null>
 }
 
-export function computeDocumentStats(items: DocumentItem[], now: Date): DocumentStatsData {
+/** `storageReady`: Drive storage is connected, so every category can hold
+ * files (counts are real); otherwise only `academic` has a source. */
+export function computeDocumentStats(items: DocumentItem[], now: Date, storageReady = false): DocumentStatsData {
   const monthPrefix = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', timeZone: 'Asia/Bangkok' }).format(now)
   const monthOf = (iso: string) => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', timeZone: 'Asia/Bangkok' }).format(new Date(iso))
-  const byCategory = Object.fromEntries(DOCUMENT_CATEGORIES.map((c) => [c.key, c.supported ? 0 : null])) as Record<DocumentCategory, number | null>
+  const byCategory = Object.fromEntries([...DOCUMENT_CATEGORIES.map((c) => [c.key, c.supported || storageReady ? 0 : null]), ['uncategorized', storageReady ? 0 : null]]) as Record<DocumentCategory, number | null>
   for (const item of items) {
     const current = byCategory[item.category]
     if (current !== null) byCategory[item.category] = current + 1
@@ -392,30 +413,40 @@ export function computeDocumentStats(items: DocumentItem[], now: Date): Document
 
 export interface DocumentActivity {
   id: string
-  kind: 'upload_file' | 'add_link' | 'add_drive'
+  kind: 'upload_file' | 'add_link' | 'add_drive' | 'upload_drive' | 'create_folder'
   label: string
   documentTitle: string
   context: string
   at: string
 }
 
+const ACTIVITY_LABEL: Record<DocumentActivity['kind'], string> = {
+  upload_file: 'อัปโหลดไฟล์',
+  add_link: 'เพิ่มลิงก์',
+  add_drive: 'เพิ่มไฟล์จาก Google Drive',
+  upload_drive: 'อัปโหลดไฟล์ไป Google Drive',
+  create_folder: 'สร้างโฟลเดอร์',
+}
+
 /** Activity derived only from real records: when each file/link was
- * added (created_at). No edit/share/delete history exists yet. */
-export function deriveActivity(items: DocumentItem[], limit = 6): DocumentActivity[] {
-  return [...items]
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, limit)
-    .map((item) => {
-      const kind: DocumentActivity['kind'] = item.inDrive ? 'add_drive' : item.filePath ? 'upload_file' : 'add_link'
-      return {
-        id: item.id,
-        kind,
-        label: kind === 'upload_file' ? 'อัปโหลดไฟล์' : kind === 'add_drive' ? 'เพิ่มไฟล์จาก Google Drive' : 'เพิ่มลิงก์',
-        documentTitle: item.title,
-        context: [SOURCE_LABEL[item.source], item.classroomName].filter(Boolean).join(' · '),
-        at: item.createdAt,
-      }
-    })
+ * added or uploaded, and when each Drive folder was created. No
+ * edit/share/delete history is tracked. */
+export function deriveActivity(items: DocumentItem[], limit = 6, folders: { id: string; name: string; createdTime: string | null; path: string }[] = []): DocumentActivity[] {
+  const fromItems: DocumentActivity[] = items.map((item) => {
+    const kind: DocumentActivity['kind'] = item.source === 'drive' ? 'upload_drive' : item.inDrive ? 'add_drive' : item.filePath ? 'upload_file' : 'add_link'
+    return {
+      id: item.id,
+      kind,
+      label: ACTIVITY_LABEL[kind],
+      documentTitle: item.title,
+      context: item.source === 'drive' ? item.parentTitle : [SOURCE_LABEL[item.source], item.classroomName].filter(Boolean).join(' · '),
+      at: item.createdAt,
+    }
+  })
+  const fromFolders: DocumentActivity[] = folders
+    .filter((f) => f.createdTime)
+    .map((f) => ({ id: `folder:${f.id}`, kind: 'create_folder', label: ACTIVITY_LABEL.create_folder, documentTitle: f.name, context: f.path, at: f.createdTime! }))
+  return [...fromItems, ...fromFolders].sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit)
 }
 
 // ==================================================
@@ -444,6 +475,11 @@ export function formatSize(bytes: number | null): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+/** Files have bytes to download: stored attachments and Drive storage files. */
+export function canDownload(item: DocumentItem): boolean {
+  return Boolean(item.filePath) || item.source === 'drive'
+}
+
 /** "ม.1/1 · วิทยาศาสตร์" or "—". */
 export function placeLabel(item: DocumentItem): string {
   return [item.classroomName, item.subjectName].filter(Boolean).join(' · ') || '—'
@@ -451,7 +487,7 @@ export function placeLabel(item: DocumentItem): string {
 
 /** Where the document lives in the app (to manage it there). */
 export function sourcePath(item: DocumentItem): string | null {
-  if (!item.subjectId || !item.classroomId) return null
+  if (item.source === 'drive' || !item.subjectId || !item.classroomId) return null
   const base = `/teacher/subjects/${item.subjectId}/classrooms/${item.classroomId}`
   return item.source === 'assignment' ? `${base}/assignments/${item.parentId}` : `${base}?tab=lessons`
 }

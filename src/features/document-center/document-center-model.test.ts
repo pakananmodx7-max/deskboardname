@@ -118,7 +118,9 @@ describe('search and filters', () => {
 describe('statistics and activity — only from real rows', () => {
   it('counts real documents; unsupported categories are null, never 0 or a sample number', () => {
     const stats = computeDocumentStats(ITEMS, new Date('2026-10-10T05:00:00Z'))
-    expect(stats).toEqual({ total: 4, addedThisMonth: 2, inDrive: 1, byCategory: { academic: 4, homeroom: null, reports: null, personal: null } })
+    expect(stats).toEqual({ total: 4, addedThisMonth: 2, inDrive: 1, byCategory: { academic: 4, homeroom: null, reports: null, personal: null, uncategorized: null } })
+    // With Drive storage connected every category can hold files — real zeros.
+    expect(computeDocumentStats(ITEMS, new Date('2026-10-10T05:00:00Z'), true).byCategory).toEqual({ academic: 4, homeroom: 0, reports: 0, personal: 0, uncategorized: 0 })
     expect(computeDocumentStats([], new Date())).toMatchObject({ total: 0, inDrive: 0, byCategory: { academic: 0, homeroom: null } })
   })
 

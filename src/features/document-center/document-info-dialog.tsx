@@ -12,8 +12,8 @@ export function DocumentInfoBody({ topic, extra }: { topic: DocumentInfoTopic; e
   if (topic.kind === 'upload') {
     return (
       <div className="space-y-2 text-sm text-foreground">
-        <p>ตอนนี้การอัปโหลดไฟล์ทำได้ในหน้างานหรือบทเรียนของแต่ละรายวิชา (รายวิชา → เลือกห้องเรียน → งาน / บทเรียน) แล้วไฟล์จะแสดงในระบบเอกสารนี้โดยอัตโนมัติ</p>
-        <p className="text-muted-foreground">การอัปโหลดเข้าระบบเอกสารโดยตรงจะเปิดให้ใช้ในเฟสถัดไป</p>
+        <p>ระบบเอกสารจัดเก็บไฟล์ในโฟลเดอร์ “KrunameClass” บน Google Drive ของคุณ — เชื่อมต่อ Google Drive ก่อนจึงจะอัปโหลดได้</p>
+        <p className="text-muted-foreground">หรืออัปโหลดเป็นไฟล์แนบในหน้างาน / บทเรียนของแต่ละรายวิชา ซึ่งจะแสดงในระบบเอกสารนี้เช่นกัน</p>
         {extra}
       </div>
     )
@@ -21,8 +21,8 @@ export function DocumentInfoBody({ topic, extra }: { topic: DocumentInfoTopic; e
   if (topic.kind === 'folder') {
     return (
       <div className="space-y-2 text-sm text-foreground">
-        <p>การสร้างและจัดการโฟลเดอร์ของคุณเองจะเปิดให้ใช้ในเฟสถัดไป ตอนนี้ยังไม่มีการสร้างโฟลเดอร์ใด ๆ</p>
-        <p className="text-muted-foreground">ระหว่างนี้ใช้หมวดหมู่ด้านบนและตัวกรองเพื่อค้นหาเอกสารได้</p>
+        <p>โฟลเดอร์ถูกสร้างใน “KrunameClass” บน Google Drive ของคุณ — เชื่อมต่อ Google Drive ก่อนจึงจะสร้างโฟลเดอร์ได้ ยังไม่มีการสร้างโฟลเดอร์ใด ๆ</p>
+        <p className="text-muted-foreground">ระหว่างนี้ใช้หมวดหมู่และตัวกรองเพื่อค้นหาเอกสารได้</p>
       </div>
     )
   }
@@ -30,12 +30,12 @@ export function DocumentInfoBody({ topic, extra }: { topic: DocumentInfoTopic; e
   return (
     <div className="space-y-3 text-sm text-foreground">
       <p>
-        การสร้างเอกสาร{template ? `“${template.title}”` : 'เปล่า'}อัตโนมัติจะเปิดให้ใช้ใน <span className="font-semibold">เฟส 2</span> —
+        การสร้างเอกสาร{template ? `“${template.title}”` : 'เปล่า'}อัตโนมัติจะเปิดให้ใช้ใน<span className="font-semibold">เฟสถัดไป</span> —
         ตอนนี้ยังไม่มีการสร้างหรือบันทึกเอกสารใด ๆ
       </p>
       {template && (
         <div className="rounded-xl border border-border bg-muted/40 p-3">
-          <p className="mb-1.5 text-xs font-semibold text-muted-foreground">สิ่งที่จะทำได้ในเฟส 2</p>
+          <p className="mb-1.5 text-xs font-semibold text-muted-foreground">สิ่งที่จะทำได้ในเฟสถัดไป</p>
           <ul className="space-y-1">
             <li className="flex gap-2">
               <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
@@ -67,7 +67,7 @@ export function DocumentInfoDialog({ topic, onClose, extra }: { topic: DocumentI
                 <Construction className="size-5" />
               </span>
               <DialogTitle>{infoTitle(topic)}</DialogTitle>
-              <DialogDescription>ระบบเอกสาร เฟส 1 — ส่วนนี้ยังไม่เปิดใช้งาน</DialogDescription>
+              <DialogDescription>{topic.kind === 'upload' || topic.kind === 'folder' ? 'ต้องเชื่อมต่อ Google Drive ก่อน' : 'ส่วนนี้ยังไม่เปิดใช้งาน — การสร้างเอกสารอัตโนมัติจะมาในเฟสถัดไป'}</DialogDescription>
             </DialogHeader>
             <DocumentInfoBody topic={topic} extra={extra} />
             <DialogFooter>

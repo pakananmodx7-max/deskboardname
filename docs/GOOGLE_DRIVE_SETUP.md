@@ -62,6 +62,11 @@ both with Row Level Security enabled and zero policies for `anon`/
    generic 403 "you do not have access to this page" even though OAuth
    and the API key are both configured correctly.
 
+> **Document storage (ระบบเอกสาร):** the Document Center also stores files in
+> a “KrunameClass” folder on the teacher's Drive through one more function,
+> `google-drive-files`, using the same OAuth client, secrets and
+> `drive.file` scope — see `docs/DOCUMENT_STORAGE.md`.
+
 ## 3. Configure Supabase Edge Function secrets
 
 Deploy the five functions under `supabase/functions/` (`google-oauth-

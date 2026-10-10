@@ -9,6 +9,7 @@ const FOLDER_TONE: Record<DocumentCategory, string> = {
   homeroom: 'text-amber-500 fill-amber-500/25',
   reports: 'text-emerald-500 fill-emerald-500/25',
   personal: 'text-violet-500 fill-violet-500/25',
+  uncategorized: 'text-sky-500 fill-sky-500/25',
 }
 
 export interface DocumentFolderCardProps {
@@ -28,7 +29,7 @@ export function DocumentFolderCard({ category, count, loading, active, onSelect 
       type="button"
       onClick={() => onSelect(category.key)}
       aria-pressed={active}
-      title={unavailable ? 'หมวดนี้จะเก็บเอกสารได้เมื่อระบบจัดเก็บเอกสารพร้อม (เฟสถัดไป)' : undefined}
+      title={unavailable ? 'เชื่อมต่อ Google Drive เพื่อเก็บเอกสารในหมวดนี้' : undefined}
       className={cn(
         'flex min-w-0 items-center gap-3 rounded-2xl border bg-card p-3.5 text-left shadow-sm transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
         active ? 'border-primary ring-1 ring-primary/30' : 'border-border',

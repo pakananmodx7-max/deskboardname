@@ -1,4 +1,4 @@
-import { Cloud, History, Link2, Upload, type LucideIcon } from 'lucide-react'
+import { Cloud, CloudUpload, FolderPlus, History, Link2, Upload, type LucideIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -9,6 +9,8 @@ const ACTIVITY_STYLE: Record<DocumentActivity['kind'], { icon: LucideIcon; tone:
   upload_file: { icon: Upload, tone: 'bg-primary/12 text-primary' },
   add_link: { icon: Link2, tone: 'bg-violet-500/15 text-violet-600' },
   add_drive: { icon: Cloud, tone: 'bg-orange-500/15 text-orange-600' },
+  upload_drive: { icon: CloudUpload, tone: 'bg-emerald-500/15 text-emerald-600' },
+  create_folder: { icon: FolderPlus, tone: 'bg-amber-500/15 text-orange-600' },
 }
 
 export interface DocumentActivityPanelProps {
@@ -18,7 +20,8 @@ export interface DocumentActivityPanelProps {
 }
 
 /** Recent activity — only events that exist as real records (when a file
- * or link was added). Edit/share/delete history is not tracked yet. */
+ * or link was added/uploaded, when a Drive folder was created).
+ * Edit/share/delete history is not tracked. */
 export function DocumentActivityPanel({ activity, loading, now }: DocumentActivityPanelProps) {
   return (
     <section aria-labelledby="document-activity-title" className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -62,7 +65,7 @@ export function DocumentActivityPanel({ activity, loading, now }: DocumentActivi
               )
             })}
           </ul>
-          <p className="mt-1 text-[11px] text-muted-foreground">แสดงจากวันที่แนบไฟล์ในงานและบทเรียน — ยังไม่มีการบันทึกประวัติการแก้ไข แชร์ หรือลบ</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">แสดงจากวันที่เพิ่มไฟล์และโฟลเดอร์จริง — ยังไม่มีการบันทึกประวัติการแก้ไข แชร์ หรือลบ</p>
         </>
       )}
     </section>

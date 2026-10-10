@@ -12,6 +12,7 @@ import { documentCenterUiReducer, INITIAL_UI_STATE, nextTabIndex, type DocumentC
 import { DocumentCenterView } from './document-center-view'
 import { DocumentInfoBody } from './document-info-dialog'
 import { DOCUMENT_TEMPLATES } from './document-templates'
+import type { StorageState } from './drive-storage-model'
 
 const ME = 'teacher-me'
 const NOW = new Date('2026-10-10T05:00:00Z')
@@ -40,7 +41,18 @@ const ITEMS: DocumentItem[] = [
   toDocumentItem(row('3', { title: 'แบบฟอร์มส่งงาน', filePath: null, url: 'https://forms.gle/abc', mimeType: null })),
 ]
 
-function render(opts: { data?: Resource<DocumentItem[]>; drive?: DriveConnection; ui?: Partial<DocumentCenterUiState>; favorites?: string[]; userId?: string | null } = {}): string {
+const NO_STORAGE_ACTIONS = {
+  upload: async () => {},
+  createFolder: async () => {
+    throw new Error('not used')
+  },
+  rename: async () => {},
+  trash: async () => {},
+  fetchFile: async () => new Blob(),
+  retry: () => {},
+}
+
+function render(opts: { data?: Resource<DocumentItem[]>; drive?: DriveConnection; storage?: StorageState; ui?: Partial<DocumentCenterUiState>; favorites?: string[]; userId?: string | null } = {}): string {
   return renderToStaticMarkup(
     createElement(
       MemoryRouter,
@@ -61,6 +73,8 @@ function render(opts: { data?: Resource<DocumentItem[]>; drive?: DriveConnection
         busyId: null,
         initialUi: opts.ui,
         now: NOW,
+        storage: opts.storage ?? { status: 'not_connected' },
+        storageActions: NO_STORAGE_ACTIONS,
       }),
     ),
   )
@@ -87,7 +101,7 @@ describe('Document Center — page structure', () => {
 
   it('stats from real rows; โฟลเดอร์ / ฉบับร่าง "—"; storage unavailable', () => {
     expect(t).toMatch(/3 เอกสารทั้งหมด/)
-    expect(t).toMatch(/— โฟลเดอร์ ยังไม่รองรับการสร้างโฟลเดอร์/)
+    expect(t).toMatch(/— โฟลเดอร์ เชื่อมต่อ Google Drive เพื่อสร้างโฟลเดอร์/)
     expect(t).toMatch(/— ฉบับร่าง/)
     expect(t).toMatch(/0 ไฟล์บน Google Drive เชื่อมต่อแล้ว/)
     expect(t).toContain('ยังไม่มีข้อมูลพื้นที่จัดเก็บ')
@@ -157,11 +171,17 @@ describe('states', () => {
     expect(text(render({ ui: { filters: { ...INITIAL_UI_STATE.filters, tab: 'shared' } } }))).toContain('ระบบยังไม่รองรับการแชร์เอกสารระหว่างครู')
   })
 
-  it('ใน Google Drive: not connected → connect button; connected but none → explains the drive.file scope', () => {
-    const drive = (d: DriveConnection) => text(render({ drive: d, ui: { filters: { ...INITIAL_UI_STATE.filters, tab: 'drive' } } }))
-    expect(drive({ status: 'disconnected' })).toContain('ยังไม่ได้เชื่อมต่อ Google Drive')
-    expect(drive({ status: 'connected', email: null })).toContain('ระบบไม่ได้อ่านไฟล์ทั้งหมดใน Drive ของคุณ')
-    expect(drive({ status: 'unsupported' })).toContain('Google Drive ใช้ได้เมื่อเชื่อมต่อฐานข้อมูลจริง')
+  it('ใน Google Drive: every storage state is explicit (never an empty list pretending to be data)', () => {
+    const drive = (storage: StorageState) => text(render({ storage, ui: { filters: { ...INITIAL_UI_STATE.filters, tab: 'drive' } } }))
+    expect(drive({ status: 'not_connected' })).toContain('ยังไม่ได้เชื่อมต่อ Google Drive')
+    expect(drive({ status: 'not_connected' })).toContain('ระบบเข้าถึงได้เฉพาะไฟล์ที่สร้างผ่าน KrunameClass เท่านั้น')
+    expect(drive({ status: 'unsupported' })).toContain('พื้นที่จัดเก็บบน Google Drive ใช้ได้เมื่อเชื่อมต่อฐานข้อมูลจริง')
+    expect(render({ storage: { status: 'loading' }, ui: { filters: { ...INITIAL_UI_STATE.filters, tab: 'drive' } } })).toContain('data-testid="drive-loading"')
+    expect(drive({ status: 'unavailable', code: 'not_deployed', message: 'x' })).toContain('ระบบจัดเก็บบน Google Drive ยังไม่พร้อม')
+    expect(drive({ status: 'unavailable', code: 'scope_missing', message: 'x' })).toContain('เชื่อมต่อ Google Drive ใหม่')
+    const err = render({ storage: { status: 'error', message: 'ติดต่อ Google Drive ไม่สำเร็จ' }, ui: { filters: { ...INITIAL_UI_STATE.filters, tab: 'drive' } } })
+    expect(err).toContain('data-testid="drive-error"')
+    expect(text(err)).toContain('ลองใหม่')
   })
 
   it('รายการโปรด empty / with a favourite', () => {
@@ -226,7 +246,7 @@ describe('UI state (tabs, filters, view, selection)', () => {
 describe('template placeholders (Phase 1)', () => {
   it('the notice says "กำลังพัฒนา"/เฟส 2 and that nothing was created or saved', () => {
     const t = text(renderToStaticMarkup(createElement(DocumentInfoBody, { topic: { kind: 'template', template: DOCUMENT_TEMPLATES[0] } })))
-    expect(t).toContain('เฟส 2')
+    expect(t).toContain('เฟสถัดไป')
     expect(t).toContain('ยังไม่มีการสร้างหรือบันทึกเอกสารใด ๆ')
     expect(t).toContain('ส่งออกเป็น Word (.docx), PDF')
     const folder = text(renderToStaticMarkup(createElement(DocumentInfoBody, { topic: { kind: 'folder' } })))
@@ -236,7 +256,9 @@ describe('template placeholders (Phase 1)', () => {
   it('"สร้างเอกสาร" only opens the notice — no service call, no saved document', () => {
     const view = source('./document-center-view.tsx')
     expect(view).toContain("onCreate={(t) => setInfo({ kind: 'template', template: t })}")
-    expect(view).not.toMatch(/@\/services\//)
+    // Only type imports from services — the view itself never calls one.
+    expect(view).not.toMatch(/^import (?!type )[^\n]*@\/services\//m)
+    expect(view).not.toMatch(/^import \{[^}]*\} from '@\/services\//m)
   })
 })
 

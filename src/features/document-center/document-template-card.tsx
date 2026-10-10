@@ -109,7 +109,7 @@ export function DocumentTemplateCard({ template, onCreate }: DocumentTemplateCar
         สร้างเอกสาร
       </button>
       <span id={`template-${template.id}-note`} className="sr-only">
-        ฟีเจอร์นี้กำลังพัฒนา จะเปิดให้ใช้ในเฟส 2
+        ฟีเจอร์นี้กำลังพัฒนา จะเปิดให้ใช้ในเฟสถัดไป
       </span>
     </article>
   )

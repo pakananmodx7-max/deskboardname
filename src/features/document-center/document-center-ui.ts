@@ -164,7 +164,7 @@ export function infoTitle(topic: DocumentInfoTopic): string {
     case 'template':
       return `กำลังพัฒนา — ${topic.template.title}`
     case 'folder':
-      return 'กำลังพัฒนา — การสร้างโฟลเดอร์'
+      return 'สร้างโฟลเดอร์'
     case 'upload':
       return 'อัปโหลดไฟล์'
     case 'blank':

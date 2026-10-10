@@ -4,7 +4,7 @@ import type * as React from 'react'
 import { RowActionsMenu, type RowAction } from '@/components/ui/row-actions-menu'
 import { cn } from '@/lib/utils'
 
-import { CATEGORY_LABEL, formatDocumentDate, formatSize, KIND_LABEL, placeLabel, SOURCE_LABEL, sourcePath, type DocumentItem } from './document-center-model'
+import { canDownload, CATEGORY_LABEL, formatDocumentDate, formatSize, KIND_LABEL, placeLabel, SOURCE_LABEL, sourcePath, type DocumentItem } from './document-center-model'
 import { KIND_STYLE } from './document-center-ui'
 
 export interface DocumentActions {
@@ -13,6 +13,9 @@ export interface DocumentActions {
   onToggleFavorite: (item: DocumentItem) => void
   onOpenSource: (item: DocumentItem) => void
   onCopyLink: (item: DocumentItem) => void
+  /** Drive storage files only (Phase 2). */
+  onRename?: (item: DocumentItem) => void
+  onTrash?: (item: DocumentItem) => void
 }
 
 export interface DocumentCollectionProps extends DocumentActions {
@@ -41,25 +44,27 @@ function moreActions(item: DocumentItem, actions: DocumentActions): RowAction[] 
   const list: RowAction[] = []
   if (sourcePath(item)) list.push({ key: 'source', label: item.source === 'assignment' ? 'เปิดหน้างานที่แนบไฟล์นี้' : 'เปิดหน้าบทเรียนที่แนบไฟล์นี้', onSelect: () => actions.onOpenSource(item) })
   if (item.url) list.push({ key: 'copy', label: 'คัดลอกลิงก์', onSelect: () => actions.onCopyLink(item) })
+  if (item.source === 'drive' && actions.onRename) list.push({ key: 'rename', label: 'เปลี่ยนชื่อ', onSelect: () => actions.onRename!(item) })
+  if (item.source === 'drive' && actions.onTrash) list.push({ key: 'trash', label: 'ลบ (ย้ายไปถังขยะ)', onSelect: () => actions.onTrash!(item), destructive: true, separatorBefore: list.length > 0 })
   if (list.length === 0) list.push({ key: 'none', label: 'ไม่มีการดำเนินการเพิ่มเติม', onSelect: () => {}, disabled: true })
   return list
 }
 
 function ActionButtons({ item, favorite, busy, actions }: { item: DocumentItem; favorite: boolean; busy: boolean; actions: DocumentActions }) {
-  const canDownload = Boolean(item.filePath)
+  const downloadable = canDownload(item)
   const iconBtn = 'flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:pointer-events-none disabled:opacity-35'
   return (
     <div className="flex items-center justify-end gap-0.5">
-      <button type="button" className={iconBtn} onClick={() => actions.onPreview(item)} aria-label={`ดูตัวอย่าง ${item.title}`} title={item.filePath ? 'ดูตัวอย่าง' : 'เปิดลิงก์'} disabled={busy}>
+      <button type="button" className={iconBtn} onClick={() => actions.onPreview(item)} aria-label={`ดูตัวอย่าง ${item.title}`} title={downloadable ? 'ดูตัวอย่าง' : 'เปิดลิงก์'} disabled={busy}>
         {busy ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
       </button>
       <button
         type="button"
         className={iconBtn}
         onClick={() => actions.onDownload(item)}
-        disabled={!canDownload || busy}
-        aria-label={canDownload ? `ดาวน์โหลด ${item.title}` : `${item.title} เป็นลิงก์ภายนอก ไม่มีไฟล์ให้ดาวน์โหลด`}
-        title={canDownload ? 'ดาวน์โหลด' : 'ลิงก์ภายนอก — ไม่มีไฟล์ให้ดาวน์โหลด'}
+        disabled={!downloadable || busy}
+        aria-label={downloadable ? `ดาวน์โหลด ${item.title}` : `${item.title} เป็นลิงก์ภายนอก ไม่มีไฟล์ให้ดาวน์โหลด`}
+        title={downloadable ? 'ดาวน์โหลด' : 'ลิงก์ภายนอก — ไม่มีไฟล์ให้ดาวน์โหลด'}
       >
         <Download className="size-4" />
       </button>
@@ -104,7 +109,7 @@ export function DocumentCollection({ items, view, selected, favorites, busyId, n
                 <KindTile item={item} className="size-9 text-[10px]" />
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">{item.title}</p>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{placeLabel(item)}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.source === 'drive' ? item.parentTitle : placeLabel(item)}</p>
                 </div>
               </div>
               <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -171,7 +176,7 @@ export function DocumentCollection({ items, view, selected, favorites, busyId, n
                         {favorite && <Star className="size-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label="รายการโปรด" />}
                       </p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {SOURCE_LABEL[item.source]}: {item.parentTitle}
+                        {item.source === 'drive' ? item.parentTitle : `${SOURCE_LABEL[item.source]}: ${item.parentTitle}`}
                       </p>
                     </div>
                   </div>
@@ -182,7 +187,7 @@ export function DocumentCollection({ items, view, selected, favorites, busyId, n
                 <td className="px-2 py-2">
                   <Pill className="bg-primary/10 text-primary">{CATEGORY_LABEL[item.category]}</Pill>
                 </td>
-                <td className="px-2 py-2 text-muted-foreground">{placeLabel(item)}</td>
+                <td className="px-2 py-2 text-muted-foreground">{item.source === 'drive' ? 'Google Drive' : placeLabel(item)}</td>
                 <td className="whitespace-nowrap px-2 py-2 text-muted-foreground">{formatDocumentDate(item.updatedAt, now)}</td>
                 <td className="whitespace-nowrap px-2 py-2 text-muted-foreground" title={item.sizeBytes === null ? 'ระบบยังไม่ได้บันทึกขนาดไฟล์' : undefined}>
                   {formatSize(item.sizeBytes)}

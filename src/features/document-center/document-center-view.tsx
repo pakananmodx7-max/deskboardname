@@ -4,8 +4,10 @@ import type * as React from 'react'
 import { Link } from 'react-router-dom'
 
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import type { Resource } from '@/features/classroom-analytics/resource'
 import { cn } from '@/lib/utils'
+import type { DriveStorageItem } from '@/services/drive-storage-service'
 
 import { DocumentActivityPanel } from './document-activity-panel'
 import {
@@ -30,6 +32,22 @@ import { DocumentTabs } from './document-tabs'
 import { DocumentTemplateCard } from './document-template-card'
 import { DOCUMENT_TEMPLATES } from './document-templates'
 import { DocumentToolbar } from './document-toolbar'
+import { DrivePreviewDialog, NameDialog, UploadDialog } from './drive-storage-dialogs'
+import { breadcrumbs, childrenOf, countInside, driveDocuments, driveFolderActivity, folderMap, folderPathLabel, nameTaken, storageCounts, type StorageState } from './drive-storage-model'
+import { DriveStoragePanel } from './drive-storage-panel'
+
+/** Drive storage operations (Phase 2) — each reloads the listing itself. */
+export interface StorageActions {
+  upload: (file: File, parentId: string | null) => Promise<void>
+  createFolder: (name: string, parentId: string | null) => Promise<DriveStorageItem>
+  rename: (id: string, name: string) => Promise<void>
+  trash: (id: string) => Promise<void>
+  /** Bytes for the in-app preview. */
+  fetchFile: (item: DocumentItem) => Promise<Blob>
+  retry: () => void
+}
+
+type NameDialogState = { mode: 'create'; parentId: string | null; initial?: string } | { mode: 'rename'; id: string; name: string; parentId: string | null; isFolder: boolean }
 
 export interface DocumentCenterViewProps extends Omit<DocumentActions, 'onToggleFavorite'> {
   data: Resource<DocumentItem[]>
@@ -41,8 +59,12 @@ export interface DocumentCenterViewProps extends Omit<DocumentActions, 'onToggle
   onConnectDrive: () => void
   onManageDrive: () => void
   busyId: string | null
+  /** The teacher's KrunameClass folder on Google Drive (Phase 2). */
+  storage: StorageState
+  storageActions: StorageActions
   /** Tests / previews. */
   initialUi?: Partial<DocumentCenterUiState>
+  initialDriveFolderId?: string | null
   now?: Date
 }
 
@@ -168,7 +190,10 @@ export function DocumentCenterView({
   onManageDrive,
   busyId,
   initialUi,
+  initialDriveFolderId = null,
   now: nowProp,
+  storage,
+  storageActions,
   ...actions
 }: DocumentCenterViewProps) {
   const [ui, dispatch] = useReducer(documentCenterUiReducer, { ...INITIAL_UI_STATE, ...initialUi })
@@ -177,10 +202,28 @@ export function DocumentCenterView({
   // One clock per visit, so relative dates and memoised stats stay stable.
   const [now] = useState(() => nowProp ?? new Date())
 
-  const items = useMemo(() => (data.status === 'success' ? data.data : []), [data])
+  const [driveFolderId, setDriveFolderId] = useState<string | null>(initialDriveFolderId)
+  const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [trashTarget, setTrashTarget] = useState<{ id: string; name: string; isFolder: boolean } | null>(null)
+  const [previewItem, setPreviewItem] = useState<DocumentItem | null>(null)
+  const [createCategory, setCreateCategory] = useState<{ label: string } | null>(null)
+
+  const overview = storage.status === 'ready' ? storage.overview : null
+  const storageReady = overview !== null
+  const items = useMemo(() => {
+    const attachments = data.status === 'success' ? data.data : []
+    return overview ? [...attachments, ...driveDocuments(overview, userId)] : attachments
+  }, [data, overview, userId])
   const loading = data.status === 'loading'
-  const stats = useMemo(() => (data.status === 'success' ? computeDocumentStats(items, now) : null), [data.status, items, now])
-  const activity = useMemo(() => deriveActivity(items), [items])
+  const stats = useMemo(() => (data.status === 'success' ? computeDocumentStats(items, now, storageReady) : null), [data.status, items, now, storageReady])
+  const activity = useMemo(() => deriveActivity(items, 6, overview ? driveFolderActivity(overview) : []), [items, overview])
+  // A folder that was trashed or renamed away falls back to the root.
+  const currentFolderId = overview && driveFolderId && folderMap(overview).has(driveFolderId) ? driveFolderId : null
+  const topFolders = overview ? childrenOf(overview, null).folders : []
+  const folderOptions = overview
+    ? [{ id: null, label: 'KrunameClass' }, ...[...folderMap(overview).values()].map((f) => ({ id: f.id, label: folderPathLabel(overview, f.id) })).sort((a, b) => a.label.localeCompare(b.label, 'th'))]
+    : []
   const semesters = useMemo(() => semesterOptions(items), [items])
   const ctx = useMemo(() => ({ userId, favorites }), [userId, favorites])
   const visible = useMemo(() => sortDocuments(filterDocuments(items, ui.filters, ctx), ui.filters.sort), [items, ui.filters, ctx])
@@ -191,9 +234,26 @@ export function DocumentCenterView({
   }, [data.status, items, ui.filters, ctx])
 
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const openDriveFolder = (folderId: string | null) => {
+    dispatch({ type: 'tab', tab: 'drive' })
+    setDriveFolderId(folderId)
+    scrollTo('documents-recent')
+  }
   const pickCategory = (category: DocumentCategory) => {
+    const label = DOCUMENT_CATEGORIES.find((c) => c.key === category)?.label
+    const folder = topFolders.find((f) => f.name === label)
+    if (folder) return openDriveFolder(folder.id)
+    if (storageReady && category !== 'academic' && label) return setCreateCategory({ label })
     dispatch({ type: 'filters', patch: { category: ui.filters.category === category ? 'all' : category } })
     scrollTo('documents-recent')
+  }
+  const startUpload = () => (storageReady ? setUploadOpen(true) : setInfo({ kind: 'upload' }))
+  const startNewFolder = (parentId: string | null) => (storageReady ? setNameDialog({ mode: 'create', parentId }) : setInfo({ kind: 'folder' }))
+  const collectionActions = {
+    ...actions,
+    onPreview: (item: DocumentItem) => (item.source === 'drive' ? setPreviewItem(item) : actions.onPreview(item)),
+    onRename: (item: DocumentItem) => setNameDialog({ mode: 'rename', id: item.resourceId, name: item.title, parentId: item.parentId === overview?.root?.id ? null : item.parentId, isFolder: false }),
+    onTrash: (item: DocumentItem) => setTrashTarget({ id: item.resourceId, name: item.title, isFolder: false }),
   }
 
   let body: React.ReactNode
@@ -220,6 +280,36 @@ export function DocumentCenterView({
         </Button>
       </div>
     )
+  } else if (ui.filters.tab === 'drive') {
+    body = (
+      <DriveStoragePanel
+        state={storage}
+        folderId={currentFolderId}
+        searching={hasActiveFilters(ui.filters)}
+        documents={visible.filter((d) => d.source === 'drive')}
+        attachments={visible.filter((d) => d.source !== 'drive')}
+        now={now}
+        collection={{
+          view: ui.view,
+          selected: ui.selected,
+          favorites,
+          busyId,
+          now,
+          onToggleSelect: (id) => dispatch({ type: 'toggleSelect', id }),
+          onSelectAll: () => dispatch({ type: 'selectAll', ids: visible.map((i) => i.id) }),
+          onToggleFavorite: (item) => onSetFavorites([item.id], !favorites.has(item.id)),
+          ...collectionActions,
+        }}
+        onOpenFolder={setDriveFolderId}
+        onUpload={() => setUploadOpen(true)}
+        onNewFolder={() => setNameDialog({ mode: 'create', parentId: currentFolderId })}
+        onRenameFolder={(f) => setNameDialog({ mode: 'rename', id: f.id, name: f.name, parentId: f.parentId === overview?.root?.id ? null : f.parentId, isFolder: true })}
+        onTrashFolder={(f) => setTrashTarget({ id: f.id, name: f.name, isFolder: true })}
+        onConnect={onConnectDrive}
+        onReconnect={onManageDrive}
+        onRetry={storageActions.retry}
+      />
+    )
   } else if (ui.filters.tab === 'shared') {
     body = <DocumentEmptyState icon={Share2} title="ยังไม่มีเอกสารที่แชร์กับคุณ" description="ระบบยังไม่รองรับการแชร์เอกสารระหว่างครู — จะเปิดให้ใช้ในเฟสถัดไป" />
   } else if (visible.length === 0 && hasActiveFilters(ui.filters)) {
@@ -235,24 +325,6 @@ export function DocumentCenterView({
         }
       />
     )
-  } else if (visible.length === 0 && ui.filters.tab === 'drive') {
-    body =
-      drive.status === 'connected' ? (
-        <DocumentEmptyState icon={Cloud} title="ยังไม่มีไฟล์จาก Google Drive" description="แสดงเฉพาะไฟล์ที่เลือกจาก Google Drive มาแนบในงานหรือบทเรียน — ระบบไม่ได้อ่านไฟล์ทั้งหมดใน Drive ของคุณ" />
-      ) : (
-        <DocumentEmptyState
-          icon={Cloud}
-          title={drive.status === 'unsupported' ? 'Google Drive ใช้ได้เมื่อเชื่อมต่อฐานข้อมูลจริง' : 'ยังไม่ได้เชื่อมต่อ Google Drive'}
-          description="เชื่อมต่อบัญชี Google แล้วเลือกไฟล์จาก Drive มาแนบในงานหรือบทเรียน ไฟล์เหล่านั้นจะแสดงที่นี่"
-          action={
-            drive.status === 'unsupported' ? undefined : (
-              <Button type="button" variant="outline" size="sm" onClick={onConnectDrive}>
-                เชื่อมต่อ Google Drive
-              </Button>
-            )
-          }
-        />
-      )
   } else if (visible.length === 0 && ui.filters.tab === 'favorites') {
     body = <DocumentEmptyState icon={Star} title="ยังไม่มีรายการโปรด" description="กดรูปดาวที่เอกสารเพื่อเพิ่มในรายการโปรด (บันทึกไว้ในอุปกรณ์นี้)" />
   } else if (visible.length === 0) {
@@ -260,7 +332,7 @@ export function DocumentCenterView({
       <DocumentEmptyState
         icon={FileText}
         title="ยังไม่มีเอกสาร"
-        description="ไฟล์และลิงก์ที่แนบในงานหรือบทเรียนของคุณจะแสดงที่นี่ — การสร้างเอกสารจากแบบฟอร์มจะเปิดให้ใช้ในเฟส 2"
+        description="ไฟล์และลิงก์ที่แนบในงานหรือบทเรียนของคุณจะแสดงที่นี่ — เชื่อมต่อ Google Drive เพื่ออัปโหลดและจัดเก็บเอกสารในโฟลเดอร์ KrunameClass"
         action={
           <Button asChild variant="outline" size="sm">
             <Link to="/teacher/subjects">ไปที่รายวิชา</Link>
@@ -293,7 +365,7 @@ export function DocumentCenterView({
           onToggleSelect={(id) => dispatch({ type: 'toggleSelect', id })}
           onSelectAll={() => dispatch({ type: 'selectAll', ids: shown.map((i) => i.id) })}
           onToggleFavorite={(item) => onSetFavorites([item.id], !favorites.has(item.id))}
-          {...actions}
+          {...collectionActions}
         />
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
           <span>
@@ -326,6 +398,8 @@ export function DocumentCenterView({
           <CreateMenu
             onPick={(choice) => {
               if (choice === 'template') scrollTo('document-templates')
+              else if (choice === 'upload') startUpload()
+              else if (choice === 'folder') startNewFolder(ui.filters.tab === 'drive' ? currentFolderId : null)
               else setInfo({ kind: choice })
             }}
           />
@@ -334,7 +408,7 @@ export function DocumentCenterView({
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_16.5rem]">
         <div className="min-w-0 space-y-6">
-          <DocumentStats stats={stats} loading={loading} drive={drive} />
+          <DocumentStats stats={stats} loading={loading} drive={drive} folders={overview ? storageCounts(overview).folders : null} />
 
           <div className="space-y-3">
             <DocumentTabs active={ui.filters.tab} onChange={(tab) => dispatch({ type: 'tab', tab })} counts={counts} panelId={panelId} />
@@ -349,7 +423,11 @@ export function DocumentCenterView({
             </div>
           </Section>
 
-          <Section id="document-folders" title="โฟลเดอร์ของฉัน" subtitle="หมวดหมู่เอกสาร — เลือกเพื่อกรองรายการด้านล่าง">
+          <Section
+            id="document-folders"
+            title="โฟลเดอร์ของฉัน"
+            subtitle={storageReady ? 'โฟลเดอร์ใน KrunameClass บน Google Drive ของคุณ — เลือกเพื่อเปิด' : 'หมวดหมู่เอกสาร — เลือกเพื่อกรองรายการด้านล่าง'}
+          >
             <div className="grid grid-cols-[repeat(auto-fill,minmax(10.25rem,1fr))] gap-3">
               {DOCUMENT_CATEGORIES.map((category) => (
                 <DocumentFolderCard
@@ -357,11 +435,24 @@ export function DocumentCenterView({
                   category={category}
                   count={stats ? stats.byCategory[category.key] : null}
                   loading={loading && category.supported}
-                  active={ui.filters.category === category.key}
+                  active={ui.filters.category === category.key || (ui.filters.tab === 'drive' && currentFolderId !== null && topFolders.some((f) => f.id === currentFolderId && f.name === category.label))}
                   onSelect={pickCategory}
                 />
               ))}
-              <NewFolderCard onClick={() => setInfo({ kind: 'folder' })} />
+              {overview &&
+                topFolders
+                  .filter((f) => !DOCUMENT_CATEGORIES.some((c) => c.label === f.name))
+                  .map((f) => (
+                    <DocumentFolderCard
+                      key={f.id}
+                      category={{ key: 'uncategorized', label: f.name, supported: true }}
+                      count={countInside(overview, f.id).files}
+                      loading={false}
+                      active={ui.filters.tab === 'drive' && currentFolderId === f.id}
+                      onSelect={() => openDriveFolder(f.id)}
+                    />
+                  ))}
+              <NewFolderCard onClick={() => startNewFolder(null)} />
             </div>
           </Section>
 
@@ -383,19 +474,79 @@ export function DocumentCenterView({
         </div>
 
         <aside className="space-y-4" aria-label="ข้อมูลเพิ่มเติม">
-          <StorageCard usage={null} />
+          <StorageCard usage={overview?.quota ? { usedBytes: overview.quota.usageBytes, quotaBytes: overview.quota.limitBytes } : null} />
           <DocumentActivityPanel activity={activity} loading={loading} now={now} />
           <div className="rounded-2xl border border-dashed border-border bg-card/60 p-4 text-xs leading-relaxed text-muted-foreground">
             <p className="flex items-center gap-1.5 font-semibold text-foreground">
               <Users className="size-4 text-primary" aria-hidden="true" />
-              ระบบเอกสาร เฟส 1
+              เกี่ยวกับระบบเอกสาร
             </p>
-            <p className="mt-1">แสดงไฟล์และลิงก์จริงที่แนบในงานและบทเรียนของคุณ การสร้างเอกสารอัตโนมัติ การแก้ไข และการส่งออก Word / PDF จะมาในเฟส 2</p>
+            <p className="mt-1">เอกสารถูกเก็บในโฟลเดอร์ “KrunameClass” บน Google Drive ของคุณ ร่วมกับไฟล์ที่แนบในงานและบทเรียน การสร้างเอกสารอัตโนมัติ การแก้ไข และการส่งออก Word / PDF จะมาในเฟสถัดไป</p>
           </div>
         </aside>
       </div>
 
       <DocumentInfoDialog topic={info} onClose={() => setInfo(null)} />
+
+      {nameDialog && overview && (
+        <NameDialog
+          key={nameDialog.mode === 'rename' ? `rename-${nameDialog.id}` : `create-${nameDialog.parentId ?? 'root'}`}
+          open
+          title={nameDialog.mode === 'create' ? 'สร้างโฟลเดอร์ใหม่' : nameDialog.isFolder ? 'เปลี่ยนชื่อโฟลเดอร์' : 'เปลี่ยนชื่อไฟล์'}
+          description={nameDialog.mode === 'create' ? `ใน ${folderPathLabel(overview, nameDialog.parentId)}` : `ใน ${breadcrumbs(overview, nameDialog.parentId).map((c) => c.name).join(' / ')}`}
+          initial={nameDialog.mode === 'rename' ? nameDialog.name : (nameDialog.initial ?? '')}
+          confirmLabel={nameDialog.mode === 'create' ? 'สร้างโฟลเดอร์' : 'บันทึกชื่อ'}
+          validate={(name) => (nameTaken(overview, nameDialog.parentId, name, nameDialog.mode === 'rename' ? nameDialog.id : undefined) ? 'มีชื่อนี้อยู่แล้วในโฟลเดอร์นี้' : null)}
+          onSubmit={async (name) => {
+            if (nameDialog.mode === 'create') await storageActions.createFolder(name, nameDialog.parentId)
+            else await storageActions.rename(nameDialog.id, name)
+          }}
+          onClose={() => setNameDialog(null)}
+        />
+      )}
+
+      {uploadOpen && overview && (
+        <UploadDialog
+          open
+          folders={folderOptions}
+          defaultFolderId={ui.filters.tab === 'drive' ? currentFolderId : null}
+          onUpload={(file, parentId) => storageActions.upload(file, parentId)}
+          onClose={() => setUploadOpen(false)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={trashTarget !== null}
+        onOpenChange={(open) => !open && setTrashTarget(null)}
+        title={trashTarget ? `ย้าย “${trashTarget.name}” ไปถังขยะ?` : ''}
+        description={
+          trashTarget?.isFolder
+            ? 'โฟลเดอร์และไฟล์ทั้งหมดภายในจะถูกย้ายไปถังขยะของ Google Drive และกู้คืนได้จาก Google Drive ภายใน 30 วัน'
+            : 'ไฟล์จะถูกย้ายไปถังขยะของ Google Drive และกู้คืนได้จาก Google Drive ภายใน 30 วัน'
+        }
+        confirmLabel="ย้ายไปถังขยะ"
+        destructive
+        onConfirm={async () => {
+          if (trashTarget) await storageActions.trash(trashTarget.id)
+          setTrashTarget(null)
+        }}
+      />
+
+      <ConfirmDialog
+        open={createCategory !== null}
+        onOpenChange={(open) => !open && setCreateCategory(null)}
+        title={createCategory ? `สร้างโฟลเดอร์ “${createCategory.label}”?` : ''}
+        description="ยังไม่มีโฟลเดอร์นี้ใน KrunameClass บน Google Drive — สร้างตอนนี้เพื่อเริ่มเก็บเอกสารในหมวดนี้"
+        confirmLabel="สร้างโฟลเดอร์"
+        onConfirm={async () => {
+          if (!createCategory) return
+          const folder = await storageActions.createFolder(createCategory.label, null)
+          setCreateCategory(null)
+          openDriveFolder(folder.id)
+        }}
+      />
+
+      <DrivePreviewDialog item={previewItem} load={storageActions.fetchFile} onDownload={actions.onDownload} onClose={() => setPreviewItem(null)} />
     </div>
   )
 }

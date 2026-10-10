@@ -4,6 +4,7 @@ import type * as React from 'react'
 import { cn } from '@/lib/utils'
 
 import type { DocumentStatsData } from './document-center-model'
+import { formatBytes } from './drive-storage-model'
 import { driveStatusText, type DriveConnection } from './document-center-ui'
 
 type Tone = 'blue' | 'orange' | 'purple' | 'green'
@@ -38,13 +39,16 @@ export interface DocumentStatsProps {
   stats: DocumentStatsData | null
   loading: boolean
   drive: DriveConnection
+  /** Folders in the KrunameClass Drive storage; null = storage not available. */
+  folders?: number | null
 }
 
 /**
- * The four summary cards. Numbers only come from real rows; cards with no
- * data source in Phase 1 (โฟลเดอร์, ฉบับร่าง) show "—" and say why.
+ * The four summary cards. Numbers only come from real rows; a card with
+ * no data source (โฟลเดอร์ without Drive storage, ฉบับร่าง) shows "—" and
+ * says why.
  */
-export function DocumentStats({ stats, loading, drive }: DocumentStatsProps) {
+export function DocumentStats({ stats, loading, drive, folders = null }: DocumentStatsProps) {
   const dash = '—'
   return (
     <section aria-label="สรุปเอกสาร" className="grid grid-cols-2 gap-3 2xl:grid-cols-4">
@@ -66,8 +70,16 @@ export function DocumentStats({ stats, loading, drive }: DocumentStatsProps) {
           )
         }
       />
-      <StatCard testId="stat-folders" icon={Folder} tone="orange" label="โฟลเดอร์" value={dash} loading={false} footnote="ยังไม่รองรับการสร้างโฟลเดอร์" />
-      <StatCard testId="stat-drafts" icon={PenLine} tone="purple" label="ฉบับร่าง" value={dash} loading={false} footnote="ระบบสร้างเอกสารจะมาในเฟส 2" />
+      <StatCard
+        testId="stat-folders"
+        icon={Folder}
+        tone="orange"
+        label="โฟลเดอร์"
+        value={folders === null ? dash : String(folders)}
+        loading={false}
+        footnote={folders === null ? 'เชื่อมต่อ Google Drive เพื่อสร้างโฟลเดอร์' : 'ใน KrunameClass บน Google Drive'}
+      />
+      <StatCard testId="stat-drafts" icon={PenLine} tone="purple" label="ฉบับร่าง" value={dash} loading={false} footnote="ระบบสร้างเอกสารจะมาในเฟสถัดไป" />
       <StatCard
         testId="stat-drive"
         icon={Cloud}
@@ -90,9 +102,10 @@ export function DocumentStats({ stats, loading, drive }: DocumentStatsProps) {
   )
 }
 
-/** Storage usage — only with a real usage + quota (none in Phase 1). */
-export function StorageCard({ usage }: { usage: { usedBytes: number; quotaBytes: number } | null }) {
-  const percent = usage && usage.quotaBytes > 0 ? Math.min(100, Math.round((usage.usedBytes / usage.quotaBytes) * 100)) : null
+/** Storage usage — only real numbers from Google Drive (about.storageQuota).
+ * `quotaBytes` null = an account without a storage limit. */
+export function StorageCard({ usage }: { usage: { usedBytes: number; quotaBytes: number | null } | null }) {
+  const percent = usage && usage.quotaBytes && usage.quotaBytes > 0 ? Math.min(100, Math.round((usage.usedBytes / usage.quotaBytes) * 100)) : null
   return (
     <section aria-label="พื้นที่จัดเก็บ" className="rounded-2xl border border-border bg-card p-4 shadow-sm" data-testid="storage-card">
       <div className="flex items-center gap-2.5">
@@ -101,13 +114,21 @@ export function StorageCard({ usage }: { usage: { usedBytes: number; quotaBytes:
         </span>
         <h2 className="text-sm font-semibold">พื้นที่จัดเก็บ</h2>
       </div>
-      {usage && percent !== null ? (
+      {usage && percent !== null && usage.quotaBytes ? (
         <div className="mt-3">
-          <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label="พื้นที่จัดเก็บที่ใช้ไป">
-            <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
+          <p className="text-xs text-muted-foreground">
+            ใช้ไป {formatBytes(usage.usedBytes)} จาก {formatBytes(usage.quotaBytes)}
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label="พื้นที่ Google Drive ที่ใช้ไป">
+              <div className={percent >= 90 ? 'h-full rounded-full bg-destructive' : 'h-full rounded-full bg-primary'} style={{ width: `${Math.max(percent, 1)}%` }} />
+            </div>
+            <span className="text-xs tabular-nums text-muted-foreground">{percent}%</span>
           </div>
-          <p className="mt-1.5 text-xs text-muted-foreground">ใช้ไป {percent}%</p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground">พื้นที่ทั้งบัญชี Google (Drive, Gmail, Photos)</p>
         </div>
+      ) : usage ? (
+        <p className="mt-2 text-xs text-muted-foreground">ใช้ไป {formatBytes(usage.usedBytes)} (บัญชีนี้ไม่จำกัดพื้นที่)</p>
       ) : (
         <p className="mt-2 text-xs text-muted-foreground">ยังไม่มีข้อมูลพื้นที่จัดเก็บ</p>
       )}
