@@ -52,7 +52,9 @@ export async function toDriveError(error: unknown): Promise<DriveStorageClientEr
     }
     if (context.status === 404) return new DriveStorageClientError('not_deployed', NOT_DEPLOYED_MESSAGE)
   }
-  if (name === 'FunctionsFetchError' || name === 'FunctionsRelayError') return new DriveStorageClientError('drive_unavailable', 'ติดต่อเซิร์ฟเวอร์ไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่')
+  // A function that was never deployed usually fails the browser's CORS
+  // preflight too, so it surfaces here rather than as a 404.
+  if (name === 'FunctionsFetchError' || name === 'FunctionsRelayError') return new DriveStorageClientError('drive_unavailable', 'ติดต่อระบบจัดเก็บไม่สำเร็จ — ตรวจสอบอินเทอร์เน็ต หรือผู้ดูแลระบบอาจยังไม่ได้ติดตั้งฟังก์ชัน google-drive-files')
   return new DriveStorageClientError('drive_unavailable', 'ติดต่อ Google Drive ไม่สำเร็จ กรุณาลองใหม่')
 }
 

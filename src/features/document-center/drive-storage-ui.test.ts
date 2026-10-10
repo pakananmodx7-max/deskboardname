@@ -9,6 +9,7 @@ import { checkUpload, toDriveError, type DriveOverview, type DriveStorageItem } 
 import { canDownload, deriveActivity, toDocumentItem, type DocumentItem } from './document-center-model'
 import { INITIAL_UI_STATE, type DocumentCenterUiState } from './document-center-ui'
 import { DocumentCenterView } from './document-center-view'
+import { StorageStatusBody } from './drive-storage-dialogs'
 import {
   breadcrumbs,
   childrenOf,
@@ -20,6 +21,7 @@ import {
   formatBytes,
   nameTaken,
   previewKind,
+  storageBlock,
   storageCounts,
   storageStateFromError,
   typedPreviewBlob,
@@ -190,6 +192,44 @@ describe('storage states from server errors', () => {
     expect(checkUpload({ name: 'แผน.docx', size: 100 })).toBeNull()
     expect(checkUpload({ name: 'setup.exe', size: 100 })).toBe('ไม่รองรับไฟล์ประเภทนี้')
     expect(checkUpload({ name: 'big.pdf', size: 11 * 1024 * 1024 })).toBe('ไฟล์ใหญ่เกิน 10 MB')
+  })
+})
+
+describe('upload / new folder before storage is ready (connection mismatch)', () => {
+  it('a stored Google connection is never reported as "not connected"', () => {
+    const notConnected = storageBlock({ status: 'not_connected' })
+    expect(notConnected?.action).toBe('connect')
+    const others = [
+      storageBlock({ status: 'checking' }),
+      storageBlock({ status: 'loading' }),
+      ...(['not_deployed', 'not_configured', 'scope_missing', 'reauth_required', 'forbidden', 'unauthorized'] as const).map((code) => storageBlock({ status: 'unavailable', code, message: 'm' })),
+      storageBlock({ status: 'error', message: 'ติดต่อระบบจัดเก็บไม่สำเร็จ' }),
+    ]
+    for (const block of others) {
+      expect(block).not.toBeNull()
+      expect(block!.action).not.toBe('connect')
+      expect(block!.title).not.toContain('ยังไม่ได้เชื่อมต่อ')
+    }
+    expect(storageBlock({ status: 'ready', overview: { root: null, items: [], quota: null } })).toBeNull()
+  })
+
+  it('each state names its real cause and action', () => {
+    expect(storageBlock({ status: 'loading' })).toMatchObject({ action: 'wait', title: 'กำลังโหลดข้อมูลจาก Google Drive' })
+    expect(storageBlock({ status: 'unavailable', code: 'not_deployed', message: 'm' })).toMatchObject({ action: null, title: 'ระบบจัดเก็บบน Google Drive ยังไม่พร้อม' })
+    expect(storageBlock({ status: 'unavailable', code: 'scope_missing', message: 'm' })).toMatchObject({ action: 'reconnect', title: 'สิทธิ์ Google Drive ไม่ครบ' })
+    expect(storageBlock({ status: 'unavailable', code: 'reauth_required', message: 'm' })).toMatchObject({ action: 'reconnect' })
+    expect(storageBlock({ status: 'error', message: 'x' })).toMatchObject({ action: 'retry', hint: 'x' })
+  })
+
+  it('the dialog body shows the hint, never the connect-first notice', () => {
+    const block = storageBlock({ status: 'unavailable', code: 'not_deployed', message: 'm' })!
+    const html = renderToStaticMarkup(createElement(StorageStatusBody, { block }))
+    expect(html).toContain('google-drive-files')
+    expect(html).not.toContain('ต้องเชื่อมต่อ Google Drive ก่อน')
+  })
+
+  it('a network failure hints at an undeployed function', async () => {
+    expect((await toDriveError({ name: 'FunctionsFetchError' })).message).toContain('google-drive-files')
   })
 })
 

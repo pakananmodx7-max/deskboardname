@@ -48,6 +48,38 @@ export function unavailableHelp(code: DriveStorageErrorCode): { title: string; h
   }
 }
 
+/**
+ * Why an upload / new folder cannot start right now. Only a missing Google
+ * connection says "connect first" — a connected account whose storage is
+ * still loading, not deployed, missing the Drive scope or failing gets its
+ * real reason (and the matching action) instead.
+ */
+export interface StorageBlock {
+  action: 'wait' | 'connect' | 'reconnect' | 'retry' | null
+  title: string
+  hint: string
+}
+
+export function storageBlock(state: StorageState): StorageBlock | null {
+  switch (state.status) {
+    case 'ready':
+      return null
+    case 'checking':
+    case 'loading':
+      return { action: 'wait', title: 'กำลังโหลดข้อมูลจาก Google Drive', hint: 'รอสักครู่ — หน้าต่างจะเปิดให้อัตโนมัติเมื่อโหลดเสร็จ' }
+    case 'not_connected':
+      return { action: 'connect', title: 'ยังไม่ได้เชื่อมต่อ Google Drive', hint: 'เชื่อมต่อบัญชี Google ก่อน เพื่อเก็บเอกสารในโฟลเดอร์ KrunameClass บน Google Drive ของคุณ' }
+    case 'unavailable': {
+      const help = unavailableHelp(state.code)
+      return { action: help.reconnect ? 'reconnect' : null, title: help.title, hint: help.hint }
+    }
+    case 'error':
+      return { action: 'retry', title: 'ติดต่อ Google Drive ไม่สำเร็จ', hint: state.message }
+    case 'unsupported':
+      return { action: null, title: 'พื้นที่จัดเก็บบน Google Drive ใช้ได้เมื่อเชื่อมต่อฐานข้อมูลจริง', hint: 'โหมดสาธิตไม่ได้เชื่อมต่อ Google Drive — ไม่มีการอ่านหรือเขียนไฟล์ใด ๆ' }
+  }
+}
+
 // ==================================================
 // Folder tree
 // ==================================================

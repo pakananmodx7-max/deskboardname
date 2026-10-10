@@ -1,4 +1,4 @@
-import { AlertTriangle, Download, FileUp, Loader2 } from 'lucide-react'
+import { AlertTriangle, Download, FileUp, Loader2, RotateCw } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,7 @@ import { toFriendlyErrorMessage } from '@/lib/errors'
 import { checkUpload, MAX_UPLOAD_BYTES } from '@/services/drive-storage-service'
 
 import type { DocumentItem } from './document-center-model'
-import { formatBytes, previewKind, typedPreviewBlob } from './drive-storage-model'
+import { formatBytes, previewKind, typedPreviewBlob, type StorageBlock } from './drive-storage-model'
 
 const INPUT = 'h-10 w-full rounded-xl border border-input bg-background px-3 text-sm focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
 
@@ -195,6 +195,73 @@ export function UploadDialog({
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** Shown when an upload / new folder is requested before Drive storage is
+ * ready — with the actual reason, never a blanket "connect first". */
+export function StorageStatusDialog({
+  open,
+  title,
+  block,
+  onConnect,
+  onReconnect,
+  onRetry,
+  onClose,
+}: {
+  open: boolean
+  title: string
+  block: StorageBlock | null
+  onConnect: () => void
+  onReconnect: () => void
+  onRetry: () => void
+  onClose: () => void
+}) {
+  return (
+    <Dialog open={open && block !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        {block && (
+          <>
+            <DialogHeader>
+              <DialogTitle>{title}</DialogTitle>
+              <DialogDescription>{block.title}</DialogDescription>
+            </DialogHeader>
+            <StorageStatusBody block={block} />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={onClose}>
+                ปิด
+              </Button>
+              {block.action === 'connect' && (
+                <Button type="button" onClick={onConnect}>
+                  เชื่อมต่อ Google Drive
+                </Button>
+              )}
+              {block.action === 'reconnect' && (
+                <Button type="button" onClick={onReconnect}>
+                  เชื่อมต่อ Google Drive ใหม่
+                </Button>
+              )}
+              {block.action === 'retry' && (
+                <Button type="button" onClick={onRetry}>
+                  <RotateCw className="size-4" />
+                  ลองใหม่
+                </Button>
+              )}
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Body of StorageStatusDialog — exported for tests (renders without a portal). */
+export function StorageStatusBody({ block }: { block: StorageBlock }) {
+  return (
+    <p role={block.action === 'wait' ? 'status' : 'alert'} className="flex items-start gap-2 text-sm text-foreground" data-testid="storage-status">
+      {block.action === 'wait' ? <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" /> : <AlertTriangle className="mt-0.5 size-4 shrink-0 text-orange-600" />}
+      <span>{block.hint}</span>
+    </p>
   )
 }
 

@@ -32,8 +32,8 @@ import { DocumentTabs } from './document-tabs'
 import { DocumentTemplateCard } from './document-template-card'
 import { DOCUMENT_TEMPLATES } from './document-templates'
 import { DocumentToolbar } from './document-toolbar'
-import { DrivePreviewDialog, NameDialog, UploadDialog } from './drive-storage-dialogs'
-import { breadcrumbs, childrenOf, countInside, driveDocuments, driveFolderActivity, folderMap, folderPathLabel, nameTaken, storageCounts, type StorageState } from './drive-storage-model'
+import { DrivePreviewDialog, NameDialog, StorageStatusDialog, UploadDialog } from './drive-storage-dialogs'
+import { breadcrumbs, childrenOf, countInside, driveDocuments, driveFolderActivity, folderMap, folderPathLabel, nameTaken, storageBlock, storageCounts, type StorageState } from './drive-storage-model'
 import { DriveStoragePanel } from './drive-storage-panel'
 
 /** Drive storage operations (Phase 2) — each reloads the listing itself. */
@@ -208,6 +208,8 @@ export function DocumentCenterView({
   const [trashTarget, setTrashTarget] = useState<{ id: string; name: string; isFolder: boolean } | null>(null)
   const [previewItem, setPreviewItem] = useState<DocumentItem | null>(null)
   const [createCategory, setCreateCategory] = useState<{ label: string } | null>(null)
+  // Upload / new folder requested before storage was ready (see startStorage).
+  const [pending, setPending] = useState<{ kind: 'upload' | 'folder'; parentId: string | null } | null>(null)
 
   const overview = storage.status === 'ready' ? storage.overview : null
   const storageReady = overview !== null
@@ -247,8 +249,24 @@ export function DocumentCenterView({
     dispatch({ type: 'filters', patch: { category: ui.filters.category === category ? 'all' : category } })
     scrollTo('documents-recent')
   }
-  const startUpload = () => (storageReady ? setUploadOpen(true) : setInfo({ kind: 'upload' }))
-  const startNewFolder = (parentId: string | null) => (storageReady ? setNameDialog({ mode: 'create', parentId }) : setInfo({ kind: 'folder' }))
+  // The header's "connected" badge only means a Google connection is stored;
+  // storage itself can still be loading, not deployed, missing the Drive
+  // scope or failing. Only a real "not connected" (or Demo Mode) gets the
+  // connect-first notice; anything else shows its actual reason, and a
+  // request made while storage was loading resumes once it is ready.
+  const startStorage = (kind: 'upload' | 'folder', parentId: string | null) => {
+    if (storageReady) return kind === 'upload' ? setUploadOpen(true) : setNameDialog({ mode: 'create', parentId })
+    if (storage.status === 'not_connected' || storage.status === 'unsupported') return setInfo({ kind })
+    setPending({ kind, parentId })
+  }
+  const startUpload = () => startStorage('upload', null)
+  const startNewFolder = (parentId: string | null) => startStorage('folder', parentId)
+  const resumed = pending && storageReady ? pending : null
+  const activeNameDialog: NameDialogState | null = nameDialog ?? (resumed?.kind === 'folder' ? { mode: 'create', parentId: resumed.parentId } : null)
+  const closeNameDialog = () => {
+    setNameDialog(null)
+    setPending(null)
+  }
   const collectionActions = {
     ...actions,
     onPreview: (item: DocumentItem) => (item.source === 'drive' ? setPreviewItem(item) : actions.onPreview(item)),
@@ -488,32 +506,51 @@ export function DocumentCenterView({
 
       <DocumentInfoDialog topic={info} onClose={() => setInfo(null)} />
 
-      {nameDialog && overview && (
+      {activeNameDialog && overview && (
         <NameDialog
-          key={nameDialog.mode === 'rename' ? `rename-${nameDialog.id}` : `create-${nameDialog.parentId ?? 'root'}`}
+          key={activeNameDialog.mode === 'rename' ? `rename-${activeNameDialog.id}` : `create-${activeNameDialog.parentId ?? 'root'}`}
           open
-          title={nameDialog.mode === 'create' ? 'สร้างโฟลเดอร์ใหม่' : nameDialog.isFolder ? 'เปลี่ยนชื่อโฟลเดอร์' : 'เปลี่ยนชื่อไฟล์'}
-          description={nameDialog.mode === 'create' ? `ใน ${folderPathLabel(overview, nameDialog.parentId)}` : `ใน ${breadcrumbs(overview, nameDialog.parentId).map((c) => c.name).join(' / ')}`}
-          initial={nameDialog.mode === 'rename' ? nameDialog.name : (nameDialog.initial ?? '')}
-          confirmLabel={nameDialog.mode === 'create' ? 'สร้างโฟลเดอร์' : 'บันทึกชื่อ'}
-          validate={(name) => (nameTaken(overview, nameDialog.parentId, name, nameDialog.mode === 'rename' ? nameDialog.id : undefined) ? 'มีชื่อนี้อยู่แล้วในโฟลเดอร์นี้' : null)}
+          title={activeNameDialog.mode === 'create' ? 'สร้างโฟลเดอร์ใหม่' : activeNameDialog.isFolder ? 'เปลี่ยนชื่อโฟลเดอร์' : 'เปลี่ยนชื่อไฟล์'}
+          description={activeNameDialog.mode === 'create' ? `ใน ${folderPathLabel(overview, activeNameDialog.parentId)}` : `ใน ${breadcrumbs(overview, activeNameDialog.parentId).map((c) => c.name).join(' / ')}`}
+          initial={activeNameDialog.mode === 'rename' ? activeNameDialog.name : (activeNameDialog.initial ?? '')}
+          confirmLabel={activeNameDialog.mode === 'create' ? 'สร้างโฟลเดอร์' : 'บันทึกชื่อ'}
+          validate={(name) => (nameTaken(overview, activeNameDialog.parentId, name, activeNameDialog.mode === 'rename' ? activeNameDialog.id : undefined) ? 'มีชื่อนี้อยู่แล้วในโฟลเดอร์นี้' : null)}
           onSubmit={async (name) => {
-            if (nameDialog.mode === 'create') await storageActions.createFolder(name, nameDialog.parentId)
-            else await storageActions.rename(nameDialog.id, name)
+            if (activeNameDialog.mode === 'create') await storageActions.createFolder(name, activeNameDialog.parentId)
+            else await storageActions.rename(activeNameDialog.id, name)
           }}
-          onClose={() => setNameDialog(null)}
+          onClose={closeNameDialog}
         />
       )}
 
-      {uploadOpen && overview && (
+      {(uploadOpen || resumed?.kind === 'upload') && overview && (
         <UploadDialog
           open
           folders={folderOptions}
           defaultFolderId={ui.filters.tab === 'drive' ? currentFolderId : null}
           onUpload={(file, parentId) => storageActions.upload(file, parentId)}
-          onClose={() => setUploadOpen(false)}
+          onClose={() => {
+            setUploadOpen(false)
+            setPending(null)
+          }}
         />
       )}
+
+      <StorageStatusDialog
+        open={pending !== null && !storageReady}
+        title={pending?.kind === 'upload' ? 'อัปโหลดไฟล์' : 'สร้างโฟลเดอร์'}
+        block={storageBlock(storage)}
+        onConnect={() => {
+          setPending(null)
+          onConnectDrive()
+        }}
+        onReconnect={() => {
+          setPending(null)
+          onManageDrive()
+        }}
+        onRetry={storageActions.retry}
+        onClose={() => setPending(null)}
+      />
 
       <ConfirmDialog
         open={trashTarget !== null}
