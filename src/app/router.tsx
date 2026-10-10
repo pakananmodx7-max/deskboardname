@@ -159,7 +159,10 @@ const router = createBrowserRouter([
         path: 'subjects/:subjectId/classrooms/:classroomId/students/:studentId/analytics',
         element: <StudentAnalyticsPage />,
       },
+      // The standalone attendance page was removed (attendance lives in each
+      // subject's เช็คชื่อ tab); old URLs only redirect — see the page.
       { path: 'attendance', element: <AttendanceRedirectPage /> },
+      { path: 'attendance/*', element: <AttendanceRedirectPage /> },
       { path: 'assignments', element: <AssignmentsRedirectPage /> },
       { path: 'grades', element: <GradesRedirectPage /> },
       // คำขอเชื่อมบัญชีนักเรียน moved under Students as an in-page tab

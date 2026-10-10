@@ -2,7 +2,6 @@ import {
   BarChart3,
   BookOpen,
   Bot,
-  CalendarCheck,
   ClipboardList,
   FileText,
   LayoutDashboard,
@@ -60,12 +59,15 @@ export type NavEntry = NavLink | NavGroup | NavSection
  *       /teacher/classroom-management and /teacher/classrooms URLs
  *       redirect there — see router.tsx). A classroom's own page
  *       (/teacher/classrooms/:id) also highlights ภาพรวม.
- *     รายวิชา, งานและสื่อการสอน, การเช็คชื่อ, รายงาน
+ *     รายวิชา, งานและสื่อการสอน, รายงาน
  *   ระบบเอกสาร (coming soon), Hermes Agent, ตั้งค่า
  *
- * งานและสื่อการสอน and การเช็คชื่อ open the existing "เลือกรายวิชาก่อน"
- * entry pages (both are taken per subject + classroom). /teacher/tasks and
- * /teacher/add-module keep their routes but are not linked here.
+ * งานและสื่อการสอน opens the existing "เลือกรายวิชาก่อน" entry page.
+ * Attendance has no sidebar entry of its own: it is taken in each subject's
+ * เช็คชื่อ tab (รายวิชา → subject → classroom), and the old /teacher/attendance
+ * URL only redirects there (see attendance-redirect-page.tsx).
+ * /teacher/tasks and /teacher/add-module keep their routes but are not
+ * linked here.
  */
 export const CLASSROOM_GROUP_ID = 'classroom-management'
 
@@ -79,7 +81,6 @@ export const navItems: NavEntry[] = [
       { type: 'link', label: 'ภาพรวม', to: '/teacher/dashboard', icon: LayoutDashboard, activePrefixes: ['/teacher/classrooms'] },
       { type: 'link', label: 'รายวิชา', to: '/teacher/subjects', icon: BookOpen },
       { type: 'link', label: 'งานและสื่อการสอน', to: '/teacher/assignments', icon: ClipboardList },
-      { type: 'link', label: 'การเช็คชื่อ', to: '/teacher/attendance', icon: CalendarCheck },
       { type: 'link', label: 'รายงาน', to: '/teacher/reports', icon: BarChart3 },
     ],
   },

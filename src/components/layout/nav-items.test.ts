@@ -16,13 +16,12 @@ import {
 const group = navItems[0] as NavGroup
 
 describe('navItems — teacher sidebar hierarchy', () => {
-  it('starts with the collapsible "ระบบจัดการชั้นเรียน" group holding the five classroom items, in order', () => {
+  it('starts with the collapsible "ระบบจัดการชั้นเรียน" group holding the four classroom items, in order', () => {
     expect(group).toMatchObject({ type: 'group', id: CLASSROOM_GROUP_ID, label: 'ระบบจัดการชั้นเรียน' })
     expect(group.children.map((c) => [c.label, c.to])).toEqual([
       ['ภาพรวม', '/teacher/dashboard'],
       ['รายวิชา', '/teacher/subjects'],
       ['งานและสื่อการสอน', '/teacher/assignments'],
-      ['การเช็คชื่อ', '/teacher/attendance'],
       ['รายงาน', '/teacher/reports'],
     ])
   })
@@ -53,10 +52,12 @@ describe('navItems — teacher sidebar hierarchy', () => {
 
   it('retired or relocated destinations stay out of the sidebar (routes still exist)', () => {
     const targets = flattenNavLinks().map((l) => l.to)
-    for (const path of ['/teacher/classroom-management', '/teacher/classrooms', '/teacher/integrations', '/teacher/student-link-requests', '/teacher/ai', '/teacher/students', '/teacher/grades']) {
+    for (const path of ['/teacher/classroom-management', '/teacher/classrooms', '/teacher/integrations', '/teacher/student-link-requests', '/teacher/ai', '/teacher/students', '/teacher/grades', '/teacher/attendance']) {
       expect(targets).not.toContain(path)
     }
     expect(flattenNavLinks().map((l) => l.label)).not.toContain('ห้องเรียน')
+    // Attendance is taken in each subject's เช็คชื่อ tab only.
+    expect(flattenNavLinks().map((l) => l.label)).not.toContain('การเช็คชื่อ')
   })
 
   it('every sidebar destination is a route in the router', () => {
@@ -83,7 +84,7 @@ describe('active state', () => {
   })
 
   it('the group is active on any child route (including activePrefixes), not elsewhere', () => {
-    for (const path of ['/teacher/dashboard', '/teacher/classrooms/x', '/teacher/subjects/s1', '/teacher/assignments', '/teacher/attendance', '/teacher/reports']) {
+    for (const path of ['/teacher/dashboard', '/teacher/classrooms/x', '/teacher/subjects/s1', '/teacher/assignments', '/teacher/reports']) {
       expect(isGroupActive(group, path)).toBe(true)
     }
     for (const path of ['/teacher/hermes', '/teacher/settings', '/teacher/documents']) {

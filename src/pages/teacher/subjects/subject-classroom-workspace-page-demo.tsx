@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -29,6 +29,10 @@ export const TABS: { key: TabKey; label: string }[] = [
   { key: 'grades', label: 'คะแนน' },
 ]
 
+function initialDemoTab(value: string | null): TabKey {
+  return TABS.find((tab) => tab.key === value)?.key ?? 'overview'
+}
+
 /** Demo mirror of subjects-real's classroom workspace page — identical
  * tab set (no Topics tab — see subjects-real's workspace page for why)
  * and classroom-scoping rules, backed by demo state instead of Supabase.
@@ -37,7 +41,10 @@ export function SubjectClassroomWorkspacePageDemo() {
   const { subjectId, classroomId } = useParams<{ subjectId: string; classroomId: string }>()
   const { subjects, classrooms } = useDemoClassroom()
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  // ?tab= deep links (e.g. the old /teacher/attendance redirect) open that
+  // tab, like the real workspace; unknown values fall back to ภาพรวม.
+  const [searchParams] = useSearchParams()
+  const [activeTab, setActiveTab] = useState<TabKey>(() => initialDemoTab(searchParams.get('tab')))
   // Same unsaved-attendance guard as the real workspace.
   const attendanceDirtyRef = useRef(false)
   const handleAttendanceDirtyChange = useCallback((dirty: boolean) => {
