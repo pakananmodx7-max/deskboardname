@@ -5,9 +5,10 @@ import { useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { NativeSelect } from '@/components/ui/select'
-import { ATTENDANCE_STATUS_LABEL, ATTENDANCE_STATUS_ORDER } from '@/demo/attendance'
 import { useDemoClassroom } from '@/demo/demo-context'
 import { computeTotal } from '@/demo/grades'
+import { AttendanceReport } from '@/features/reports-attendance/attendance-report'
+import { useAttendanceReportData } from '@/features/reports-attendance/use-attendance-report-data'
 import { MissingAssignmentsReport } from '@/features/reports-missing/missing-assignments-report'
 import { useMissingReportData } from '@/features/reports-missing/missing-report-data-source'
 import { useReportTeacherName } from '@/features/reports-missing/use-report-teacher-name'
@@ -22,12 +23,14 @@ const REPORT_TYPES: { type: ReportType; title: string; description: string; icon
 ]
 
 export function ReportsPageDemo() {
-  const { students, attendanceSummary, gradeStats, grades, missingByStudent } = useDemoClassroom()
+  const { students, gradeStats, grades, missingByStudent } = useDemoClassroom()
   const [searchParams] = useSearchParams()
   // ?tab=missing (e.g. "กลับไปรายงาน" from the print preview) opens the
   // missing-assignment report straight away.
   const [generated, setGenerated] = useState<{ type: ReportType; at: string } | null>(() =>
-    searchParams.get('tab') === 'missing' ? { type: 'missing', at: new Date().toLocaleTimeString('th-TH') } : null,
+    searchParams.get('tab') === 'missing' || searchParams.get('tab') === 'attendance'
+      ? { type: searchParams.get('tab') as 'missing' | 'attendance', at: new Date().toLocaleTimeString('th-TH') }
+      : null,
   )
   const teacherName = useReportTeacherName()
   const [selectedStudentId, setSelectedStudentId] = useState(searchParams.get('student') ?? students[0]?.id ?? '')
@@ -81,8 +84,8 @@ export function ReportsPageDemo() {
               </CardTitle>
               <CardDescription>สร้างเมื่อ {generated.at}</CardDescription>
             </div>
-            {/* The missing-assignment report has its own working exports. */}
-            {generated.type !== 'missing' && (
+            {/* The attendance and missing-assignment reports have their own working exports. */}
+            {generated.type !== 'missing' && generated.type !== 'attendance' && (
               <Button variant="outline" size="sm" disabled title="ฟีเจอร์นี้จะพร้อมใช้งานเร็วๆ นี้">
                 <Download className="size-3.5" />
                 ดาวน์โหลด PDF (เร็วๆ นี้)
@@ -91,18 +94,8 @@ export function ReportsPageDemo() {
           </CardHeader>
           <CardContent>
             {generated.type === 'attendance' && (
-              <div className="space-y-2 text-sm">
-                {ATTENDANCE_STATUS_ORDER.map((status) => (
-                  <div key={status} className="flex items-center justify-between border-b border-border py-1.5 last:border-0">
-                    <span className="text-muted-foreground">{ATTENDANCE_STATUS_LABEL[status]}</span>
-                    <span className="font-semibold">{attendanceSummary[status]} คน</span>
-                  </div>
-                ))}
-                <div className="flex items-center justify-between pt-1.5 text-sm font-semibold">
-                  <span>รวมทั้งหมด</span>
-                  <span>{attendanceSummary.total} คน</span>
-                </div>
-              </div>
+              // Same redesigned attendance report as real mode, fed from the demo store.
+              <AttendanceReport useData={useAttendanceReportData} teacherName={teacherName} />
             )}
 
             {generated.type === 'grades' && (

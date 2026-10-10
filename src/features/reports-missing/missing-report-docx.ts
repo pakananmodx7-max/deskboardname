@@ -1,19 +1,6 @@
-import {
-  AlignmentType,
-  BorderStyle,
-  Document,
-  Footer,
-  Packer,
-  PageNumber,
-  Paragraph,
-  ShadingType,
-  Table,
-  TableCell,
-  TableRow,
-  TextRun,
-  WidthType,
-  type IParagraphOptions,
-} from 'docx'
+import { Packer, Table, TableRow, WidthType, type Document, type Paragraph } from 'docx'
+
+import { a4WordDocument, AlignmentType, cell, para, signatureParagraphs } from '@/lib/export/thai-docx'
 
 import {
   formatThaiDate,
@@ -24,43 +11,12 @@ import {
 } from './missing-report-model'
 
 /**
- * Editable Word version of the A4 report — real Word tables and text,
- * never an image. Same report object as the screen and the PDF.
- *
- * Layout: A4 portrait (11906 × 16838 twips), 20 mm margins (1134 twips),
- * TH Sarabun New 16 pt (the standard Thai school-document font; Word
- * substitutes another Thai font if it is not installed — the text itself
- * is plain Unicode, never lossy). Table header rows repeat on every page
- * and rows never split across pages.
+ * Editable Word version of the A4 missing-assignment report — real Word
+ * tables and text (shared helpers: src/lib/export/thai-docx.ts). Table
+ * header rows repeat on every page and rows never split across pages.
  */
 
-export const DOCX_FONT = 'TH Sarabun New'
-const SIZE = 32 // half-points → 16 pt
-const MM_20 = 1134
-const FONT = { ascii: DOCX_FONT, hAnsi: DOCX_FONT, cs: DOCX_FONT, eastAsia: DOCX_FONT }
-
-function run(text: string, opts: { bold?: boolean; size?: number } = {}): TextRun {
-  return new TextRun({ text, bold: opts.bold, boldComplexScript: opts.bold, font: FONT, size: opts.size ?? SIZE, sizeComplexScript: opts.size ?? SIZE })
-}
-
-function para(text: string, opts: Omit<IParagraphOptions, 'children' | 'text'> & { bold?: boolean; size?: number } = {}): Paragraph {
-  const { bold, size, ...rest } = opts
-  return new Paragraph({ spacing: { after: 0 }, ...rest, children: [run(text, { bold, size })] })
-}
-
-const THIN = { style: BorderStyle.SINGLE, size: 4, color: '000000' }
-const BORDERS = { top: THIN, bottom: THIN, left: THIN, right: THIN }
-
-function cell(text: string, opts: { bold?: boolean; header?: boolean; align?: (typeof AlignmentType)[keyof typeof AlignmentType]; width?: number; span?: number } = {}): TableCell {
-  return new TableCell({
-    borders: BORDERS,
-    columnSpan: opts.span,
-    width: opts.width ? { size: opts.width, type: WidthType.PERCENTAGE } : undefined,
-    shading: opts.header ? { type: ShadingType.CLEAR, color: 'auto', fill: 'E7E7E7' } : undefined,
-    margins: { left: 80, right: 80, top: 20, bottom: 20 },
-    children: [para(text, { bold: opts.bold || opts.header, alignment: opts.align ?? AlignmentType.LEFT })],
-  })
-}
+export { DOCX_FONT } from '@/lib/export/thai-docx'
 
 const COLS = [10, 38, 16, 12, 12, 12]
 
@@ -186,35 +142,9 @@ export function buildMissingReportDocument(report: MissingReport, meta: MissingR
     children.push(para('รายละเอียดงานค้างส่ง', { bold: true, keepNext: true }), ...detailParagraphs(report))
   }
 
-  children.push(
-    para('', {}),
-    para('', {}),
-    para('ลงชื่อ ................................................ ผู้รายงาน', { alignment: AlignmentType.RIGHT, keepNext: true, keepLines: true }),
-    para(meta.teacherName ? `(${meta.teacherName})` : '(................................................)', { alignment: AlignmentType.RIGHT, keepNext: true, keepLines: true }),
-    para('ตำแหน่ง ครูผู้สอน', { alignment: AlignmentType.RIGHT }),
-  )
+  children.push(...signatureParagraphs(meta.teacherName))
 
-  return new Document({
-    creator: 'KrunameClass',
-    title: meta.title,
-    styles: { default: { document: { run: { font: FONT, size: SIZE, sizeComplexScript: SIZE } } } },
-    sections: [
-      {
-        properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: MM_20, bottom: MM_20, left: MM_20, right: MM_20, footer: 567 } } },
-        footers: {
-          default: new Footer({
-            children: [
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [new TextRun({ font: FONT, size: 28, sizeComplexScript: 28, children: ['หน้า ', PageNumber.CURRENT, ' / ', PageNumber.TOTAL_PAGES] })],
-              }),
-            ],
-          }),
-        },
-        children,
-      },
-    ],
-  })
+  return a4WordDocument({ title: meta.title, children })
 }
 
 export async function buildMissingReportDocx(report: MissingReport, meta: MissingReportMeta): Promise<Blob> {

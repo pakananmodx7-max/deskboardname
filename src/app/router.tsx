@@ -32,6 +32,7 @@ import { AgentToolsDevPage } from '@/pages/teacher/dev/agent-tools-dev-page'
 import { GradesRedirectPage } from '@/pages/teacher/grades/grades-redirect-page'
 import { HermesAgentPage } from '@/pages/teacher/hermes/hermes-agent-page'
 import { IntegrationsPage } from '@/pages/teacher/integrations/integrations-page'
+import { AttendanceReportPrintPage } from '@/pages/teacher/reports/attendance-report-print-page'
 import { MissingReportPrintPage } from '@/pages/teacher/reports/missing-report-print-page'
 import { ReportsPage } from '@/pages/teacher/reports/reports-page'
 import { SettingsPage } from '@/pages/teacher/settings/settings-page'
@@ -100,6 +101,16 @@ const router = createBrowserRouter([
   // A4 print preview of Reports → งานค้างส่ง — outside the teacher layout
   // so no sidebar/top bar reaches the paper; same auth guard and shared
   // semester selection as the teacher area.
+  {
+    path: '/teacher/reports/attendance/print',
+    element: (
+      <ProtectedRoute>
+        <SemesterProvider>
+          <AttendanceReportPrintPage />
+        </SemesterProvider>
+      </ProtectedRoute>
+    ),
+  },
   {
     path: '/teacher/reports/missing/print',
     element: (

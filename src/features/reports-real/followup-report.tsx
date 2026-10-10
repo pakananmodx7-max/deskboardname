@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { ExportButtons } from '@/features/reports-real/export-buttons'
 import { buildFilterSubtitle, buildFollowUpExportTable } from '@/features/reports-real/report-export-builders'
 import { toFriendlyErrorMessage } from '@/lib/errors'
-import { computeFollowUpReport } from '@/services/followup-report-service'
+import { computeFollowUpReport, FOLLOWUP_RULES } from '@/services/followup-report-service'
 import { getAttendanceSummaryReport, getGradeSummaryReport, getMissingAssignmentReport } from '@/services/report-service'
 import type { FollowUpRow, ReportFilters } from '@/types/report'
 
@@ -65,9 +65,17 @@ export function FollowUpReport({ filters, classroomName, subjectName }: FollowUp
         />
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        ใช้กฎที่กำหนดไว้ล่วงหน้าเท่านั้น ไม่มีการให้คะแนนด้วย AI — ขาดเรียนซ้ำ, งานค้างหลายชิ้น, อัตราการส่งงานต่ำมาก, คะแนนรวมต่ำ
-      </p>
+      <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">เกณฑ์ที่ใช้ (กฎที่กำหนดไว้ล่วงหน้าเท่านั้น ไม่มีการให้คะแนนด้วย AI และไม่ใช่การวินิจฉัย)</p>
+        <ul className="mt-1 list-disc space-y-0.5 pl-5">
+          <li>ขาดเรียนตั้งแต่ {FOLLOWUP_RULES.ABSENCE_THRESHOLD} ครั้งขึ้นไป ในช่วงวันที่ที่เลือก</li>
+          <li>มีงานค้างตั้งแต่ {FOLLOWUP_RULES.MISSING_ASSIGNMENT_THRESHOLD} ชิ้นขึ้นไป</li>
+          <li>
+            ส่งงานต่ำกว่า {Math.round(FOLLOWUP_RULES.LOW_COMPLETION_RATE_THRESHOLD * 100)}% (เมื่อมีงานอย่างน้อย {FOLLOWUP_RULES.MIN_ASSIGNMENTS_FOR_COMPLETION_RULE} ชิ้น)
+          </li>
+          <li>คะแนนรวมต่ำกว่า {FOLLOWUP_RULES.LOW_GRADE_PERCENTAGE_THRESHOLD}% ของคะแนนเต็ม</li>
+        </ul>
+      </div>
 
       <Card>
         <CardContent className="p-0">

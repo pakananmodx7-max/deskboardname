@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
-import { AttendanceSummaryReport } from '@/features/reports-real/attendance-summary-report'
 import { FollowUpReport } from '@/features/reports-real/followup-report'
 import { GradeSummaryReport } from '@/features/reports-real/grade-summary-report'
 import { ReportFiltersBar } from '@/features/reports-real/report-filters-bar'
+import { AttendanceReport } from '@/features/reports-attendance/attendance-report'
+import { useAttendanceReportData } from '@/features/reports-attendance/use-attendance-report-data'
 import { MissingAssignmentsReport } from '@/features/reports-missing/missing-assignments-report'
 import { useMissingReportData } from '@/features/reports-missing/missing-report-data-source'
 import { useReportTeacherName } from '@/features/reports-missing/use-report-teacher-name'
@@ -86,8 +87,10 @@ export function ReportsPageReal() {
 
       {optionsError && <p className="text-sm text-destructive">{optionsError}</p>}
 
-      {/* งานค้างส่ง has its own filter toolbar (semester, status, search...). */}
-      {activeTab !== 'missing' && <ReportFiltersBar filters={filters} options={options} onChange={setFilters} />}
+      {/* สรุปการเข้าเรียน and งานค้างส่ง have their own filter toolbars
+          (shared semester, status, search…); the other two tabs keep the
+          shared filter bar. */}
+      {(activeTab === 'grades' || activeTab === 'followup') && <ReportFiltersBar filters={filters} options={options} onChange={setFilters} />}
 
       <div className="flex gap-1 overflow-x-auto border-b border-border">
         {TABS.map((tab) => (
@@ -108,7 +111,7 @@ export function ReportsPageReal() {
       </div>
 
       {activeTab === 'attendance' && (
-        <AttendanceSummaryReport filters={filters} classroomName={classroomName} subjectName={subjectName} />
+        <AttendanceReport useData={useAttendanceReportData} teacherName={teacherName} />
       )}
       {activeTab === 'grades' && (
         <GradeSummaryReport filters={filters} classroomName={classroomName} subjectName={subjectName} />
