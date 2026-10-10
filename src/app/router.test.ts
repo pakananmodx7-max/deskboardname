@@ -61,8 +61,9 @@ describe('router — new routes for the redesigned IA', () => {
     expect(source).toContain("{ path: 'requests', element: <StudentLinkRequestsPage /> }")
   })
 
-  it('adds coming-soon placeholders for documents/tasks/add-module without any new data fetching', () => {
-    expect(source).toContain("{ path: 'documents', element: <ComingSoonModulePage")
+  it('ระบบเอกสาร is the Document Center; tasks/add-module stay coming-soon placeholders', () => {
+    expect(source).toContain("{ path: 'documents', element: <DocumentCenterPage /> }")
+    expect(source).not.toContain("{ path: 'documents', element: <ComingSoonModulePage")
     expect(source).toContain("{ path: 'tasks', element: <ComingSoonModulePage")
     expect(source).toContain("{ path: 'add-module', element: <ComingSoonModulePage")
   })

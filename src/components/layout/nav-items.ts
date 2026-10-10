@@ -60,7 +60,7 @@ export type NavEntry = NavLink | NavGroup | NavSection
  *       redirect there — see router.tsx). A classroom's own page
  *       (/teacher/classrooms/:id) also highlights ภาพรวม.
  *     รายวิชา, งานและสื่อการสอน, รายงาน
- *   ระบบเอกสาร (coming soon), Hermes Agent, ตั้งค่า
+ *   ระบบเอกสาร, Hermes Agent, ตั้งค่า
  *
  * งานและสื่อการสอน opens the existing "เลือกรายวิชาก่อน" entry page.
  * Attendance has no sidebar entry of its own: it is taken in each subject's
@@ -84,7 +84,7 @@ export const navItems: NavEntry[] = [
       { type: 'link', label: 'รายงาน', to: '/teacher/reports', icon: BarChart3 },
     ],
   },
-  { type: 'link', label: 'ระบบเอกสาร', to: '/teacher/documents', icon: FileText, badge: 'เร็ว ๆ นี้' },
+  { type: 'link', label: 'ระบบเอกสาร', to: '/teacher/documents', icon: FileText },
   { type: 'link', label: 'Hermes Agent', to: '/teacher/hermes', icon: Bot },
   { type: 'link', label: 'ตั้งค่า', to: '/teacher/settings', icon: Settings },
 ]

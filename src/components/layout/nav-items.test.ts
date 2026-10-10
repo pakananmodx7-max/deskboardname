@@ -34,7 +34,8 @@ describe('navItems — teacher sidebar hierarchy', () => {
       ['Hermes Agent', '/teacher/hermes'],
       ['ตั้งค่า', '/teacher/settings'],
     ])
-    expect((rest[0] as NavLink).badge).toBe('เร็ว ๆ นี้')
+    // ระบบเอกสาร is a real page now — no "เร็ว ๆ นี้" tag.
+    expect((rest[0] as NavLink).badge).toBeUndefined()
   })
 
   it('is exactly one group and nothing nested deeper', () => {

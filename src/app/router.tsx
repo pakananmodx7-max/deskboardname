@@ -1,4 +1,4 @@
-import { FileText, ListChecks, Plus } from 'lucide-react'
+import { ListChecks, Plus } from 'lucide-react'
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 
 import { ProtectedRoute } from '@/components/auth/protected-route'
@@ -27,6 +27,7 @@ import { AssignmentsRedirectPage } from '@/pages/teacher/assignments/assignments
 import { AttendanceRedirectPage } from '@/pages/teacher/attendance/attendance-redirect-page'
 import { ClassroomDetailPage } from '@/pages/teacher/classrooms/classroom-detail-page'
 import { ComingSoonModulePage } from '@/pages/teacher/coming-soon/coming-soon-module-page'
+import { DocumentCenterPage } from '@/pages/teacher/documents/document-center-page'
 import { DashboardPage } from '@/pages/teacher/dashboard/dashboard-page'
 import { AgentToolsDevPage } from '@/pages/teacher/dev/agent-tools-dev-page'
 import { GradesRedirectPage } from '@/pages/teacher/grades/grades-redirect-page'
@@ -175,7 +176,7 @@ const router = createBrowserRouter([
       // ai-page.tsx itself is left in place, untouched, simply unrouted.
       { path: 'ai', element: <Navigate to="/teacher/hermes" replace /> },
       { path: 'integrations', element: <IntegrationsPage /> },
-      { path: 'documents', element: <ComingSoonModulePage icon={FileText} title="ระบบเอกสาร" description="จัดเก็บและจัดการเอกสาร แบบฟอร์ม และไฟล์ต่าง ๆ ของคุณในที่เดียว" badge="เร็ว ๆ นี้" /> },
+      { path: 'documents', element: <DocumentCenterPage /> },
       { path: 'tasks', element: <ComingSoonModulePage icon={ListChecks} title="งานและเตือนความจำ" description="รายการสิ่งที่ต้องทำและการเตือนความจำส่วนตัวของคุณ" badge="เร็ว ๆ นี้" /> },
       { path: 'add-module', element: <ComingSoonModulePage icon={Plus} title="เพิ่มระบบใหม่" description="บอกเราว่าคุณอยากให้เพิ่มระบบอะไรเข้ามาในแพลตฟอร์มนี้ต่อไป" /> },
       { path: 'settings', element: <SettingsPage /> },
