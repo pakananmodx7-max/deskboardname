@@ -108,6 +108,14 @@
   --sidebar-border: oklch(0.91 0.012 248);
   --sidebar-active: oklch(0.58 0.14 248);
   --sidebar-active-foreground: oklch(0.99 0.005 248);
+
+  /* Pastel accent hues for the dashboard (stat cards, hero, backdrop).
+     Surfaces mix these into var(--card) / var(--background), so the same
+     classes stay soft in light mode and tinted-dark in dark mode. */
+  --tone-blue: oklch(0.6 0.15 248);
+  --tone-lavender: oklch(0.6 0.16 295);
+  --tone-mint: oklch(0.64 0.13 165);
+  --tone-orange: oklch(0.7 0.16 55);
 }
 
 :root[data-theme='dark'] {
@@ -153,6 +161,11 @@
   --sidebar-border: oklch(0.28 0.015 248);
   --sidebar-active: oklch(0.74 0.12 248);
   --sidebar-active-foreground: oklch(0.16 0.02 248);
+
+  --tone-blue: oklch(0.74 0.12 248);
+  --tone-lavender: oklch(0.74 0.12 295);
+  --tone-mint: oklch(0.76 0.11 165);
+  --tone-orange: oklch(0.79 0.13 60);
 }
 
 @layer base {
@@ -197,5 +210,73 @@
     box-shadow:
       0 2px 4px 0 rgb(0 0 0 / 0.3),
       0 24px 48px -12px rgb(0 0 0 / 0.55);
+  }
+
+  /* ------------------------------------------------------------------
+     Dashboard (หน้าภาพรวม) surfaces — decoration only, never content.
+     ------------------------------------------------------------------ */
+  .kc-tone-blue { --tone: var(--tone-blue); }
+  .kc-tone-lavender { --tone: var(--tone-lavender); }
+  .kc-tone-mint { --tone: var(--tone-mint); }
+  .kc-tone-orange { --tone: var(--tone-orange); }
+
+  /* Soft icon chip in the element's tone. */
+  .kc-tone-chip {
+    background: color-mix(in oklab, var(--tone) 15%, var(--card));
+    color: var(--tone);
+  }
+
+  /* Pastel stat-card surface. */
+  .kc-pastel-card {
+    background:
+      radial-gradient(120% 90% at 100% 100%, color-mix(in oklab, var(--tone) 16%, transparent), transparent 62%),
+      linear-gradient(150deg, color-mix(in oklab, var(--card) 95%, var(--tone)), color-mix(in oklab, var(--card) 86%, var(--tone)));
+    border-color: color-mix(in oklab, var(--tone) 22%, var(--border));
+  }
+
+  /* Greeting banner: blue wash with lavender/mint accents. */
+  .kc-hero {
+    background:
+      radial-gradient(55% 140% at 100% 0%, color-mix(in oklab, var(--tone-lavender) 18%, transparent), transparent 70%),
+      radial-gradient(45% 120% at 78% 100%, color-mix(in oklab, var(--tone-mint) 14%, transparent), transparent 70%),
+      linear-gradient(115deg, color-mix(in oklab, var(--card) 82%, var(--tone-blue)) 0%, color-mix(in oklab, var(--card) 93%, var(--tone-blue)) 55%, color-mix(in oklab, var(--card) 97%, var(--tone-blue)) 100%);
+    border-color: color-mix(in oklab, var(--tone-blue) 20%, var(--border));
+  }
+
+  /* Page backdrop behind the dashboard: light-blue base, edge glows. */
+  .kc-dashboard-backdrop {
+    background:
+      radial-gradient(42rem 26rem at 100% 0%, color-mix(in oklab, var(--tone-blue) 11%, transparent), transparent 70%),
+      radial-gradient(36rem 28rem at 0% 100%, color-mix(in oklab, var(--tone-mint) 9%, transparent), transparent 70%),
+      radial-gradient(30rem 24rem at 100% 65%, color-mix(in oklab, var(--tone-lavender) 7%, transparent), transparent 70%),
+      linear-gradient(180deg, color-mix(in oklab, var(--background) 94%, var(--tone-blue)), var(--background) 40rem);
+  }
+
+  /* Gentle hover lift (transform only when motion is allowed). */
+  .kc-lift {
+    transition: box-shadow 200ms ease, border-color 200ms ease;
+  }
+  .kc-lift:hover {
+    box-shadow:
+      0 2px 4px 0 rgb(15 23 42 / 0.05),
+      0 18px 36px -12px color-mix(in oklab, var(--tone, var(--tone-blue)) 35%, transparent);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .kc-lift {
+      transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+    }
+    .kc-lift:hover {
+      transform: translateY(-3px);
+    }
+  }
+
+  /* Sidebar: active item gets a blue→lavender gradient on top of its
+     solid bg-sidebar-active, and a tinted glow. */
+  .kc-nav-active {
+    background-image: linear-gradient(120deg, var(--sidebar-active), color-mix(in oklab, var(--sidebar-active) 80%, var(--tone-lavender)));
+    box-shadow: 0 8px 18px -8px color-mix(in oklab, var(--sidebar-active) 70%, transparent);
+  }
+  .kc-sidebar-surface {
+    background: linear-gradient(180deg, var(--sidebar) 0%, color-mix(in oklab, var(--sidebar) 94%, var(--tone-blue)) 100%);
   }
 }

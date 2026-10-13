@@ -2,6 +2,7 @@ import { AlertTriangle, ArrowRight, BarChart3, ShieldCheck, TrendingUp, UserX } 
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 
+import { buttonVariants } from '@/components/ui/button'
 import { NativeSelect } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
@@ -17,10 +18,15 @@ import {
   type WeeklyAttendancePoint,
 } from '../analytics'
 import { formatCount, formatPercent, type Resource } from '../resource'
-import { AnalyticsCard, SectionBody, SectionEmpty } from './analytics-card'
+import { AnalyticsCard, SectionBody, SectionEmpty, SectionIllustratedEmpty } from './analytics-card'
 import { AnalyticsDonut, WeeklyAttendanceChart } from './charts'
+import { AttendanceEmptyArt, TrendEmptyArt } from './dashboard-decor'
 
 export type StudentLinkBuilder = (stat: StudentAttendanceStat) => string | null
+
+/** Attendance is taken in each subject's เช็คชื่อ tab; /teacher/attendance
+ * only redirects here (see attendance-redirect.ts). */
+const ATTENDANCE_WORKFLOW_PATH = '/teacher/subjects'
 
 // ==================================================
 // Attendance overview donut
@@ -40,7 +46,17 @@ export function AttendanceOverviewCard({
       <SectionBody resource={resource} onRetry={onRetry} skeleton="chart">
         {(b) =>
           b.total === 0 ? (
-            <SectionEmpty message="ยังไม่มีบันทึกการเช็คชื่อในภาคเรียนนี้" hint="เมื่อเช็คชื่อในห้องเรียนหรือรายวิชา ข้อมูลจะแสดงที่นี่" />
+            <SectionIllustratedEmpty
+              art={<AttendanceEmptyArt />}
+              message="ยังไม่มีบันทึกการเช็คชื่อในภาคเรียนนี้"
+              hint="เมื่อเช็คชื่อในห้องเรียนหรือรายวิชา ข้อมูลจะแสดงที่นี่"
+              action={
+                <Link to={ATTENDANCE_WORKFLOW_PATH} className={cn(buttonVariants({ size: 'sm' }), 'rounded-full px-4')}>
+                  ไปเช็คชื่อในรายวิชา
+                  <ArrowRight className="size-4" />
+                </Link>
+              }
+            />
           ) : (
             <>
               <AnalyticsDonut
@@ -93,7 +109,7 @@ export function WeeklyTrendCard({
           value={classroomId ?? ''}
           onChange={(e) => onClassroomChange(e.target.value || null)}
           aria-label="เลือกห้องเรียนสำหรับกราฟแนวโน้ม"
-          className="h-8 w-auto max-w-[160px] text-xs"
+          className="h-9 w-auto max-w-[170px] rounded-full px-3.5 text-xs"
         >
           <option value="">ทุกห้องเรียน</option>
           {classrooms.map((c) => (
@@ -107,7 +123,11 @@ export function WeeklyTrendCard({
       <SectionBody resource={resource} onRetry={onRetry} skeleton="chart">
         {(points) =>
           points.length === 0 ? (
-            <SectionEmpty message="ยังไม่มีบันทึกการเช็คชื่อสำหรับแสดงแนวโน้ม" hint={classroomId ? 'ลองเลือก “ทุกห้องเรียน”' : undefined} />
+            <SectionIllustratedEmpty
+              art={<TrendEmptyArt />}
+              message="ยังไม่มีบันทึกการเช็คชื่อสำหรับแสดงแนวโน้ม"
+              hint={classroomId ? 'ลองเลือก “ทุกห้องเรียน”' : 'เมื่อมีข้อมูลการเช็คชื่อ ระบบจะแสดงกราฟแนวโน้มรายสัปดาห์ที่นี่'}
+            />
           ) : (
             <>
               <WeeklyAttendanceChart points={points} />

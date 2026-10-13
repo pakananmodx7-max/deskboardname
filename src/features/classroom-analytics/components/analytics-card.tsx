@@ -17,11 +17,11 @@ interface AnalyticsCardProps {
 
 export function AnalyticsCard({ title, icon: Icon, tone = 'blue', action, className, children }: AnalyticsCardProps) {
   return (
-    <section className={cn('flex flex-col rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-soft sm:p-5', className)} aria-label={title}>
-      <header className="mb-4 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg', ICON_TONE[tone])}>
-            <Icon className="size-4" />
+    <section className={cn('flex flex-col rounded-3xl border border-border/80 bg-card p-4 text-card-foreground shadow-soft sm:p-6', className)} aria-label={title}>
+      <header className="mb-5 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-full', ICON_TONE[tone])}>
+            <Icon className="size-5" />
           </span>
           <h2 className="truncate text-base font-bold text-foreground">{title}</h2>
         </div>
@@ -87,6 +87,23 @@ export function SectionEmpty({ message, hint }: { message: string; hint?: string
     <div className="flex flex-1 flex-col items-center justify-center gap-1 rounded-xl bg-muted/50 p-6 text-center">
       <p className="text-sm font-medium text-foreground">{message}</p>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+/** Empty state with lightweight artwork, used where a panel would
+ * otherwise be a large blank area. `action` is an optional next step. */
+export function SectionIllustratedEmpty({ art, message, hint, action }: { art: React.ReactNode; message: string; hint?: string; action?: React.ReactNode }) {
+  return (
+    <div className="@container flex flex-1 flex-col">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-2xl bg-[color-mix(in_oklab,var(--tone-blue)_7%,var(--card))] p-5 text-center @md:flex-row @md:gap-6 @md:text-left">
+        {art}
+        <div className="min-w-0 space-y-1.5">
+          <p className="text-sm font-semibold text-foreground sm:text-base">{message}</p>
+          {hint && <p className="text-xs text-muted-foreground sm:text-sm">{hint}</p>}
+          {action && <div className="pt-2">{action}</div>}
+        </div>
+      </div>
     </div>
   )
 }

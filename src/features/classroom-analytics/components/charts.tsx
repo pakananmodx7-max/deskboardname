@@ -64,10 +64,10 @@ export function AnalyticsDonut({
           {centerHint && <span className="mt-0.5 max-w-24 text-[10px] leading-tight text-muted-foreground">{centerHint}</span>}
         </div>
       </div>
-      <ul className="w-full min-w-0 max-w-md flex-1 space-y-2.5 text-sm">
+      <ul className="w-full min-w-0 max-w-md flex-1 space-y-1.5 text-sm">
         {slices.map((slice) => (
-          <li key={slice.key} className="flex items-center gap-2">
-            <span className={cn('size-2.5 shrink-0 rounded-full', slice.dot)} aria-hidden="true" />
+          <li key={slice.key} className="flex items-center gap-2.5 rounded-xl bg-muted/45 px-3 py-2">
+            <span className={cn('size-3 shrink-0 rounded-full ring-2 ring-card', slice.dot)} aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate text-foreground">{slice.label}</span>
             <span className="shrink-0 font-semibold tabular-nums text-foreground">
               {formatCount(slice.value)} {unit}
@@ -123,7 +123,7 @@ export function WeeklyAttendanceChart({ points }: { points: WeeklyAttendancePoin
         </defs>
         {[0, 20, 40, 60, 80, 100].map((v) => (
           <g key={v}>
-            <line x1={padLeft} x2={width - padRight} y1={weeklyChartY(v)} y2={weeklyChartY(v)} className="stroke-border" strokeWidth={1} />
+            <line x1={padLeft} x2={width - padRight} y1={weeklyChartY(v)} y2={weeklyChartY(v)} className="stroke-border" strokeWidth={1} strokeDasharray={v === 0 ? undefined : '4 5'} />
             <text x={padLeft - 8} y={weeklyChartY(v) + 4} textAnchor="end" className="fill-muted-foreground text-[11px]">
               {v}%
             </text>
@@ -133,7 +133,7 @@ export function WeeklyAttendanceChart({ points }: { points: WeeklyAttendancePoin
           <path key={`area-${i}`} d={d} fill={`url(#${gradientId})`} />
         ))}
         {weeklyLineSegments(laid).map((d, i) => (
-          <path key={`line-${i}`} d={d} fill="none" className="stroke-primary" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />
+          <path key={`line-${i}`} d={d} fill="none" className="stroke-primary" strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" />
         ))}
         {laid.map((p, i) => (
           <g key={p.point.weekStart}>
@@ -152,9 +152,9 @@ export function WeeklyAttendanceChart({ points }: { points: WeeklyAttendancePoin
                 <circle
                   cx={p.x}
                   cy={p.y}
-                  r={active === i ? 6.5 : 4.5}
+                  r={active === i ? 7 : 5}
                   className="cursor-pointer fill-primary stroke-card outline-none focus-visible:stroke-foreground"
-                  strokeWidth={2}
+                  strokeWidth={2.5}
                   tabIndex={0}
                   role="button"
                   aria-label={`สัปดาห์ที่ ${p.point.index} (${weekRange(p.point)}) มาเรียน ${formatPercent(p.point.rate, 1)} — มา ${p.point.present} จาก ${p.point.total} รายการ`}

@@ -25,7 +25,7 @@ export function AssignmentStatusCard({ resource, onRetry, subjects = [], subject
         value={subjectId ?? ''}
         onChange={(e) => onSubjectChange(e.target.value || null)}
         aria-label="กรองตามรายวิชา"
-        className="h-8 w-auto max-w-40 text-xs"
+        className="h-9 w-auto max-w-44 rounded-full px-3.5 text-xs"
       >
         <option value="">ทุกวิชา</option>
         {subjects.map((s) => (

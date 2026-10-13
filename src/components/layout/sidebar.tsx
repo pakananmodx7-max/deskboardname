@@ -11,12 +11,16 @@ interface SidebarProps {
 }
 
 const LINK_CLASSES =
-  'flex items-center gap-3 rounded-full px-3 py-2 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50'
+  'group flex items-center gap-3 rounded-full px-3.5 py-2.5 text-sm font-medium transition-[color,background-color,box-shadow] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50'
 /** A fully filled pill (not just a tint) — the strongest, most obvious
  * "you are here" signal in the nav, matching the same solid-primary
  * pill language used by the segmented filters elsewhere in the app. */
 const LINK_ACTIVE = 'bg-sidebar-active text-sidebar-active-foreground shadow-sm'
 const LINK_INACTIVE = 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground'
+/** Gradient + soft glow layered on the solid active pill (index.css). */
+const ACTIVE_ACCENT = 'kc-nav-active'
+/** Inactive icons pick up the primary color on hover. */
+const ICON_INACTIVE = 'text-muted-foreground transition-colors group-hover:text-primary'
 
 function NavLeafRow({ item, onNavigate }: { item: NavLinkItem; onNavigate?: () => void }) {
   const { pathname } = useLocation()
@@ -28,9 +32,9 @@ function NavLeafRow({ item, onNavigate }: { item: NavLinkItem; onNavigate?: () =
       to={item.to}
       onClick={onNavigate}
       aria-current={active ? 'page' : undefined}
-      className={cn(LINK_CLASSES, active ? LINK_ACTIVE : LINK_INACTIVE)}
+      className={cn(LINK_CLASSES, active ? cn(LINK_ACTIVE, ACTIVE_ACCENT) : LINK_INACTIVE)}
     >
-      <item.icon className="size-4 shrink-0" />
+      <item.icon className={cn('size-[18px] shrink-0', !active && ICON_INACTIVE)} />
       <span className="truncate">{item.label}</span>
       {item.badge && (
         <span className="ml-auto shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
@@ -97,7 +101,7 @@ function NavGroupRow({ group, onNavigate }: { group: NavGroup; onNavigate?: () =
           active ? 'font-semibold text-sidebar-foreground hover:bg-sidebar-active/10' : LINK_INACTIVE,
         )}
       >
-        <group.icon className={cn('size-4 shrink-0', active && 'text-primary')} />
+        <group.icon className={cn('size-[18px] shrink-0', active ? 'text-primary' : ICON_INACTIVE)} />
         <span className="min-w-0 flex-1 truncate">{group.label}</span>
         <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform', !expanded && '-rotate-90')} aria-hidden="true" />
       </button>
@@ -131,9 +135,9 @@ function NavEntryRow({ entry, onNavigate }: { entry: NavEntry; onNavigate?: () =
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   return (
-    <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+    <div className="kc-sidebar-surface flex h-full flex-col text-sidebar-foreground">
       <div className="flex h-16 items-center gap-2.5 border-b border-sidebar-border px-5">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
+        <div className="kc-nav-active flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
           <GraduationCap className="size-5" />
         </div>
         <div className="min-w-0 leading-tight">
@@ -142,7 +146,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
 
-      <nav aria-label="เมนูหลัก" className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+      <nav aria-label="เมนูหลัก" className="flex-1 space-y-1 overflow-y-auto px-3 py-5">
         {navItems.map((entry) => (
           <NavEntryRow key={entry.type === 'section' ? entry.label : entry.type === 'group' ? entry.id : entry.to} entry={entry} onNavigate={onNavigate} />
         ))}
@@ -165,8 +169,8 @@ function CompactRailLink({ item, pathname }: { item: NavLinkItem; pathname: stri
       title={item.label}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'flex size-10 items-center justify-center rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
-        active ? 'bg-sidebar-active text-sidebar-active-foreground shadow-sm' : 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-sidebar-foreground',
+        'flex size-10 items-center justify-center rounded-full transition-[color,background-color,box-shadow] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+        active ? cn('bg-sidebar-active text-sidebar-active-foreground', ACTIVE_ACCENT) : 'text-sidebar-foreground/80 hover:bg-sidebar-active/10 hover:text-primary',
       )}
     >
       <item.icon className="size-5" />
@@ -182,9 +186,9 @@ function CompactRailLink({ item, pathname }: { item: NavLinkItem; pathname: stri
 function CompactSidebarContent() {
   const { pathname } = useLocation()
   return (
-    <div className="flex h-full flex-col items-center bg-sidebar text-sidebar-foreground">
+    <div className="kc-sidebar-surface flex h-full flex-col items-center text-sidebar-foreground">
       <div className="flex h-16 w-full items-center justify-center border-b border-sidebar-border">
-        <div className="flex size-9 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
+        <div className="kc-nav-active flex size-9 items-center justify-center rounded-full bg-primary text-primary-foreground">
           <GraduationCap className="size-5" />
         </div>
       </div>

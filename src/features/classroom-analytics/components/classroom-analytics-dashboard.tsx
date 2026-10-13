@@ -1,7 +1,9 @@
-import { CalendarDays, School } from 'lucide-react'
+import { CalendarDays, ClipboardCheck, School } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import { Button } from '@/components/ui/button'
 import { SEMESTER_SELECT_ID, SemesterSelect } from '@/features/semester/semester-select'
+import { cn } from '@/lib/utils'
 
 import {
   ALL_SEMESTERS,
@@ -32,6 +34,7 @@ import { SectionError, SectionSkeleton } from './analytics-card'
 import { AssignmentStatusCard, TeacherInsightsCard } from './assignment-insights'
 import { AttendanceOverviewCard, MostAbsencesCard, RiskCard, TopAttendanceCard, WeeklyTrendCard, type StudentLinkBuilder } from './attendance-sections'
 import { ClassroomSection } from './classroom-section'
+import { DashboardBackdrop, HeroDecoration } from './dashboard-decor'
 import { SummaryCards } from './summary-cards'
 import { WidgetBoundary } from './widget-boundary'
 
@@ -164,21 +167,24 @@ export function ClassroomAnalyticsDashboard(props: ClassroomAnalyticsDashboardPr
   const summary = scope && roster.status === 'success' ? computeSummary(scope, roster.data) : null
 
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 lg:grid-cols-[1fr_minmax(20rem,26rem)] [&>*]:min-w-0">
-        <div className="flex items-center gap-3.5">
-          <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/12 text-2xl" aria-hidden="true">
+    <div className="relative isolate space-y-5">
+      <DashboardBackdrop />
+      <div className="kc-hero relative overflow-hidden rounded-3xl border px-5 py-5 shadow-soft sm:px-7 sm:py-7">
+        <HeroDecoration />
+        <div className="relative flex items-center gap-4 sm:gap-5">
+          <span className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-card/85 text-3xl shadow-sm ring-1 ring-border/60 sm:size-16" aria-hidden="true">
             👋
           </span>
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-bold tracking-tight text-foreground sm:text-2xl">สวัสดี, {props.teacherName}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <h1 className="truncate text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">สวัสดี, {props.teacherName}</h1>
+            <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">
               ภาพรวมห้องเรียน การเข้าเรียน และการส่งงานของคุณ{scope ? ` ${scopePhrase(scope)}` : ''}
             </p>
           </div>
         </div>
-        <SemesterInfoCard context={context} scope={scope} attendance={cleaned} />
       </div>
+
+      <SemesterInfoCard context={context} scope={scope} attendance={cleaned} />
 
       {context.status === 'error' ? (
         <SectionError message={context.error} onRetry={props.onRetryContext} />
@@ -291,49 +297,56 @@ function SemesterInfoCard({
   const span = attendance.status === 'success' ? attendanceDateSpan(attendance.data) : null
   const isAll = scope?.key === ALL_SEMESTERS
 
+  const attendanceStatus: { text: string; tone: 'ok' | 'muted' | 'error' } =
+    attendance.status === 'loading'
+      ? { text: 'กำลังโหลดช่วงวันที่เช็คชื่อ...', tone: 'muted' }
+      : attendance.status === 'error'
+        ? { text: 'โหลดช่วงวันที่เช็คชื่อไม่สำเร็จ', tone: 'error' }
+        : span
+          ? { text: `เช็คชื่อ ${formatThaiShortDate(span.first)} – ${formatThaiShortDate(span.last)}`, tone: 'ok' }
+          : { text: 'ยังไม่มีบันทึกเช็คชื่อ', tone: 'muted' }
+
   return (
-    <section aria-label="ภาคเรียนที่เลือก" className="rounded-2xl border border-border bg-card p-4 shadow-soft">
-      <div className="flex items-start gap-3">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
-          <CalendarDays className="size-5" />
+    <section aria-label="ภาคเรียนที่เลือก" className="relative overflow-hidden rounded-3xl border border-border/80 bg-card p-4 shadow-soft sm:p-5">
+      <div className="flex items-center gap-4">
+        <span className="kc-tone-blue kc-tone-chip flex size-12 shrink-0 items-center justify-center rounded-2xl sm:size-16">
+          <CalendarDays className="size-6 sm:size-8" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-xs text-muted-foreground">{isAll ? 'ช่วงข้อมูลที่แสดง' : 'ภาคเรียนที่เลือก'}</p>
+          <p className="text-xs font-medium text-muted-foreground sm:text-sm">{isAll ? 'ช่วงข้อมูลที่แสดง' : 'ภาคเรียนที่เลือก'}</p>
           {scope ? (
-            <p className="truncate text-base font-bold text-foreground">
+            <p className="truncate text-lg font-extrabold tracking-tight text-foreground sm:text-2xl">
               {isAll ? `ทุกภาคเรียน (รวม ${formatCount(semesterCount)} ภาคเรียน)` : scope.label}
             </p>
           ) : context.status === 'error' ? (
             <p className="text-sm text-destructive">โหลดภาคเรียนไม่สำเร็จ</p>
           ) : (
-            <div className="mt-1 h-5 w-40 animate-pulse rounded bg-muted" role="status" aria-label="กำลังโหลด" />
+            <div className="mt-1 h-6 w-44 animate-pulse rounded-lg bg-muted" role="status" aria-label="กำลังโหลด" />
           )}
           {scope && (
-            <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <School className="size-3.5" aria-hidden="true" />
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground sm:text-sm">
+              <span className="flex items-center gap-1.5">
+                <School className="size-4 shrink-0" aria-hidden="true" />
                 {formatCount(scope.classrooms.length)} ห้องเรียน · {formatCount(scope.subjects.length)} รายวิชา
               </span>
-              <span>
-                {attendance.status === 'loading'
-                  ? 'กำลังโหลดช่วงวันที่เช็คชื่อ...'
-                  : attendance.status === 'error'
-                    ? 'โหลดช่วงวันที่เช็คชื่อไม่สำเร็จ'
-                    : span
-                      ? `เช็คชื่อ ${formatThaiShortDate(span.first)} – ${formatThaiShortDate(span.last)}`
-                      : 'ยังไม่มีบันทึกเช็คชื่อ'}
+              <span
+                className={cn(
+                  'flex items-center gap-1.5 rounded-full px-2.5 py-0.5',
+                  attendanceStatus.tone === 'ok' && 'bg-success/12 text-success',
+                  attendanceStatus.tone === 'muted' && 'bg-muted text-muted-foreground',
+                  attendanceStatus.tone === 'error' && 'bg-destructive/10 text-destructive',
+                )}
+              >
+                <ClipboardCheck className="size-3.5 shrink-0" aria-hidden="true" />
+                {attendanceStatus.text}
               </span>
             </div>
           )}
         </div>
-        <button
-          type="button"
-          onClick={focusSemesterSelect}
-          disabled={!scope}
-          className="hidden shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-accent disabled:opacity-50 sm:block"
-        >
+        <Button type="button" onClick={focusSemesterSelect} disabled={!scope} className="hidden shrink-0 rounded-full px-5 shadow-sm sm:inline-flex">
+          <CalendarDays className="size-4" />
           เปลี่ยนภาคเรียน
-        </button>
+        </Button>
       </div>
       {/* The header selector is hidden on phones — same shared state here. */}
       <SemesterSelect id="dashboard-semester-select" className="mt-3 sm:hidden [&_select]:w-full [&_select]:max-w-none" />
