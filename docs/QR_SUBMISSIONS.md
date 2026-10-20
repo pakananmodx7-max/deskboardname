@@ -215,33 +215,37 @@ Nothing below has been run. Order matters.
    `assignment_submission_events` and `student_qr_identities`, and set any
    `excused` rows to `missing` before restoring the old status check.
 
-## Follow-up migration 0031 (requires 0029 + 0030)
+## Follow-up migration 0031 (requires 0030; 0029 optional)
 
 `supabase/migrations/0031_qr_submission_followups.sql` — small, additive;
-0030 itself is not changed or re-run.
+0030 itself is not changed or re-run, and 0031 never installs 0029.
 
-| Behaviour | Before 0031 | After 0031 |
-|---|---|---|
-| Teacher scans / records / corrects a submission | teacher gets "ส่งงานใหม่ — รอตรวจ" for every student (40 scans → 40 notifications) | no notification — the teacher is the actor |
-| Student presses "ส่งงาน" | teacher notified | unchanged |
-| Deadline reminders (bell) | excused students reminded and counted as "ยังไม่ส่ง" | excused students left out |
-| Excused student presses "ส่งงาน" | becomes ส่งแล้ว/ส่งช้า, no trace of the earlier excuse | same, plus an audit event `student_submitted_after_excused`; teacher notified |
+| Behaviour | Before 0031 | After 0031 | Needs 0029 |
+|---|---|---|---|
+| Excused student presses "ส่งงาน" | becomes ส่งแล้ว/ส่งช้า, no trace of the earlier excuse | same, plus an audit event `student_submitted_after_excused` | no — always applied |
+| Teacher scans / records / corrects a submission | teacher gets "ส่งงานใหม่ — รอตรวจ" for every student (40 scans → 40 notifications) | no notification — the teacher is the actor | yes |
+| Student presses "ส่งงาน" | teacher notified | unchanged | yes |
+| Deadline reminders (bell) | excused students reminded and counted as "ยังไม่ส่ง" | excused students left out | yes |
+
+Without 0029 there are no notifications at all, so the two notification
+fixes are skipped (with a NOTICE) — nothing else changes. With 0029, 0031
+replaces its two functions only if they are exactly the 0029 versions (or
+already the 0031 ones on a re-run); a locally modified function stops the
+whole migration. **If 0029 is installed later, run 0031 again right after
+it** — 0029 re-creates its original functions; `0031_postcheck.sql`
+rows Q4/Q5 say "re-run 0031" in that case.
 
 Rules for an excused (ยกเว้น) row: a QR scan or "บันทึกว่าส่ง" by the
 teacher does nothing (`excused` outcome — use "แก้ไข" with a reason to
 change it); the student may still hand in work, which wins (status
 ส่งแล้ว/ส่งช้า, score and note kept). The student page explains this.
 
-Without 0029 (no `notifications` table) 0031 refuses to run, and fixes 1–2
-are not needed: nothing creates notifications. Apply 0031 right after 0029
-if 0029 is ever installed.
-
-Before applying: run `supabase/checks/0031_precheck.sql` (read-only; it
-verifies the two 0029 functions are exactly the 0029 versions 0031
-replaces). Apply in the SQL Editor wrapped in
-`begin; set local lock_timeout = '5s'; … commit;`. Undo:
-`supabase/checks/0031_rollback.sql`. Test:
-`supabase/tests/0031_qr_submission_followups.sql`.
+Order (manual, SQL Editor): `supabase/checks/0031_precheck.sql`
+(read-only) → 0031 wrapped in `begin; set local lock_timeout = '5s'; …
+commit;` → `supabase/checks/0031_postcheck.sql` (read-only; Q9 must equal
+the pre-check F). Undo: `supabase/checks/0031_rollback.sql`. Test:
+`supabase/tests/0031_qr_submission_followups.sql` (runs with or without
+0029). `supabase/checks/0030_postcheck.sql` re-verifies 0030.
 
 ## Known limitations
 

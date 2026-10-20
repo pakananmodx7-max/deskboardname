@@ -1,6 +1,7 @@
--- Rollback of 0031 (only if needed). Restores the two 0029 functions
--- verbatim and removes the excused-submission audit trigger. Does not touch
--- scores, submissions, notifications or audit rows. Runs as one transaction.
+-- Rollback of 0031 (only if needed). Removes the excused-submission audit
+-- trigger and, when 0029 is installed, restores its two functions
+-- verbatim. Does not touch scores, submissions, notifications or audit
+-- rows. Runs as one transaction.
 begin;
 set local lock_timeout = '5s';
 
@@ -19,7 +20,14 @@ begin
   end if;
 end $$;
 
--- 0029 versions, verbatim.
+-- 0029 versions, verbatim — only when 0029 is installed.
+do $migration$
+begin
+  if to_regclass('public.notifications') is null then
+    raise notice '0031 rollback: 0029 not installed — nothing to restore';
+    return;
+  end if;
+  execute $ddl$
 create or replace function public.notify_on_submission_change()
 returns trigger
 language plpgsql
@@ -142,8 +150,9 @@ begin
   end;
   return new;
 end;
-$$;
-
+$$
+  $ddl$;
+  execute $ddl$
 create or replace function public.refresh_my_deadline_notifications()
 returns integer
 language plpgsql
@@ -222,6 +231,9 @@ begin
 
   return 0;
 end;
-$$;
+$$
+  $ddl$;
+end
+$migration$;
 
 commit;

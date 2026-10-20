@@ -1,35 +1,34 @@
--- 0031: QR submission follow-ups. Requires 0029 (notifications) and 0030.
+-- 0031: QR submission follow-ups. Requires 0030. Works with or without 0029.
 --
 -- Small, additive fixes found after 0030 went to production. Nothing here
 -- touches scores, notes, submitted_at values, students, QR tokens, RLS
 -- policies, grants of existing RPCs, or any SGS table/function.
 --
---   1. notify_on_submission_change() (0029): no "ส่งงานใหม่ — รอตรวจ"
---      notification when the classroom's own teacher records the
---      submission (QR scan, "บันทึกว่าส่ง", correction, existing grading
---      tools). Scanning a whole class no longer floods the teacher's bell.
---      A student's own "ส่งงาน" still notifies exactly as before, and so
---      does a change made by anyone else (admin, service role). The score
---      → student notification is unchanged.
---   2. refresh_my_deadline_notifications() (0029): students the teacher
---      excused (ยกเว้น) are neither reminded nor counted as "ยังไม่ส่ง".
---   3. An excused student may still hand in work through "ส่งงาน": the
---      row becomes submitted/late as before (score/note untouched) and the
---      teacher is notified (1). New: that override of the teacher's
---      decision is written to assignment_submission_events
+--   A. Always: an excused (ยกเว้น) student may still hand in work through
+--      "ส่งงาน" — the row becomes submitted/late as before (score/note
+--      untouched). New: that override of the teacher's decision is
+--      written to assignment_submission_events
 --      ('student_submitted_after_excused').
+--   B. Only when 0029 (notifications) is installed — skipped with a NOTICE
+--      otherwise, and 0029 is NOT installed by this migration:
+--      1. notify_on_submission_change(): no "ส่งงานใหม่ — รอตรวจ" when the
+--         classroom's own teacher records the submission (QR scan,
+--         "บันทึกว่าส่ง", correction, existing grading tools). A student's
+--         own "ส่งงาน" and changes by anyone else still notify; the score
+--         → student notification is unchanged.
+--      2. refresh_my_deadline_notifications(): excused students are
+--         neither reminded nor counted as "ยังไม่ส่ง".
+--      Both are verbatim copies of the 0029 functions with only the marked
+--      lines changed. They replace the installed functions only if those
+--      are exactly the 0029 (or already the 0031) versions; anything else
+--      stops the migration so a local hotfix is never overwritten.
 --
--- (1) and (2) are verbatim copies of the 0029 functions with only the
--- marked lines changed. Run once in the SQL Editor wrapped in
--- begin; set local lock_timeout = '5s'; ... commit;  (re-runnable).
+-- Re-runnable. If 0029 is installed later, run 0031 again right after it
+-- (0029 re-creates its original functions). Run in the SQL Editor wrapped
+-- in  begin; set local lock_timeout = '5s'; ... commit;
 
 do $$
 begin
-  if to_regclass('public.notifications') is null
-     or to_regprocedure('public.notify_on_submission_change()') is null
-     or to_regprocedure('public.refresh_my_deadline_notifications()') is null then
-    raise exception '0031 requires migration 0029 (notifications)';
-  end if;
   if to_regclass('public.assignment_submission_events') is null
      or to_regprocedure('public.qr_record_submission(public.assignments, uuid, text)') is null then
     raise exception '0031 requires migration 0030 (QR submissions)';
@@ -37,9 +36,77 @@ begin
 end $$;
 
 -- ==================================================
--- 1. No self-notification for teacher-recorded submissions
+-- A. Audit: an excused student submitted anyway (always)
 -- ==================================================
 
+alter table public.assignment_submission_events
+  drop constraint if exists assignment_submission_events_event_type_check;
+alter table public.assignment_submission_events
+  add constraint assignment_submission_events_event_type_check
+  check (event_type in ('scan_recorded', 'manual_recorded', 'status_corrected', 'student_submitted_after_excused'));
+
+create or replace function public.log_student_submission_after_excused()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if old.status = 'excused'
+     and new.status in ('submitted', 'late')
+     and new.student_id = public.my_student_id() then
+    insert into public.assignment_submission_events
+      (assignment_id, student_id, event_type, previous_status, new_status, previous_submitted_at, new_submitted_at, actor_id)
+    values
+      (new.assignment_id, new.student_id, 'student_submitted_after_excused',
+       old.status, new.status, old.submitted_at, new.submitted_at, auth.uid());
+  end if;
+  return null;
+end;
+$$;
+
+revoke all on function public.log_student_submission_after_excused() from public, anon, authenticated;
+
+drop trigger if exists log_student_submission_after_excused_trigger on public.assignment_submissions;
+create trigger log_student_submission_after_excused_trigger
+  after update of status on public.assignment_submissions
+  for each row
+  when (old.status = 'excused' and new.status is distinct from old.status)
+  execute function public.log_student_submission_after_excused();
+
+-- ==================================================
+-- B. Notification fixes (only when 0029 is installed)
+-- ==================================================
+
+do $migration$
+declare
+  -- md5 of prosrc (CR stripped): the 0029 originals and the 0031 versions.
+  c_notify_0029   constant text := '140eb10e9aded79620b5f431e4c13d74';
+  c_notify_0031   constant text := 'db150fd803bab3afcad940364c5805e9';
+  c_deadline_0029 constant text := 'c1dd810e2fd4efc39e76afb0b1fee702';
+  c_deadline_0031 constant text := '1cec379e915c997753885d81ce4ff563';
+  v_notify text;
+  v_deadline text;
+begin
+  if to_regclass('public.notifications') is null then
+    raise notice '0031: migration 0029 (notifications) is not installed — notification fixes skipped. If 0029 is installed later, run 0031 again right after it.';
+    return;
+  end if;
+
+  select md5(replace(prosrc, E'\r', '')) into v_notify
+    from pg_proc where oid = to_regprocedure('public.notify_on_submission_change()');
+  select md5(replace(prosrc, E'\r', '')) into v_deadline
+    from pg_proc where oid = to_regprocedure('public.refresh_my_deadline_notifications()');
+
+  if v_notify is null or v_deadline is null then
+    raise exception '0031: public.notifications exists but the 0029 functions are missing — review 0029 before applying 0031';
+  end if;
+  if v_notify not in (c_notify_0029, c_notify_0031) or v_deadline not in (c_deadline_0029, c_deadline_0031) then
+    raise exception '0031: the installed 0029 notification functions differ from the 0029 source (local change?) — not overwriting; review first';
+  end if;
+
+  -- 1. No self-notification for teacher-recorded submissions
+  execute $ddl$
 create or replace function public.notify_on_submission_change()
 returns trigger
 language plpgsql
@@ -166,14 +233,12 @@ begin
   end;
   return new;
 end;
-$$;
+$$
+  $ddl$;
+  execute 'revoke all on function public.notify_on_submission_change() from public, anon, authenticated';
 
-revoke all on function public.notify_on_submission_change() from public, anon, authenticated;
-
--- ==================================================
--- 2. Deadline reminders skip excused students
--- ==================================================
-
+  -- 2. Deadline reminders skip excused students
+  execute $ddl$
 create or replace function public.refresh_my_deadline_notifications()
 returns integer
 language plpgsql
@@ -252,46 +317,11 @@ begin
 
   return 0;
 end;
-$$;
+$$
+  $ddl$;
+  execute 'revoke all on function public.refresh_my_deadline_notifications() from public, anon';
+  execute 'grant execute on function public.refresh_my_deadline_notifications() to authenticated';
 
-revoke all on function public.refresh_my_deadline_notifications() from public, anon;
-grant execute on function public.refresh_my_deadline_notifications() to authenticated;
-
--- ==================================================
--- 3. Audit: an excused student submitted anyway
--- ==================================================
-
-alter table public.assignment_submission_events
-  drop constraint if exists assignment_submission_events_event_type_check;
-alter table public.assignment_submission_events
-  add constraint assignment_submission_events_event_type_check
-  check (event_type in ('scan_recorded', 'manual_recorded', 'status_corrected', 'student_submitted_after_excused'));
-
-create or replace function public.log_student_submission_after_excused()
-returns trigger
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-begin
-  if old.status = 'excused'
-     and new.status in ('submitted', 'late')
-     and new.student_id = public.my_student_id() then
-    insert into public.assignment_submission_events
-      (assignment_id, student_id, event_type, previous_status, new_status, previous_submitted_at, new_submitted_at, actor_id)
-    values
-      (new.assignment_id, new.student_id, 'student_submitted_after_excused',
-       old.status, new.status, old.submitted_at, new.submitted_at, auth.uid());
-  end if;
-  return null;
-end;
-$$;
-
-revoke all on function public.log_student_submission_after_excused() from public, anon, authenticated;
-
-drop trigger if exists log_student_submission_after_excused_trigger on public.assignment_submissions;
-create trigger log_student_submission_after_excused_trigger
-  after update of status on public.assignment_submissions
-  for each row
-  when (old.status = 'excused' and new.status is distinct from old.status)
-  execute function public.log_student_submission_after_excused();
+  raise notice '0031: notification fixes applied (0029 present)';
+end
+$migration$;

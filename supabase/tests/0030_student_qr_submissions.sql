@@ -23,7 +23,13 @@ exception when undefined_object then null;
 end $$;
 
 delete from public.assignment_submission_events where assignment_id in (select id from public.assignments where title like 'TEST0030:%');
-delete from public.notifications where recipient_user_id in (select id from public.profiles where display_name like 'TEST0030:%');
+-- 0029 (notifications) is optional: production runs 0030 without it.
+do $$
+begin
+  if to_regclass('public.notifications') is not null then
+    execute $q$delete from public.notifications where recipient_user_id in (select id from public.profiles where display_name like 'TEST0030:%')$q$;
+  end if;
+end $$;
 delete from public.assignment_submissions where assignment_id in (select id from public.assignments where title like 'TEST0030:%');
 delete from public.assignments where title like 'TEST0030:%';
 delete from public.subject_classrooms where subject_id in (select id from public.subjects where name like 'TEST0030:%');
