@@ -54,6 +54,39 @@ describe('Branding — one name, "KrunameClass", everywhere it appears', () => {
     expect(source).not.toMatch(/w-(72|80|96)\b/)
   })
 
+  it('the teacher sidebar footer is the production copyright line, not a prototype/version label', () => {
+    const source = readSource('./sidebar.tsx')
+    expect(source).toContain('© 2026 KrunameClass. All rights reserved.')
+    expect(source).not.toContain('Prototype')
+    expect(source).not.toContain('v0.1.0')
+  })
+
+  it('the browser tab shows the production title and the KrunameClass favicon (not the Vite bolt)', () => {
+    const html = readSource('../../../index.html')
+    expect(html).toContain('<title>KrunameClass | ระบบจัดการชั้นเรียน</title>')
+    expect(html).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg" />')
+    expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png" />')
+    const favicon = readSource('../../../public/favicon.svg')
+    expect(favicon).toContain('KrunameClass')
+    expect(favicon).not.toContain('#863bff')
+  })
+
+  it('no UI component shows a development-only "Prototype" label', async () => {
+    const { readdirSync, statSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const root = new URL('../../', import.meta.url).pathname
+    const offenders: string[] = []
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name)
+        if (statSync(path).isDirectory()) walk(path)
+        else if (name.endsWith('.tsx') && !name.includes('.test.') && readFileSync(path, 'utf-8').includes('Prototype')) offenders.push(path)
+      }
+    }
+    walk(root)
+    expect(offenders).toEqual([])
+  })
+
   it('main titles are bold and subtitles are muted + smaller, per spec', () => {
     for (const [, path] of sources) {
       const source = readSource(path)

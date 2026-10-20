@@ -153,9 +153,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       <div className="border-t border-sidebar-border px-5 py-4 text-xs text-muted-foreground">
-        KrunameClass
-        <br />
-        v0.1.0 — Prototype
+        © 2026 KrunameClass. All rights reserved.
       </div>
     </div>
   )
