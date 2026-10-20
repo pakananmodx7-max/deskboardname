@@ -232,6 +232,10 @@ teacher does nothing (`excused` outcome — use "แก้ไข" with a reason 
 change it); the student may still hand in work, which wins (status
 ส่งแล้ว/ส่งช้า, score and note kept). The student page explains this.
 
+Without 0029 (no `notifications` table) 0031 refuses to run, and fixes 1–2
+are not needed: nothing creates notifications. Apply 0031 right after 0029
+if 0029 is ever installed.
+
 Before applying: run `supabase/checks/0031_precheck.sql` (read-only; it
 verifies the two 0029 functions are exactly the 0029 versions 0031
 replaces). Apply in the SQL Editor wrapped in

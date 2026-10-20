@@ -23,12 +23,12 @@ from (
   union all
   select 3, 'C1. notify_on_submission_change() is the 0029 version',
          coalesce((select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = to_regprocedure('public.notify_on_submission_change()')), '(missing)'),
-         (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = to_regprocedure('public.notify_on_submission_change()')) = '140eb10e9aded79620b5f431e4c13d74'
+         (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = to_regprocedure('public.notify_on_submission_change()')) is not distinct from '140eb10e9aded79620b5f431e4c13d74'
 
   union all
   select 4, 'C2. refresh_my_deadline_notifications() is the 0029 version',
          coalesce((select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = to_regprocedure('public.refresh_my_deadline_notifications()')), '(missing)'),
-         (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = to_regprocedure('public.refresh_my_deadline_notifications()')) = 'c1dd810e2fd4efc39e76afb0b1fee702'
+         (select md5(replace(prosrc, E'\r', '')) from pg_proc where oid = to_regprocedure('public.refresh_my_deadline_notifications()')) is not distinct from 'c1dd810e2fd4efc39e76afb0b1fee702'
 
   union all
   select 5, 'D. Event type constraint (replaced by 0031)',
