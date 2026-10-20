@@ -437,6 +437,9 @@ create policy "assignment_submission_events_select_own"
 -- ==================================================
 
 -- Only the fields the scanner screen shows — never email/phone/etc.
+-- avatar_path comes from 0012, which may not be applied: it is read
+-- through to_jsonb(s) so this function is valid either way (null when
+-- the column does not exist; the scanner then shows initials).
 create or replace function public.qr_student_summary(p_student_id uuid)
 returns jsonb
 language sql
@@ -450,7 +453,7 @@ as $$
     'last_name', s.last_name,
     'number', s.number,
     'student_code', s.student_code,
-    'avatar_path', s.avatar_path
+    'avatar_path', to_jsonb(s) -> 'avatar_path'
   )
   from public.students s
   where s.id = p_student_id

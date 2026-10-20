@@ -169,7 +169,9 @@ Nothing below has been run. Order matters.
 1. **Review** `supabase/migrations/0030_student_qr_submissions.sql`.
    It needs 0001–0029 (0029 notifications is optional: if it is applied,
    each recorded scan also creates the existing "ส่งงานใหม่ — รอตรวจ"
-   notification for the teacher).
+   notification for the teacher). 0012 (`students.avatar_path`) is also
+   optional: without it the scanner shows the student's initials instead
+   of a photo. Run `supabase/checks/0030_precheck.sql` (read-only) first.
 2. **Back up** the database (Dashboard → Database → Backups).
 3. **Apply** the migration in the Supabase SQL Editor (paste the file and
    run it) — not `supabase db push`.
