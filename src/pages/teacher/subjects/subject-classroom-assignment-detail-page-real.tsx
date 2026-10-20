@@ -760,6 +760,12 @@ export function SubjectClassroomAssignmentDetailPageReal() {
             <span className="text-muted-foreground">ขาดส่ง</span>
             <span className="font-semibold">{summary.missing}</span>
           </div>
+          {summary.excused > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">ยกเว้น</span>
+              <span className="font-semibold">{summary.excused}</span>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground">ให้คะแนนแล้ว / ยังไม่ได้ให้คะแนน</span>
             <span className="font-semibold">

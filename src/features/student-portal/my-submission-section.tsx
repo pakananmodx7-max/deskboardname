@@ -340,6 +340,11 @@ export function MySubmissionSection({
         <p className="text-sm text-destructive">{submissionError}</p>
       ) : (
         <>
+          {submission?.status === 'excused' && (
+            <p className="text-xs text-muted-foreground">
+              ครูยกเว้นงานนี้ให้แล้ว ไม่ต้องส่งก็ได้ — ถ้ากด &quot;ส่งงาน&quot; สถานะจะเปลี่ยนเป็นส่งแล้ว และครูจะได้รับแจ้ง
+            </p>
+          )}
           {submission?.submittedAt && (
             <p className="text-xs text-muted-foreground">ส่งล่าสุดเมื่อ {formatDateTime(submission.submittedAt)}</p>
           )}

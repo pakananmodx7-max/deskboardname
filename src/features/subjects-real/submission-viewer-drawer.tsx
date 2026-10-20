@@ -123,7 +123,7 @@ export function SubmissionViewerDrawer({ open, onOpenChange, studentName, submis
           <SheetHeader>
             <SheetTitle>งานออนไลน์ — {studentName}</SheetTitle>
             <SheetDescription>
-              <Badge variant={submission.status === 'submitted' ? 'success' : submission.status === 'not_submitted' ? 'outline' : 'warning'}>
+              <Badge variant={submission.status === 'submitted' ? 'success' : submission.status === 'not_submitted' || submission.status === 'excused' ? 'outline' : 'warning'}>
                 {STATUS_LABEL[submission.status]}
               </Badge>
             </SheetDescription>

@@ -83,8 +83,26 @@ describe('getSubmissionSummary', () => {
       notSubmitted: 1,
       late: 1,
       missing: 1,
+      excused: 0,
       total: 5,
       average: 8,
+    })
+  })
+
+  it('leaves excused students out of the total but keeps their score in the average', () => {
+    const submissions: Record<string, AssignmentSubmission> = {
+      s1: { studentId: 's1', status: 'submitted', score: 8, note: null },
+      s2: { studentId: 's2', status: 'excused', score: 4, note: 'ลาป่วย' },
+      s3: { studentId: 's3', status: 'not_submitted', score: null, note: null },
+    }
+    expect(getSubmissionSummary(submissions)).toEqual({
+      submitted: 1,
+      notSubmitted: 1,
+      late: 0,
+      missing: 0,
+      excused: 1,
+      total: 2,
+      average: 6,
     })
   })
 
@@ -101,6 +119,7 @@ describe('getSubmissionSummary', () => {
       notSubmitted: 0,
       late: 0,
       missing: 0,
+      excused: 0,
       total: 0,
       average: null,
     })

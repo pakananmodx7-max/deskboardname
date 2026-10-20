@@ -215,6 +215,30 @@ Nothing below has been run. Order matters.
    `assignment_submission_events` and `student_qr_identities`, and set any
    `excused` rows to `missing` before restoring the old status check.
 
+## Follow-up migration 0031 (requires 0029 + 0030)
+
+`supabase/migrations/0031_qr_submission_followups.sql` — small, additive;
+0030 itself is not changed or re-run.
+
+| Behaviour | Before 0031 | After 0031 |
+|---|---|---|
+| Teacher scans / records / corrects a submission | teacher gets "ส่งงานใหม่ — รอตรวจ" for every student (40 scans → 40 notifications) | no notification — the teacher is the actor |
+| Student presses "ส่งงาน" | teacher notified | unchanged |
+| Deadline reminders (bell) | excused students reminded and counted as "ยังไม่ส่ง" | excused students left out |
+| Excused student presses "ส่งงาน" | becomes ส่งแล้ว/ส่งช้า, no trace of the earlier excuse | same, plus an audit event `student_submitted_after_excused`; teacher notified |
+
+Rules for an excused (ยกเว้น) row: a QR scan or "บันทึกว่าส่ง" by the
+teacher does nothing (`excused` outcome — use "แก้ไข" with a reason to
+change it); the student may still hand in work, which wins (status
+ส่งแล้ว/ส่งช้า, score and note kept). The student page explains this.
+
+Before applying: run `supabase/checks/0031_precheck.sql` (read-only; it
+verifies the two 0029 functions are exactly the 0029 versions 0031
+replaces). Apply in the SQL Editor wrapped in
+`begin; set local lock_timeout = '5s'; … commit;`. Undo:
+`supabase/checks/0031_rollback.sql`. Test:
+`supabase/tests/0031_qr_submission_followups.sql`.
+
 ## Known limitations
 
 - Hermes (the `teacher-agent-tools` Edge Function, unchanged and not

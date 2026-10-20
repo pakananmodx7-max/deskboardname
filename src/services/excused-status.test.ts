@@ -82,6 +82,24 @@ describe('reports and analytics', () => {
     const data = { assignments: [{ id: 'a1', classroomId: 'c1', subjectId: 's1', title: 'งาน', dueDate: '2026-01-01' }], submissions: [{ assignmentId: 'a1', studentId: 'x', status: 'excused' as const }] }
     const progress = computeAssignmentProgress(data, roster, resolveSemesterScope(context, '2569|1'), '2026-10-20')
     expect(progress).toMatchObject({ slots: 1, completed: 0, notSubmitted: 1 })
+    // The insight denominator ("… จาก Y คน") leaves the excused student out too.
+    expect(progress.perAssignment[0]).toMatchObject({ roster: 1, notSubmitted: 1 })
+  })
+
+  it('assignment summary card: excused is not in the total', async () => {
+    const { getSubmissionSummary } = await import('./assignment-service')
+    expect(getSubmissionSummary({ x: sub('x', 'excused'), y: sub('y', 'submitted') })).toMatchObject({ submitted: 1, excused: 1, total: 1 })
+  })
+})
+
+describe('student portal: an excused student may still submit', () => {
+  const section = readFileSync(new URL('../features/student-portal/my-submission-section.tsx', import.meta.url), 'utf-8')
+
+  it('explains what happens instead of hiding "ส่งงาน"', () => {
+    expect(section).toContain("submission?.status === 'excused' && (")
+    expect(section).toContain('ครูยกเว้นงานนี้ให้แล้ว ไม่ต้องส่งก็ได้')
+    // The button is still governed only by attached work, as before.
+    expect(section).toContain('const canFinalize = resources.length > 0 && !finalizing && !ensuring')
   })
 })
 

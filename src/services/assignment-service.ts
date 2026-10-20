@@ -548,6 +548,8 @@ export interface SubmissionSummary {
   notSubmitted: number
   late: number
   missing: number
+  /** Excused (ยกเว้น) by the teacher — not expected, so not in `total`. */
+  excused: number
   total: number
   /** Average of only the students who have a non-null score, or null if none do. */
   average: number | null
@@ -556,17 +558,20 @@ export interface SubmissionSummary {
 /** Pure tally used to render the live summary card and each assignment
  * card's "submitted/total" figure. */
 export function getSubmissionSummary(submissions: Record<string, AssignmentSubmission>): SubmissionSummary {
-  const summary: SubmissionSummary = { submitted: 0, notSubmitted: 0, late: 0, missing: 0, total: 0, average: null }
+  const summary: SubmissionSummary = { submitted: 0, notSubmitted: 0, late: 0, missing: 0, excused: 0, total: 0, average: null }
   const scores: number[] = []
 
   for (const submission of Object.values(submissions)) {
+    if (submission.score !== null) scores.push(submission.score)
+    if (submission.status === 'excused') {
+      summary.excused += 1
+      continue
+    }
     summary.total += 1
     if (submission.status === 'submitted') summary.submitted += 1
     else if (submission.status === 'not_submitted') summary.notSubmitted += 1
     else if (submission.status === 'late') summary.late += 1
     else if (submission.status === 'missing') summary.missing += 1
-
-    if (submission.score !== null) scores.push(submission.score)
   }
 
   if (scores.length > 0) {

@@ -667,10 +667,12 @@ export function computeAssignmentProgress(
     const students = rosterByClassroom.get(assignment.classroomId) ?? []
     const pastDue = isPastDue(assignment.dueDate, today)
     let notSubmitted = 0
+    let expected = 0
     for (const studentId of students) {
       const status = statusByKey.get(`${assignment.id}:${studentId}`) ?? 'not_submitted'
       // Excused (ยกเว้น) by the teacher: not expected, so not a slot.
       if (status === 'excused') continue
+      expected += 1
       result.slots += 1
       if (status === 'submitted' || status === 'late') {
         result.completed += 1
@@ -682,7 +684,9 @@ export function computeAssignmentProgress(
         result.pending += 1
       }
     }
-    result.perAssignment.push({ assignment, roster: students.length, notSubmitted, pastDue })
+    // roster = students expected to hand it in (excused left out), so
+    // "ยังไม่ส่ง X จาก Y คน" never counts an excused student in Y.
+    result.perAssignment.push({ assignment, roster: expected, notSubmitted, pastDue })
   }
   return result
 }
