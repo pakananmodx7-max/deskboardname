@@ -131,7 +131,8 @@ describe('sidebar component (source checks)', () => {
     expect(sidebar.match(/export function Sidebar\(/g)).toHaveLength(1)
     expect(sidebar).toContain('<SidebarContent />')
     expect(sidebar).toContain('<CompactSidebarContent />')
-    expect(sidebar).toContain('<SidebarContent onNavigate={onCloseMobile} />')
+    // The drawer passes `mobile` (phone-only extras such as the semester selector).
+    expect(sidebar).toContain('<SidebarContent onNavigate={onCloseMobile} mobile />')
   })
 
   it('no Tailwind dark: variants (the theme switches via data-theme)', () => {

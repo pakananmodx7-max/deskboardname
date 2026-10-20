@@ -30,7 +30,7 @@ function MenuButton({ onOpenMobileMenu }: HeaderProps) {
       type="button"
       onClick={onOpenMobileMenu}
       className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 md:hidden"
-      aria-label="Open menu"
+      aria-label="เปิดเมนู"
     >
       <Menu className="size-5" />
     </button>
@@ -72,10 +72,10 @@ function DemoHeader({ onOpenMobileMenu }: HeaderProps) {
   }
 
   return (
-    <header className="flex h-16 items-center gap-3 border-b border-border bg-card px-4 sm:px-6">
+    <header className="flex h-16 items-center gap-3 border-b border-border bg-card px-4 max-sm:gap-1 max-sm:px-2.5 sm:px-6">
       <MenuButton onOpenMobileMenu={onOpenMobileMenu} />
 
-      <div className="flex flex-1 items-center gap-3 sm:gap-4">
+      <div className="flex flex-1 items-center gap-3 max-sm:min-w-0 max-sm:gap-2 sm:gap-4">
         <div className="hidden shrink-0 leading-tight lg:block">
           <h1 className="text-base font-bold tracking-tight">KrunameClass</h1>
           <p className="text-[12px] leading-tight text-muted-foreground">ระบบจัดการห้องเรียน</p>
@@ -145,12 +145,12 @@ function RealHeader({ onOpenMobileMenu }: HeaderProps) {
   }
 
   return (
-    <header className="flex h-16 items-center gap-3 border-b border-border bg-card px-4 sm:px-6">
+    <header className="flex h-16 items-center gap-3 border-b border-border bg-card px-4 max-sm:gap-1 max-sm:px-2.5 sm:px-6">
       <MenuButton onOpenMobileMenu={onOpenMobileMenu} />
 
-      <div className="flex flex-1 items-center gap-3 sm:gap-4">
-        <div className="shrink-0 leading-tight">
-          <h1 className="text-base font-bold tracking-tight">KrunameClass</h1>
+      <div className="flex flex-1 items-center gap-3 max-sm:min-w-0 max-sm:gap-2 sm:gap-4">
+        <div className="shrink-0 leading-tight max-sm:min-w-0 max-sm:shrink">
+          <h1 className="text-base font-bold tracking-tight max-sm:truncate">KrunameClass</h1>
           <p className="hidden text-[12px] leading-tight text-muted-foreground sm:block">ระบบจัดการห้องเรียน</p>
         </div>
 

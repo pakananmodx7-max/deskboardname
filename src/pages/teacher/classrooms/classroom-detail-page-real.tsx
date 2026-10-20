@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +15,7 @@ import { AttendanceTab } from '@/features/subjects-real/tabs/attendance-tab'
 import { GradesTab } from '@/features/subjects-real/tabs/grades-tab'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { useActiveTabInView } from '@/lib/use-active-tab-in-view'
 import { archiveClassroom, getClassroomById, reactivateClassroom } from '@/services/classroom-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { getClassroomSubjects } from '@/services/subject-service'
@@ -71,6 +72,8 @@ export function ClassroomDetailPageReal() {
   // subject-classroom-nav.ts. Invalid/missing falls back to 'overview'.
   const initialTabParam = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState<TabKey>(isTabKey(initialTabParam) ? initialTabParam : 'overview')
+  const tabBarRef = useRef<HTMLDivElement>(null)
+  useActiveTabInView(tabBarRef, activeTab)
   const [classroom, setClassroom] = useState<Classroom | null | undefined>(undefined)
   const [studentCount, setStudentCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -250,11 +253,12 @@ export function ClassroomDetailPageReal() {
           </div>
         )}
 
-        <div className="flex gap-1 overflow-x-auto">
+        <div ref={tabBarRef} className="flex gap-1 overflow-x-auto">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
+              data-active={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
               className={cn(
                 'shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors',

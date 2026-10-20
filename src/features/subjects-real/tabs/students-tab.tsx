@@ -60,10 +60,10 @@ export function StudentsTab({ subjectId, subjectName, classroomId, classroomName
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-border text-xs text-muted-foreground">
-                  <th className="px-5 py-3 font-medium">เลขที่</th>
-                  <th className="px-5 py-3 font-medium">ชื่อ-นามสกุล</th>
-                  <th className="px-5 py-3 font-medium">สถานะ</th>
+                <tr className="border-b border-border text-xs text-muted-foreground max-md:whitespace-nowrap">
+                  <th className="px-5 py-3 max-md:px-3 font-medium">เลขที่</th>
+                  <th className="px-5 py-3 max-md:px-3 font-medium">ชื่อ-นามสกุล</th>
+                  <th className="px-5 py-3 max-md:px-3 font-medium">สถานะ</th>
                   <th className="w-12 px-3 py-3" aria-label="ตัวเลือก" />
                 </tr>
               </thead>
@@ -87,11 +87,11 @@ export function StudentsTab({ subjectId, subjectName, classroomId, classroomName
                       className="cursor-pointer border-b border-border last:border-0 hover:bg-accent/50"
                       onClick={() => setViewingStudent(student)}
                     >
-                      <td className="px-5 py-3 text-muted-foreground">{student.number ?? '-'}</td>
-                      <td className="px-5 py-3 font-medium">
+                      <td className="px-5 py-3 max-md:px-3 text-muted-foreground">{student.number ?? '-'}</td>
+                      <td className="px-5 py-3 max-md:px-3 font-medium">
                         {student.firstName} {student.lastName}
                       </td>
-                      <td className="px-5 py-3 text-muted-foreground">
+                      <td className="px-5 py-3 max-md:px-3 text-muted-foreground max-md:whitespace-nowrap">
                         {student.status === 'active' ? 'กำลังเรียน' : 'ไม่ได้ใช้งาน'}
                       </td>
                       <td className="px-3 py-2">

@@ -242,9 +242,9 @@ export function AssignmentResourcesSection({ assignmentId, subjectId, classroomI
 
   return (
     <div className="space-y-3 rounded-lg border p-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between max-md:flex-col max-md:items-stretch max-md:gap-2">
         <p className="text-sm font-medium">สื่อและใบงาน</p>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 max-md:flex-wrap">
           <Button type="button" variant="outline" size="sm" onClick={handleFileButtonClick} disabled={uploading}>
             <Plus className="size-3.5" />
             เพิ่มไฟล์

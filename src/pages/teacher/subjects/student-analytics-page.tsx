@@ -194,7 +194,7 @@ export function StudentAnalyticsPage() {
             </div>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5 max-md:grid max-md:w-full max-md:shrink max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
             <Button
               variant="outline"
               size="sm"
@@ -203,14 +203,14 @@ export function StudentAnalyticsPage() {
               aria-label="นักเรียนก่อนหน้า"
             >
               <ChevronLeft className="size-3.5" />
-              คนก่อนหน้า
+              <span className="max-md:sr-only">คนก่อนหน้า</span>
             </Button>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              นักเรียนในห้องนี้:
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground max-md:min-w-0">
+              <span className="max-md:sr-only">นักเรียนในห้องนี้:</span>
               <NativeSelect
                 value={studentId}
                 onChange={(e) => goToStudent(e.target.value)}
-                className="w-auto max-w-[200px]"
+                className="w-auto max-w-[200px] max-md:w-full max-md:min-w-0 max-md:max-w-none"
                 aria-label="นักเรียนในห้องนี้"
                 disabled={activeRoster.length === 0}
               >
@@ -235,7 +235,7 @@ export function StudentAnalyticsPage() {
               onClick={() => nextStudent && goToStudent(nextStudent.id)}
               aria-label="นักเรียนถัดไป"
             >
-              คนถัดไป
+              <span className="max-md:sr-only">คนถัดไป</span>
               <ChevronRight className="size-3.5" />
             </Button>
           </div>

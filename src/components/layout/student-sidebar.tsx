@@ -113,7 +113,7 @@ export function StudentSidebar({ profile, classroom, mobileOpen, onCloseMobile, 
               type="button"
               onClick={onCloseMobile}
               className="absolute right-3 top-3 rounded-md p-1.5 text-muted-foreground hover:bg-accent"
-              aria-label="Close menu"
+              aria-label="ปิดเมนู"
             >
               <X className="size-4" />
             </button>

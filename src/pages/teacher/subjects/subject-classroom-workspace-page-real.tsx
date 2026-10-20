@@ -16,6 +16,7 @@ import { StudentsTab } from '@/features/subjects-real/tabs/students-tab'
 import { buildSubjectClassroomPath, isClassroomLinkedToSubject } from '@/features/subjects-shared/subject-classroom-nav'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { useActiveTabInView } from '@/lib/use-active-tab-in-view'
 import { getSubjectById, getSubjectClassroomsWithCounts } from '@/services/subject-service'
 import type { Subject, SubjectClassroomWithCount } from '@/types/subject'
 
@@ -133,6 +134,8 @@ export function SubjectClassroomWorkspacePageReal() {
   // LEGACY_TAB_REDIRECTS above.
   const initialTabParam = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState<TabKey>(resolveInitialTab(initialTabParam))
+  const tabBarRef = useRef<HTMLDivElement>(null)
+  useActiveTabInView(tabBarRef, activeTab)
 
   // Keeps ?tab= in sync with every click (not just the initial deep
   // link) — this is what lets ตรวจงานและคะแนน's own inner ?subtab=
@@ -286,11 +289,12 @@ export function SubjectClassroomWorkspacePageReal() {
           </div>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto pb-3">
+        <div ref={tabBarRef} className="flex gap-1 overflow-x-auto pb-3">
           {PILL_TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
+              data-active={activeTab === tab.key}
               onClick={() => handleTabClick(tab.key)}
               className={cn(
                 'shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',

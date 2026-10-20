@@ -18,12 +18,13 @@ interface AnalyticsCardProps {
 export function AnalyticsCard({ title, icon: Icon, tone = 'blue', action, className, children }: AnalyticsCardProps) {
   return (
     <section className={cn('flex flex-col rounded-3xl border border-border/80 bg-card p-4 text-card-foreground shadow-soft sm:p-6', className)} aria-label={title}>
-      <header className="mb-5 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-3">
+      {/* Phones: a long title keeps at least ~11rem; a wide action (filter select) drops below it instead of truncating it. */}
+      <header className="mb-5 flex items-center justify-between gap-2 max-sm:flex-wrap max-sm:gap-y-3">
+        <div className="flex min-w-0 items-center gap-3 max-sm:min-w-[11rem] max-sm:flex-1">
           <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-full', ICON_TONE[tone])}>
             <Icon className="size-5" />
           </span>
-          <h2 className="truncate text-base font-bold text-foreground">{title}</h2>
+          <h2 className="truncate text-base font-bold text-foreground max-sm:whitespace-normal">{title}</h2>
         </div>
         {action}
       </header>

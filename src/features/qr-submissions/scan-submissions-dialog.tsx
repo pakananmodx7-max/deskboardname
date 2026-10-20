@@ -355,7 +355,7 @@ export function ScanSubmissionsDialog({
         ) : openAssignments.length === 0 ? (
           <p className="m-6 rounded-xl bg-muted/50 p-6 text-center text-sm text-muted-foreground">ยังไม่มีงานในห้องเรียนนี้ — สร้างงานก่อน แล้วจึงสแกน QR ตรวจงาน</p>
         ) : (
-          <div className="grid flex-1 gap-4 overflow-y-auto p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:overflow-hidden">
+          <div className="grid flex-1 gap-4 overflow-y-auto p-4 max-md:grid-cols-[minmax(0,1fr)] max-md:content-start max-md:p-3 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:overflow-hidden">
             {/* Scanner column */}
             <section aria-label="สแกน" className="space-y-4 lg:overflow-y-auto lg:pr-1">
               {blocked && (
@@ -526,9 +526,9 @@ export function ScanSubmissionsDialog({
                     const status = assignment ? submissionStatusDisplay(submission, assignment) : null
                     const done = submission && (submission.status === 'submitted' || submission.status === 'late' || submission.status === 'excused')
                     return (
-                      <li key={student.id} className="flex items-center gap-3 px-3 py-2.5 sm:px-4">
+                      <li key={student.id} className="flex items-center gap-3 px-3 py-2.5 max-md:flex-wrap max-md:gap-x-2 max-md:gap-y-1.5 sm:px-4">
                         <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums text-muted-foreground">{student.number ?? '-'}</span>
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0 flex-1 max-md:basis-[calc(100%-2.5rem)]">
                           <p className="truncate text-sm font-medium text-foreground">
                             {student.firstName} {student.lastName}
                           </p>
@@ -536,7 +536,7 @@ export function ScanSubmissionsDialog({
                             {currentSubs ? `${scoreDisplay(submission, assignment?.maxScore ?? 0)}${submission?.submittedAt ? ` · ${formatThaiTime(submission.submittedAt)}` : ''}` : '...'}
                           </p>
                         </div>
-                        {status && currentSubs && <span className={cn('shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold', TONE_CLASS[status.tone])}>{status.label}</span>}
+                        {status && currentSubs && <span className={cn('shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold max-md:ml-10', TONE_CLASS[status.tone])}>{status.label}</span>}
                         {currentSubs && !done && !blocked && (
                           <Button type="button" size="sm" variant="outline" className="h-8 shrink-0 rounded-full px-2.5" onClick={() => enqueue({ kind: 'manual', value: student.id, key: `manual:${student.id}` })}>
                             บันทึกว่าส่ง

@@ -176,7 +176,7 @@ export function ClassroomAnalyticsDashboard(props: ClassroomAnalyticsDashboardPr
             👋
           </span>
           <div className="min-w-0">
-            <h1 className="truncate text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl">สวัสดี, {props.teacherName}</h1>
+            <h1 className="truncate text-2xl font-extrabold tracking-tight text-foreground max-sm:whitespace-normal sm:text-3xl">สวัสดี, {props.teacherName}</h1>
             <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">
               ภาพรวมห้องเรียน การเข้าเรียน และการส่งงานของคุณ{scope ? ` ${scopePhrase(scope)}` : ''}
             </p>

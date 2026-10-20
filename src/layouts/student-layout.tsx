@@ -149,7 +149,7 @@ function StudentTopBar({
         type="button"
         onClick={onOpenMobileMenu}
         className="rounded-md p-2 text-muted-foreground hover:bg-accent lg:hidden"
-        aria-label="Open menu"
+        aria-label="เปิดเมนู"
       >
         <Menu className="size-5" />
       </button>

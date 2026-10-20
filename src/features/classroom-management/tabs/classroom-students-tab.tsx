@@ -171,6 +171,29 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
     }
   }
 
+  /** The per-student menu — shared by the table row and the phone list. */
+  function rowActions(student: ClassroomStudent) {
+    return [
+      { key: 'qr', label: 'QR Code', onSelect: () => setQrStudent(student) },
+      { key: 'view', label: 'ดูรายละเอียด', onSelect: () => setViewingStudent(student) },
+      { key: 'edit', label: 'แก้ไขข้อมูล', onSelect: () => setEditingStudent(student) },
+      { key: 'message', label: 'ส่งข้อความ', onSelect: () => setMessagingStudent(student) },
+      {
+        key: 'move',
+        label: 'ย้ายห้อง',
+        onSelect: () => setMovingStudent(student),
+        disabled: allClassrooms.length <= 1,
+      },
+      { key: 'remove', label: 'เอาออกจากห้อง', onSelect: () => setRemovingStudent(student) },
+      {
+        key: 'delete',
+        label: 'ลบนักเรียน',
+        onSelect: () => setArchivingStudent(student),
+        destructive: true,
+      },
+    ]
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -219,7 +242,58 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
 
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          {/* Phones (< md): one card row per student — same data and actions as the table. */}
+          <div className="md:hidden">
+            {loading ? (
+              <p className="px-4 py-6 text-center text-sm text-muted-foreground">กำลังโหลด...</p>
+            ) : students.length === 0 ? (
+              <p className="px-4 py-6 text-center text-sm text-muted-foreground">ยังไม่มีนักเรียนในห้องเรียนนี้</p>
+            ) : (
+              <>
+                <label className="flex items-center gap-3 border-b border-border px-4 py-2.5 text-xs text-muted-foreground">
+                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} aria-label="เลือกทั้งหมด" className="size-4 rounded border-input" />
+                  เลือกทั้งหมด
+                </label>
+                <ul className="divide-y divide-border" aria-label="รายชื่อนักเรียน">
+                  {students.map((student) => (
+                    <li key={student.id} className="flex items-center gap-3 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(student.id)}
+                        onChange={() => toggleSelect(student.id)}
+                        aria-label={`เลือก ${student.firstName} ${student.lastName}`}
+                        className="size-4 shrink-0 rounded border-input"
+                      />
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums text-muted-foreground">
+                        {student.number ?? '-'}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">
+                          {student.firstName} {student.lastName}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          รหัส {student.studentCode ?? '-'} · {student.status === 'active' ? 'กำลังเรียน' : 'ไม่ได้ใช้งาน'}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setQrStudent(student)}
+                        aria-label={`QR Code ของ ${student.firstName} ${student.lastName}`}
+                        title="QR Code"
+                        className="size-9 shrink-0 rounded-full text-muted-foreground hover:text-primary"
+                      >
+                        <QrCode className="size-4" />
+                      </Button>
+                      <RowActionsMenu actions={rowActions(student)} />
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+          <div className="overflow-x-auto max-md:hidden">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-border text-xs text-muted-foreground">
@@ -285,27 +359,7 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
                         >
                           <QrCode className="size-4" />
                         </Button>
-                        <RowActionsMenu
-                          actions={[
-                            { key: 'qr', label: 'QR Code', onSelect: () => setQrStudent(student) },
-                            { key: 'view', label: 'ดูรายละเอียด', onSelect: () => setViewingStudent(student) },
-                            { key: 'edit', label: 'แก้ไขข้อมูล', onSelect: () => setEditingStudent(student) },
-                            { key: 'message', label: 'ส่งข้อความ', onSelect: () => setMessagingStudent(student) },
-                            {
-                              key: 'move',
-                              label: 'ย้ายห้อง',
-                              onSelect: () => setMovingStudent(student),
-                              disabled: allClassrooms.length <= 1,
-                            },
-                            { key: 'remove', label: 'เอาออกจากห้อง', onSelect: () => setRemovingStudent(student) },
-                            {
-                              key: 'delete',
-                              label: 'ลบนักเรียน',
-                              onSelect: () => setArchivingStudent(student),
-                              destructive: true,
-                            },
-                          ]}
-                        />
+                        <RowActionsMenu actions={rowActions(student)} />
                         </div>
                       </td>
                     </tr>

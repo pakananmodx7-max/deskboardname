@@ -652,8 +652,8 @@ export function SubjectClassroomAssignmentDetailPageReal() {
             </p>
           </div>
 
-          <div className="flex shrink-0 flex-col items-end gap-2">
-            <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex shrink-0 flex-col items-end gap-2 max-md:w-full max-md:shrink max-md:items-stretch">
+            <div className="flex flex-wrap items-center gap-1.5 max-md:grid max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
               <Button
                 variant="outline"
                 size="sm"
@@ -662,14 +662,14 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                 aria-label="งานก่อนหน้า"
               >
                 <ChevronLeft className="size-3.5" />
-                งานก่อนหน้า
+                <span className="max-md:sr-only">งานก่อนหน้า</span>
               </Button>
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                งานอื่นในห้องนี้:
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground max-md:min-w-0">
+                <span className="max-md:sr-only">งานอื่นในห้องนี้:</span>
                 <NativeSelect
                   value={currentAssignmentId}
                   onChange={(e) => goToAssignment(e.target.value)}
-                  className="w-auto max-w-[220px]"
+                  className="w-auto max-w-[220px] max-md:w-full max-md:min-w-0 max-md:max-w-none"
                   aria-label="งานอื่นในห้องนี้"
                   disabled={siblingAssignments.length === 0}
                 >
@@ -689,11 +689,11 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                 onClick={() => nextAssignment && goToAssignment(nextAssignment.id)}
                 aria-label="งานถัดไป"
               >
-                งานถัดไป
+                <span className="max-md:sr-only">งานถัดไป</span>
                 <ChevronRight className="size-3.5" />
               </Button>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 max-md:[&>*]:flex-1">
               <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
                 แก้ไขงาน
               </Button>
@@ -840,9 +840,10 @@ export function SubjectClassroomAssignmentDetailPageReal() {
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            {/* Phones: natural column widths + horizontal scroll, instead of squeezing the status buttons letter by letter. */}
+            <table className="w-full text-left text-sm max-md:min-w-max">
               <thead>
-                <tr className="border-b border-border text-xs text-muted-foreground">
+                <tr className="border-b border-border text-xs text-muted-foreground max-md:whitespace-nowrap">
                   <th className="px-4 py-3"></th>
                   <th className="px-3 py-3 font-medium">เลขที่</th>
                   <th className="px-3 py-3 font-medium">นักเรียน</th>
@@ -893,7 +894,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                           />
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">{student.number}</td>
-                        <td className="px-3 py-2 font-medium">
+                        <td className="px-3 py-2 font-medium max-md:whitespace-nowrap">
                           {student.firstName} {student.lastName}
                         </td>
                         <td className="px-3 py-2">
@@ -907,7 +908,7 @@ export function SubjectClassroomAssignmentDetailPageReal() {
                                   onClick={() => handleSetStatus(student.id, status)}
                                   disabled={statusSaveState === 'saving'}
                                   className={cn(
-                                    'rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50',
+                                    'rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50 max-md:whitespace-nowrap',
                                     STATUS_BUTTON_STYLE[status],
                                   )}
                                 >

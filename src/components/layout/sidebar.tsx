@@ -1,8 +1,9 @@
 import { ChevronDown, GraduationCap, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 
 import { isGroupActive, isLinkActive, navItems, resolveGroupExpanded, type NavEntry, type NavGroup, type NavLink as NavLinkItem } from '@/components/layout/nav-items'
+import { SemesterSelect } from '@/features/semester/semester-select'
 import { cn } from '@/lib/utils'
 
 interface SidebarProps {
@@ -133,7 +134,7 @@ function NavEntryRow({ entry, onNavigate }: { entry: NavEntry; onNavigate?: () =
   )
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContent({ onNavigate, mobile = false }: { onNavigate?: () => void; mobile?: boolean }) {
   return (
     <div className="kc-sidebar-surface flex h-full flex-col text-sidebar-foreground">
       <div className="flex h-16 items-center gap-2.5 border-b border-sidebar-border px-5">
@@ -145,6 +146,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <p className="truncate text-xs text-muted-foreground">ระบบจัดการห้องเรียน</p>
         </div>
       </div>
+
+      {mobile && (
+        // Phones only (the drawer never renders at md+): the header hides
+        // its semester selector below sm, so it lives here instead.
+        <div className="border-b border-sidebar-border px-4 py-3 sm:hidden">
+          <SemesterSelect id="mobile-semester-select" className="w-full [&_select]:w-full [&_select]:max-w-none" />
+        </div>
+      )}
 
       <nav aria-label="เมนูหลัก" className="flex-1 space-y-1 overflow-y-auto px-3 py-5">
         {navItems.map((entry) => (
@@ -218,6 +227,18 @@ function CompactSidebarContent() {
   )
 }
 
+/** Escape closes the phone drawer (it only exists below md). */
+function MobileDrawerEscape({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return null
+}
+
 export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
   return (
     <>
@@ -229,6 +250,7 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
         <CompactSidebarContent />
       </aside>
 
+      {mobileOpen && <MobileDrawerEscape onClose={onCloseMobile} />}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div
@@ -236,16 +258,16 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
             onClick={onCloseMobile}
             aria-hidden="true"
           />
-          <div className="relative z-10 h-full w-64 bg-sidebar shadow-elevated">
+          <div role="dialog" aria-modal="true" aria-label="เมนูหลัก" className="relative z-10 h-full w-[min(18rem,86vw)] bg-sidebar shadow-elevated">
             <button
               type="button"
               onClick={onCloseMobile}
               className="absolute right-3 top-3 rounded-full p-1.5 text-muted-foreground hover:bg-accent"
-              aria-label="Close menu"
+              aria-label="ปิดเมนู"
             >
               <X className="size-4" />
             </button>
-            <SidebarContent onNavigate={onCloseMobile} />
+            <SidebarContent onNavigate={onCloseMobile} mobile />
           </div>
         </div>
       )}
