@@ -68,6 +68,7 @@ const STATUS_LABEL: Record<SubmissionStatus, string> = {
   not_submitted: 'ยังไม่ส่ง',
   late: 'ส่งช้า',
   missing: 'ขาดส่ง',
+  excused: 'ยกเว้น',
 }
 const STATUS_BUTTON_STYLE: Record<SubmissionStatus, string> = {
   submitted: 'data-[active=true]:bg-success data-[active=true]:text-success-foreground',
@@ -75,6 +76,7 @@ const STATUS_BUTTON_STYLE: Record<SubmissionStatus, string> = {
     'data-[active=true]:bg-secondary data-[active=true]:text-secondary-foreground data-[active=true]:border-foreground/30',
   late: 'data-[active=true]:bg-warning data-[active=true]:text-warning-foreground',
   missing: 'data-[active=true]:bg-destructive data-[active=true]:text-destructive-foreground',
+  excused: 'data-[active=true]:bg-secondary data-[active=true]:text-secondary-foreground',
 }
 
 type SaveState = 'saving' | 'saved' | 'error'

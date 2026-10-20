@@ -91,6 +91,7 @@ export function computeSubmissionTimelinessRows(
     let onTimeCount = 0
     let lateCount = 0
     let missingCount = 0
+    let excusedCount = 0
 
     for (const assignment of assignments) {
       const status: SubmissionStatus = submissionsByAssignment[assignment.id]?.[studentId]?.status ?? 'not_submitted'
@@ -100,12 +101,15 @@ export function computeSubmissionTimelinessRows(
       } else if (status === 'late') {
         submittedCount += 1
         lateCount += 1
+      } else if (status === 'excused') {
+        // Excused (ยกเว้น): not expected — left out of the totals.
+        excusedCount += 1
       } else {
         missingCount += 1
       }
     }
 
-    return { studentId, totalAssignments: assignments.length, submittedCount, onTimeCount, lateCount, missingCount }
+    return { studentId, totalAssignments: assignments.length - excusedCount, submittedCount, onTimeCount, lateCount, missingCount }
   })
 }
 

@@ -28,6 +28,7 @@ const STATUS_LABEL: Record<SubmissionStatus, string> = {
   submitted: 'ส่งแล้ว (ตรงเวลา)',
   late: 'ส่งช้า',
   missing: 'ขาดส่ง',
+  excused: 'ยกเว้น',
 }
 
 const RESOURCE_ICON = { file: FileText, link: Link2, text: Type } as const

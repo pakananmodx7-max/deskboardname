@@ -221,6 +221,9 @@ function assignment(id: string, maxScore: number, title = id): Assignment {
     createdBy: null,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
+    submissionDeadline: null,
+    latePolicy: 'accept_late',
+    acceptingSubmissions: true,
   }
 }
 
@@ -827,8 +830,8 @@ describe('isSubmissionCellGradable — which cells open the score dialog on clic
 })
 
 describe('No reviewed/checked/awaiting-review database state exists — the green ✓ IS the existing submission status, meaning ส่งแล้ว, nothing more', () => {
-  it('SubmissionCellState is exactly 4 values — no "awaiting_review"/"ungraded"/"checked" state', () => {
-    expect(Object.keys(SUBMISSION_CELL_STATE_LABEL).sort()).toEqual(['graded', 'missing', 'not_submitted', 'submitted'].sort())
+  it('SubmissionCellState is exactly 5 values (incl. ยกเว้น from 0030) — no "awaiting_review"/"ungraded"/"checked" state', () => {
+    expect(Object.keys(SUBMISSION_CELL_STATE_LABEL).sort()).toEqual(['excused', 'graded', 'missing', 'not_submitted', 'submitted'].sort())
   })
 
   it('a submitted (no score) cell is labeled "ส่งแล้ว" — never "ตรวจแล้ว" or "รอตรวจ"', () => {

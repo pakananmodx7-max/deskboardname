@@ -87,7 +87,7 @@ describe('SubmissionCheckTab — cell rendering: grading (score) is exclusive to
   })
 
   it('REGRESSION — the ONLY kind that ever renders a score is {kind: submitted} (produced exclusively in ทั้งหมด mode) — a null score renders the "—" placeholder, never a literal 0, and an explicit 0 renders the literal "0/{maxScore}", never "—"', () => {
-    const cellFn = source.slice(source.indexOf('function CellVisual'), source.indexOf('function CellVisual') + 1200)
+    const cellFn = source.slice(source.indexOf('function CellVisual'), source.indexOf('function CellVisual') + 2000)
     expect(cellFn).toContain('CheckCircle2')
     expect(cellFn).toContain("display.score === null ? '—' : `${display.score}/${maxScore}`")
     expect(cellFn).not.toContain('score ?? 0')
@@ -114,7 +114,7 @@ describe('SubmissionCheckTab — cell rendering: grading (score) is exclusive to
   })
 
   it('the tooltip/label text comes from cellTitle and reads "ขาดส่ง"/ส่งแล้ว copy for their own matching cells — never "ตรวจแล้ว"/"รอตรวจ"/awaiting-review copy', () => {
-    expect(source).toContain('title={cellTitle(display)}')
+    expect(source).toContain("title={cellTitle(display, submission?.status === 'late')}")
     const titleFn = source.slice(source.indexOf('function cellTitle'), source.indexOf('function CellVisual'))
     expect(titleFn).toContain("return 'ขาดส่ง'")
     expect(titleFn).toContain('ส่งแล้ว')
@@ -419,7 +419,8 @@ describe('SubmissionCheckTab — exactly 3 modes (ทั้งหมด/ส่�
     expect(source).toContain("computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'submitted')")
     expect(source).toContain("computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'missing')")
     expect(source).toContain('computeExpectedItemCount(rosterIds, visibleAssignmentIds)')
-    expect(source).toContain('ส่งแล้ว ${modeSubmittedCount} · ขาดส่ง ${modeMissingCount} จาก ${modeExpectedCount} รายการ')
+    expect(source).toContain('ส่งแล้ว ${modeSubmittedCount} · ขาดส่ง ${modeMissingCount}')
+    expect(source).toContain(' จาก ${modeExpectedCount} รายการ')
   })
 
   it('the counter and the row filter both come from the shared pure mode functions, computed over the CURRENTLY VISIBLE (searched) assignment columns', () => {

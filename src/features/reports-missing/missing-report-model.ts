@@ -188,11 +188,12 @@ export function formatThaiDate(iso: string | null, style: 'short' | 'long' = 'sh
 // ==================================================
 
 export function classifyObligation(
-  submissionStatus: 'not_submitted' | 'submitted' | 'late' | 'missing' | undefined,
+  submissionStatus: 'not_submitted' | 'submitted' | 'late' | 'missing' | 'excused' | undefined,
   dueDate: string | null,
   today: string,
 ): { status: ObligationStatus; daysOverdue: number | null; markedMissing: boolean } | null {
-  if (submissionStatus === 'submitted' || submissionStatus === 'late') return null
+  // Excused (ยกเว้น) by the teacher is not an outstanding obligation.
+  if (submissionStatus === 'submitted' || submissionStatus === 'late' || submissionStatus === 'excused') return null
   const due = dateOnly(dueDate)
   const lateBy = due && due < today ? daysBetween(due, today) : null
   if (submissionStatus === 'missing') return { status: 'overdue', daysOverdue: lateBy, markedMissing: true }

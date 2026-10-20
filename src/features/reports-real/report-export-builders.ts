@@ -94,6 +94,7 @@ export function buildMissingAssignmentExportTable(rows: MissingAssignmentRow[], 
     not_submitted: 'ยังไม่ส่ง',
     late: 'ส่งช้า',
     missing: 'ขาดส่ง',
+    excused: 'ยกเว้น',
   }
   return {
     title: 'รายงานงานที่ค้างส่ง (Missing Assignment Report)',

@@ -28,6 +28,10 @@ interface AssignmentRow {
   created_by: string | null
   created_at: string
   updated_at: string
+  // Migration 0030 — absent (undefined) on a database without it.
+  submission_deadline?: string | null
+  late_policy?: string | null
+  accepting_submissions?: boolean | null
 }
 
 interface AssignmentSubmissionRow {
@@ -54,6 +58,9 @@ function mapAssignment(row: AssignmentRow): Assignment {
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    submissionDeadline: row.submission_deadline ?? null,
+    latePolicy: row.late_policy === 'reject_late' ? 'reject_late' : 'accept_late',
+    acceptingSubmissions: row.accepting_submissions !== false,
   }
 }
 
@@ -1006,17 +1013,19 @@ export function getNextAssignment(activeAssignments: Assignment[], currentAssign
  * (an explicit score, tested via `!== null`, not `!score`) and from
  * "never submitted" — no score ever means, or is ever treated as, 0.
  */
-export type SubmissionCellState = 'not_submitted' | 'submitted' | 'missing' | 'graded'
+export type SubmissionCellState = 'not_submitted' | 'submitted' | 'missing' | 'graded' | 'excused'
 
 export const SUBMISSION_CELL_STATE_LABEL: Record<SubmissionCellState, string> = {
   not_submitted: 'ยังไม่ส่ง',
   submitted: 'ส่งแล้ว',
   missing: 'ขาดส่ง',
   graded: 'ให้คะแนนแล้ว',
+  excused: 'ยกเว้น',
 }
 
 export function computeSubmissionCellState(status: SubmissionStatus, score: number | null): SubmissionCellState {
   if (score !== null) return 'graded'
+  if (status === 'excused') return 'excused'
   if (status === 'missing') return 'missing'
   if (status === 'not_submitted') return 'not_submitted'
   return 'submitted'
@@ -1080,20 +1089,21 @@ export function isSubmittedStatus(status: SubmissionStatus): boolean {
  * a student × assignment pair with NO assignment_submissions row at all
  * (which already defaults to 'not_submitted' everywhere else in this
  * file — see buildDefaultSubmissions) all count as ขาดส่ง. This is
- * exactly the complement of isSubmittedStatus — every one of the 4 real
- * status values is either submitted or missing, nothing left over — so
- * "submitted count + missing count" always equals the full expected
- * student × assignment matrix size (computeExpectedItemCount), never
- * silently dropping the "no row exists yet" case from either bucket.
+ * the complement of isSubmittedStatus EXCEPT for 'excused' (ยกเว้น,
+ * migration 0030): a student the teacher excused is neither submitted
+ * nor missing, so "submitted + missing + excused" equals the full
+ * expected student × assignment matrix size (computeExpectedItemCount),
+ * never silently dropping the "no row exists yet" case from any bucket.
  */
 export function isMissingStatus(status: SubmissionStatus): boolean {
-  return !isSubmittedStatus(status)
+  return !isSubmittedStatus(status) && status !== 'excused'
 }
 
 export type CellDisplay =
   | { kind: 'submitted'; score: number | null } // ONLY produced in 'all' mode — the one place score is shown
   | { kind: 'submitted-plain' } // ONLY produced in 'submitted' mode — a bare ✓, score never rendered
   | { kind: 'missing' } // produced in 'all' mode (exhaustively) and in 'missing' mode (for matching cells)
+  | { kind: 'excused' } // ONLY produced in 'all' mode — ยกเว้น, never ขาดส่ง and never a score
   | { kind: 'blank' } // a cell that doesn't match the active narrow mode's own concept — truly empty
 
 /**
@@ -1115,6 +1125,7 @@ export type CellDisplay =
  */
 export function computeCellDisplay(mode: SubmissionCheckMode, status: SubmissionStatus, score: number | null): CellDisplay {
   if (mode === 'all') {
+    if (status === 'excused') return { kind: 'excused' }
     return isSubmittedStatus(status) ? { kind: 'submitted', score } : { kind: 'missing' }
   }
   if (mode === 'submitted') {
@@ -1213,7 +1224,7 @@ export function computeSubmittedMissingSplit(
   for (const studentId of studentIds) {
     const status = submissionsByAssignment[assignmentId]?.[studentId]?.status ?? 'not_submitted'
     if (isSubmittedStatus(status)) submittedCount += 1
-    else missingCount += 1
+    else if (isMissingStatus(status)) missingCount += 1
   }
   return { submittedCount, missingCount }
 }

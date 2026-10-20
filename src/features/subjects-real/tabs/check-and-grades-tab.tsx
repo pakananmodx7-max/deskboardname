@@ -1,6 +1,9 @@
+import { ScanQrCode } from 'lucide-react'
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
+import { Button } from '@/components/ui/button'
+import { ScanSubmissionsDialog } from '@/features/qr-submissions/scan-submissions-dialog'
 import { cn } from '@/lib/utils'
 import type { Subject } from '@/types/subject'
 import { GradesTab } from './grades-tab'
@@ -49,6 +52,11 @@ export function CheckAndGradesTab({ subject, classroomId, classroomName }: Check
   const [subTab, setSubTab] = useState<CheckAndGradesSubTab>(
     isSubTabKey(initialSubTabParam) ? initialSubTabParam : 'submissionCheck',
   )
+  // QR scanning (migration 0030): `undefined` = closed, a string = the
+  // assignment column it was opened for, null = no particular column.
+  const [scanFor, setScanFor] = useState<string | null | undefined>(undefined)
+  // Bumped after scanning changed something, so both sub-tabs re-fetch.
+  const [dataVersion, setDataVersion] = useState(0)
 
   function handleSubTabClick(key: CheckAndGradesSubTab) {
     setSubTab(key)
@@ -64,6 +72,7 @@ export function CheckAndGradesTab({ subject, classroomId, classroomName }: Check
 
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="inline-flex gap-0.5 rounded-lg border border-border bg-muted/40 p-1">
         {SUB_TABS.map((tab) => (
           <button
@@ -81,9 +90,29 @@ export function CheckAndGradesTab({ subject, classroomId, classroomName }: Check
           </button>
         ))}
       </div>
+        <Button type="button" onClick={() => setScanFor(null)} className="rounded-full px-5 shadow-sm">
+          <ScanQrCode className="size-4" />
+          สแกน QR ตรวจงาน
+        </Button>
+      </div>
 
-      {subTab === 'submissionCheck' && <SubmissionCheckTab subject={subject} classroomId={classroomId} />}
-      {subTab === 'grades' && <GradesTab subject={subject} classroomId={classroomId} classroomName={classroomName} />}
+      {subTab === 'submissionCheck' && (
+        <SubmissionCheckTab key={dataVersion} subject={subject} classroomId={classroomId} onScanAssignment={(assignmentId) => setScanFor(assignmentId)} />
+      )}
+      {subTab === 'grades' && <GradesTab key={dataVersion} subject={subject} classroomId={classroomId} classroomName={classroomName} />}
+
+      {scanFor !== undefined && (
+        <ScanSubmissionsDialog
+          subject={subject}
+          classroomId={classroomId}
+          classroomName={classroomName}
+          initialAssignmentId={scanFor}
+          onClose={(changed) => {
+            setScanFor(undefined)
+            if (changed) setDataVersion((v) => v + 1)
+          }}
+        />
+      )}
     </div>
   )
 }

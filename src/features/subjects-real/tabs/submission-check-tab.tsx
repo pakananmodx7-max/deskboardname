@@ -54,6 +54,8 @@ import type { ClassroomStudent } from '@/types/student'
 interface SubmissionCheckTabProps {
   subject: Subject
   classroomId: string
+  /** Opens QR scanning for one assignment column (ตรวจงานและคะแนน). */
+  onScanAssignment?: (assignmentId: string) => void
 }
 
 interface SubmissionTarget {
@@ -134,7 +136,7 @@ function studentDisplayName(student: ClassroomStudent): string {
  * bulk action here, or from a single-cell edit are all indistinguishable
  * on the next refresh().
  */
-export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabProps) {
+export function SubmissionCheckTab({ subject, classroomId, onScanAssignment }: SubmissionCheckTabProps) {
   const { toast } = useToast()
   const navigate = useNavigate()
 
@@ -236,6 +238,8 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
   const modeSubmittedCount = computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'submitted')
   const modeMissingCount = computeModeItemCount(rosterIds, visibleAssignmentIds, submissionsByAssignment, 'missing')
   const modeExpectedCount = computeExpectedItemCount(rosterIds, visibleAssignmentIds)
+  // ยกเว้น (excused, migration 0030) is neither submitted nor missing.
+  const modeExcusedCount = modeExpectedCount - modeSubmittedCount - modeMissingCount
   const filteredRoster = filterStudentsByCheckMode(roster, visibleAssignmentIds, submissionsByAssignment, mode)
 
   const rosterKey = roster.map((s) => s.id).join(',')
@@ -693,7 +697,7 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                   (students × assignments) total instead. */}
               {mode === 'all' ? (
                 <SummaryStat
-                  label={`ส่งแล้ว ${modeSubmittedCount} · ขาดส่ง ${modeMissingCount} จาก ${modeExpectedCount} รายการ`}
+                  label={`ส่งแล้ว ${modeSubmittedCount} · ขาดส่ง ${modeMissingCount}${modeExcusedCount > 0 ? ` · ยกเว้น ${modeExcusedCount}` : ''} จาก ${modeExpectedCount} รายการ`}
                   tone={modeMissingCount > 0 ? 'warning' : 'success'}
                 />
               ) : (
@@ -1003,6 +1007,9 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                             </span>
                             <RowActionsMenu
                               actions={[
+                                ...(onScanAssignment && !assignment.isArchived
+                                  ? [{ key: 'scan-qr', label: 'สแกน QR งานนี้', onSelect: () => onScanAssignment(assignment.id) }]
+                                  : []),
                                 { key: 'edit', label: 'แก้ไขงาน', onSelect: () => setEditingAssignment(assignment) },
                                 { key: 'copy', label: 'คัดลอกไปห้องอื่น', onSelect: () => setCopyingAssignment(assignment) },
                                 {
@@ -1131,10 +1138,10 @@ export function SubmissionCheckTab({ subject, classroomId }: SubmissionCheckTabP
                                 <button
                                   type="button"
                                   onClick={() => openTargetDialog(assignment, student)}
-                                  title={cellTitle(display)}
+                                  title={cellTitle(display, submission?.status === 'late')}
                                   className="inline-flex h-8 min-w-14 items-center justify-center gap-1 rounded-full px-2 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                                 >
-                                  <CellVisual display={display} maxScore={assignment.maxScore} />
+                                  <CellVisual display={display} maxScore={assignment.maxScore} late={submission?.status === 'late'} />
                                 </button>
                               </td>
                             )
@@ -1322,10 +1329,12 @@ function SummaryStat({ label, tone }: { label: string; tone: 'warning' | 'succes
  * ส่งแล้ว/ขาดส่ง mode, no "does not match" hint under ทั้งหมด since it
  * never renders a non-matching cell there).
  */
-function cellTitle(display: CellDisplay): string {
+function cellTitle(display: CellDisplay, late = false): string {
+  const sent = late ? 'ส่งช้า' : 'ส่งแล้ว'
   if (display.kind === 'missing') return 'ขาดส่ง'
-  if (display.kind === 'submitted-plain') return 'ส่งแล้ว'
-  if (display.kind === 'submitted') return display.score === null ? 'ส่งแล้ว — ยังไม่มีคะแนน' : `ส่งแล้ว — คะแนน ${display.score}`
+  if (display.kind === 'excused') return 'ยกเว้น'
+  if (display.kind === 'submitted-plain') return sent
+  if (display.kind === 'submitted') return display.score === null ? `${sent} — ยังไม่มีคะแนน` : `${sent} — คะแนน ${display.score}`
   return 'ไม่ตรงกับโหมดนี้'
 }
 
@@ -1342,7 +1351,14 @@ function cellTitle(display: CellDisplay): string {
  * non-matching cell in ส่งแล้ว/ขาดส่ง mode) renders truly empty — never a
  * "—" placeholder, which would read as its own third visual state.
  */
-function CellVisual({ display, maxScore }: { display: CellDisplay; maxScore: number }) {
+function CellVisual({ display, maxScore, late = false }: { display: CellDisplay; maxScore: number; late?: boolean }) {
+  if (display.kind === 'excused') {
+    return (
+      <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+        ยกเว้น
+      </span>
+    )
+  }
   if (display.kind === 'missing') {
     return (
       <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive">
@@ -1361,6 +1377,11 @@ function CellVisual({ display, maxScore }: { display: CellDisplay; maxScore: num
     return (
       <span className="inline-flex items-center gap-1.5">
         <CheckCircle2 className="size-4 shrink-0 text-success" />
+        {late && (
+          <span className="rounded-full bg-warning/20 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700" aria-label="ส่งช้า">
+            ช้า
+          </span>
+        )}
         <span
           className={cn(
             'rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums',

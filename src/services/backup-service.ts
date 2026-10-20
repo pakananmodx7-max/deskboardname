@@ -76,6 +76,7 @@ const SUBMISSION_STATUS_LABEL: Record<SubmissionStatus, string> = {
   not_submitted: 'ยังไม่ส่ง',
   late: 'ส่งช้า',
   missing: 'ขาดส่ง',
+  excused: 'ยกเว้น',
 }
 
 const STUDENT_ACTIVE_LABEL = 'กำลังเรียน'

@@ -26,7 +26,7 @@ import type { Classroom } from '@/types/classroom'
 // ==================================================
 
 export type AttendanceStatus = 'present' | 'late' | 'leave' | 'absent'
-export type SubmissionStatusValue = 'not_submitted' | 'submitted' | 'late' | 'missing'
+export type SubmissionStatusValue = 'not_submitted' | 'submitted' | 'late' | 'missing' | 'excused'
 
 export interface AnalyticsClassroom {
   id: string
@@ -669,6 +669,8 @@ export function computeAssignmentProgress(
     let notSubmitted = 0
     for (const studentId of students) {
       const status = statusByKey.get(`${assignment.id}:${studentId}`) ?? 'not_submitted'
+      // Excused (ยกเว้น) by the teacher: not expected, so not a slot.
+      if (status === 'excused') continue
       result.slots += 1
       if (status === 'submitted' || status === 'late') {
         result.completed += 1

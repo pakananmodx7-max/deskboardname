@@ -22,6 +22,9 @@ function assignment(id: string, overrides: Partial<Assignment> = {}): Assignment
     createdBy: 'teacher-1',
     createdAt: '2026-09-01T00:00:00Z',
     updatedAt: '2026-09-01T00:00:00Z',
+    submissionDeadline: null,
+    latePolicy: 'accept_late',
+    acceptingSubmissions: true,
     ...overrides,
   }
 }

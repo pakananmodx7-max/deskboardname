@@ -36,11 +36,15 @@ describe('CheckAndGradesTab — reuses SubmissionCheckTab and GradesTab complete
   })
 
   it('renders SubmissionCheckTab with the exact same props it took as a standalone top-level tab (subject, classroomId — no classroomName, matching its own props interface)', () => {
-    expect(source).toContain('<SubmissionCheckTab subject={subject} classroomId={classroomId} />')
+    // + a `key` (re-fetch after QR scanning) and the optional scan callback.
+    const tag = source.match(/<SubmissionCheckTab [\s\S]*?\/>/)?.[0] ?? ''
+    expect(tag).toContain('subject={subject} classroomId={classroomId}')
+    expect(tag).not.toContain('classroomName')
+    expect(tag).toContain('key={dataVersion}')
   })
 
   it('renders GradesTab with the exact same props it took as a standalone top-level tab (subject, classroomId, classroomName)', () => {
-    expect(source).toContain('<GradesTab subject={subject} classroomId={classroomId} classroomName={classroomName} />')
+    expect(source).toContain('<GradesTab key={dataVersion} subject={subject} classroomId={classroomId} classroomName={classroomName} />')
   })
 
   it('this component does no data fetching itself — no supabase import, no getAssignments/getSubmissions/getStudentsByClassroom call of its own; each child tab still fetches its own data independently', () => {

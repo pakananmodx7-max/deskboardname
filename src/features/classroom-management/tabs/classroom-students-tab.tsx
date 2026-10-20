@@ -1,4 +1,4 @@
-import { Plus, Upload, UserCheck } from 'lucide-react'
+import { Loader2, Plus, Printer, QrCode, Upload, UserCheck } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -9,6 +9,10 @@ import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { useToast } from '@/components/ui/toast'
 import { BulkStatusDialog } from '@/features/classroom-management/bulk-status-dialog'
 import { EditStudentDialog } from '@/features/classroom-management/edit-student-dialog'
+import type { QrCard } from '@/features/qr-submissions/qr-print-model'
+import { printQrCards, qrDataUrl } from '@/features/qr-submissions/qr-render'
+import { StudentQrDialog } from '@/features/qr-submissions/student-qr-dialog'
+import { useClassroomQrCodes } from '@/features/qr-submissions/use-classroom-qr-codes'
 import { MoveClassroomDialog } from '@/features/classroom-management/move-classroom-dialog'
 import {
   buildArchiveStudentMessage,
@@ -51,6 +55,9 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
   const [messagingStudent, setMessagingStudent] = useState<ClassroomStudent | null>(null)
   const [bulkRemoveOpen, setBulkRemoveOpen] = useState(false)
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false)
+  const [qrStudent, setQrStudent] = useState<ClassroomStudent | null>(null)
+  const [printingQr, setPrintingQr] = useState(false)
+  const qr = useClassroomQrCodes(classroom.id)
 
   const refresh = useCallback(() => {
     setLoading(true)
@@ -122,6 +129,36 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
     }
   }
 
+  /** Every student's QR on A4 sheets (12 per page), in roster order. */
+  async function handlePrintAllQr() {
+    setPrintingQr(true)
+    try {
+      const codes = await qr.load(true)
+      const ordered = [...students].sort((a, b) => (a.number ?? Number.MAX_SAFE_INTEGER) - (b.number ?? Number.MAX_SAFE_INTEGER))
+      const cards: QrCard[] = []
+      for (const student of ordered) {
+        const code = codes.get(student.id)
+        if (!code) continue
+        cards.push({
+          studentName: `${student.firstName} ${student.lastName}`,
+          classroomName: classroom.name,
+          number: student.number,
+          studentCode: student.studentCode,
+          qrDataUrl: await qrDataUrl(code.token),
+        })
+      }
+      if (cards.length === 0) {
+        toast('ยังไม่มีนักเรียนในห้องเรียนนี้')
+        return
+      }
+      await printQrCards(cards, 'sheet', `QR นักเรียน ${classroom.name}`)
+    } catch (err) {
+      toast(toFriendlyErrorMessage(err, 'พิมพ์ QR ไม่สำเร็จ'))
+    } finally {
+      setPrintingQr(false)
+    }
+  }
+
   async function handleBulkStatus(status: StudentStatus) {
     const ids = [...selectedIds]
     try {
@@ -148,6 +185,10 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
               <UserCheck className="size-4" />
               คำขอเชื่อมบัญชี
             </Link>
+          </Button>
+          <Button variant="outline" onClick={handlePrintAllQr} disabled={printingQr || loading || students.length === 0}>
+            {printingQr ? <Loader2 className="size-4 animate-spin" /> : <Printer className="size-4" />}
+            พิมพ์ QR ทั้งห้อง
           </Button>
           <Button variant="outline" onClick={() => setImportOpen(true)}>
             <Upload className="size-4" />
@@ -195,7 +236,7 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
                   <th className="px-5 py-3 font-medium">ชื่อ-นามสกุล</th>
                   <th className="px-5 py-3 font-medium">รหัสนักเรียน</th>
                   <th className="px-5 py-3 font-medium">สถานะ</th>
-                  <th className="w-12 px-3 py-3"></th>
+                  <th className="w-24 px-3 py-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -232,8 +273,21 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
                         {student.status === 'active' ? 'กำลังเรียน' : 'ไม่ได้ใช้งาน'}
                       </td>
                       <td className="px-3 py-2">
+                        <div className="flex items-center justify-end gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setQrStudent(student)}
+                          aria-label={`QR Code ของ ${student.firstName} ${student.lastName}`}
+                          title="QR Code"
+                          className="size-8 rounded-full text-muted-foreground hover:text-primary"
+                        >
+                          <QrCode className="size-4" />
+                        </Button>
                         <RowActionsMenu
                           actions={[
+                            { key: 'qr', label: 'QR Code', onSelect: () => setQrStudent(student) },
                             { key: 'view', label: 'ดูรายละเอียด', onSelect: () => setViewingStudent(student) },
                             { key: 'edit', label: 'แก้ไขข้อมูล', onSelect: () => setEditingStudent(student) },
                             { key: 'message', label: 'ส่งข้อความ', onSelect: () => setMessagingStudent(student) },
@@ -252,6 +306,7 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
                             },
                           ]}
                         />
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -275,6 +330,13 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
         classroomId={classroom.id}
         classroomName={classroom.name}
         onImported={refresh}
+      />
+      <StudentQrDialog
+        student={qrStudent}
+        classroomName={classroom.name}
+        loadCode={qr.loadCode}
+        regenerate={qr.regenerate}
+        onClose={() => setQrStudent(null)}
       />
       <StudentDetailDrawer
         classroomName={classroom.name}

@@ -4,6 +4,11 @@ This document explains the schema introduced in
 `supabase/migrations/0001_init.sql`, why it's shaped the way it is, and
 what's intentionally deferred to a later phase.
 
+> **Student QR codes / QR-scanned submissions (migration 0030):** see
+> `docs/QR_SUBMISSIONS.md` — `student_qr_identities`,
+> `assignment_submission_events`, the new `assignments` submission
+> settings and the `excused` submission status.
+
 > **Security review note:** this schema was revised in place (not
 > patched with a follow-up migration — it had never been applied to a
 > live database) after a security review found gaps in cross-teacher

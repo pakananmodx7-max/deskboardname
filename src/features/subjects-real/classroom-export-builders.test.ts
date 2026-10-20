@@ -39,6 +39,9 @@ function assignment(overrides: Partial<Assignment> = {}): Assignment {
     createdBy: null,
     createdAt: '2026-05-01T00:00:00Z',
     updatedAt: '2026-05-01T00:00:00Z',
+    submissionDeadline: null,
+    latePolicy: 'accept_late',
+    acceptingSubmissions: true,
     ...overrides,
   }
 }

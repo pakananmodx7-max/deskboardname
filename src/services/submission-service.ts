@@ -193,6 +193,7 @@ export const STUDENT_SUBMISSION_STATUS_LABEL: Record<StudentFacingSubmissionStat
   submitted: 'ส่งแล้ว',
   late: 'ส่งช้า',
   missing: 'ขาดส่ง',
+  excused: 'ยกเว้น',
   reviewed: 'ตรวจแล้ว',
 }
 
@@ -204,6 +205,7 @@ export const STUDENT_SUBMISSION_STATUS_BADGE_VARIANT: Record<
   submitted: 'success',
   late: 'warning',
   missing: 'warning',
+  excused: 'outline',
   reviewed: 'default',
 }
 

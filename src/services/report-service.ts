@@ -236,6 +236,10 @@ function mapAssignmentRow(row: AssignmentQueryRow): Assignment {
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // Submission settings (migration 0030) are not used by reports.
+    submissionDeadline: null,
+    latePolicy: 'accept_late',
+    acceptingSubmissions: true,
   }
 }
 
@@ -380,7 +384,8 @@ export function buildMissingAssignmentRows(
 
     for (const student of roster) {
       const status: SubmissionStatus = submissions[student.id]?.status ?? 'not_submitted'
-      if (status === 'submitted') continue
+      // Excused (ยกเว้น) by the teacher is not missing work.
+      if (status === 'submitted' || status === 'excused') continue
 
       rows.push({
         studentId: student.id,

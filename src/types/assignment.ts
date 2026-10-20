@@ -6,7 +6,12 @@ export interface AssignmentSummary {
   totalCount: number
 }
 
-export type SubmissionStatus = 'not_submitted' | 'submitted' | 'late' | 'missing'
+/** 'excused' (ยกเว้น) exists from migration 0030 on and is set only by a
+ * teacher (the audited correction workflow) — never by a student. */
+export type SubmissionStatus = 'not_submitted' | 'submitted' | 'late' | 'missing' | 'excused'
+
+/** What happens to a submission after the deadline (migration 0030). */
+export type LatePolicy = 'accept_late' | 'reject_late'
 
 /**
  * An assignment always belongs to exactly one subject AND one of that
@@ -28,6 +33,15 @@ export interface Assignment {
   createdBy: string | null
   createdAt: string
   updatedAt: string
+  /** Exact deadline (ISO timestamp) — when null, `dueDate` (if any)
+   * counts as a deadline of 23:59:59 that day, school time. Migration
+   * 0030; null on a database without it. */
+  submissionDeadline: string | null
+  /** Migration 0030; 'accept_late' on a database without it. */
+  latePolicy: LatePolicy
+  /** Closed = QR/manual recording refused. Migration 0030; true on a
+   * database without it. */
+  acceptingSubmissions: boolean
 }
 
 export interface CreateAssignmentInput {
