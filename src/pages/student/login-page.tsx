@@ -5,6 +5,7 @@ import { AuthShell } from '@/components/auth/auth-shell'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { StudentLoginWaves } from '@/features/student-login/student-login-waves'
 import { useAuth } from '@/lib/auth-context'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { deriveMyLinkStatus, getMyLinkRequests, getMyRole } from '@/services/student-link-service'
@@ -54,6 +55,7 @@ export function StudentLoginPage() {
     <AuthShell
       title="เข้าสู่ระบบ"
       description="สำหรับนักเรียน"
+      background={<StudentLoginWaves />}
       footer={
         <div className="space-y-1">
           <p>
