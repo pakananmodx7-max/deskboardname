@@ -82,6 +82,9 @@ KrunameClass ติดตั้งลงหน้าจอโฮมของโ�
 - **iOS**: `apple-touch-icon.png` (180, full-bleed), `apple-mobile-web-app-*` meta in
   `index.html`, `viewport-fit=cover` with `env(safe-area-inset-*)` padding on the app shells
   (`.kc-safe-area`), drawers, toasts and the full-screen scanner — `env()` is 0 on desktop.
-- Icons: `public/pwa-192x192.png`, `pwa-512x512.png` (purpose any), `pwa-maskable-512x512.png`
-  (glyph inside the 80% safe zone), generated from the favicon design (graduation cap on
-  `#237fc8`).
+- Icons: all generated from the official KrunameClass logo (the "CLASS ครูเนม N" tile),
+  cropped and uniformly scaled, never redrawn or stretched:
+  `public/pwa-192x192.png`, `pwa-512x512.png` (purpose any — the tile with transparent
+  rounded corners), `pwa-maskable-512x512.png` (the artwork on its white backdrop, every key
+  element inside the 80% safe zone), `apple-touch-icon.png` (180, full-bleed — iOS rounds
+  it), and the favicons `favicon.ico` (16/32/48) and `favicon-32.png`.

@@ -61,14 +61,14 @@ describe('Branding — one name, "KrunameClass", everywhere it appears', () => {
     expect(source).not.toContain('v0.1.0')
   })
 
-  it('the browser tab shows the production title and the KrunameClass favicon (not the Vite bolt)', () => {
+  it('the browser tab shows the production title and the official KrunameClass logo as favicon (not the Vite bolt)', () => {
     const html = readSource('../../../index.html')
     expect(html).toContain('<title>KrunameClass | ระบบจัดการชั้นเรียน</title>')
-    expect(html).toContain('<link rel="icon" type="image/svg+xml" href="/favicon.svg" />')
+    expect(html).toContain('<link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />')
+    expect(html).toContain('<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />')
+    expect(html).toContain('<link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />')
     expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png" />')
-    const favicon = readSource('../../../public/favicon.svg')
-    expect(favicon).toContain('KrunameClass')
-    expect(favicon).not.toContain('#863bff')
+    expect(html).not.toContain('favicon.svg')
   })
 
   it('no UI component shows a development-only "Prototype" label', async () => {
