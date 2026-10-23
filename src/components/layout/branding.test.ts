@@ -27,7 +27,6 @@ describe('Branding — one name, "KrunameClass", everywhere it appears', () => {
     ['student sidebar', './student-sidebar.tsx'],
     ['top header (real + demo)', './header.tsx'],
     ['auth shell (login/signup/forgot/reset)', '../auth/auth-shell.tsx'],
-    ['role choice page', '../../pages/root/role-choice-page.tsx'],
   ]
 
   for (const [label, path] of sources) {
@@ -69,6 +68,19 @@ describe('Branding — one name, "KrunameClass", everywhere it appears', () => {
     expect(html).toContain('<link rel="icon" type="image/png" sizes="192x192" href="/pwa-192x192.png" />')
     expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png" />')
     expect(html).not.toContain('favicon.svg')
+  })
+
+  it('the role choice page ("/") is branded Class N: heading, instruction and developer credit, no old name or subtitle', () => {
+    const source = readSource('../../pages/root/role-choice-page.tsx')
+    expect(source).toContain('>Class N</h1>')
+    expect(source).toContain('กรุณาเลือกประเภทผู้ใช้งานเพื่อเข้าสู่ระบบ')
+    expect(source).toContain('Developed by')
+    expect(source).toContain('Pakanan Modbut')
+    expect(source).toContain('© 2026 Class N')
+    expect(source).not.toContain('KrunameClass</h1>')
+    expect(source).not.toContain(SUBTITLE)
+    expect(source).not.toContain('ระบบการจัดการชั้นเรียน')
+    expect(source).not.toContain('จัดทำโดยครูเนม')
   })
 
   it('no UI component shows a development-only "Prototype" label', async () => {

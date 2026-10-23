@@ -287,4 +287,113 @@
   .kc-sidebar-surface {
     background: linear-gradient(180deg, var(--sidebar) 0%, color-mix(in oklab, var(--sidebar) 94%, var(--tone-blue)) 100%);
   }
+
+  /* ------------------------------------------------------------------
+     Role selection (หน้าเลือกครู / นักเรียน, "/") — Class N.
+     A fixed light design (independent of the app theme). Every
+     animation is transform / background-position only, so it stays on
+     the compositor; all of it stops under prefers-reduced-motion.
+     ------------------------------------------------------------------ */
+  .kc-role-page {
+    background:
+      radial-gradient(60rem 40rem at 50% 45%, #ffffff 0%, transparent 70%),
+      linear-gradient(180deg, #f7faff 0%, #f3f7fd 100%);
+    color: #0f172a;
+  }
+
+  /* "Class N": navy → royal → sky → navy, one tile per cycle so the
+     loop is seamless (background-size 200%, moved by exactly 200%). */
+  .kc-role-title {
+    background-image: linear-gradient(90deg, #0b1f4d 0%, #1d4ed8 33%, #38bdf8 66%, #0b1f4d 100%);
+    background-size: 200% 100%;
+    background-repeat: repeat-x;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    animation: kc-role-title-flow 10s linear infinite;
+  }
+  @keyframes kc-role-title-flow {
+    from { background-position: 0% 50%; }
+    to { background-position: 200% 50%; }
+  }
+
+  .kc-role-blob-a {
+    background: linear-gradient(150deg, rgb(147 197 253 / 0.6) 0%, rgb(191 219 254 / 0.42) 45%, rgb(224 237 254 / 0.12) 100%);
+    border-radius: 38% 62% 58% 42% / 40% 36% 64% 60%;
+    animation: kc-role-drift-a 14s ease-in-out infinite alternate;
+  }
+  .kc-role-blob-b {
+    background: linear-gradient(200deg, rgb(219 234 254 / 0.7) 0%, rgb(191 219 254 / 0.3) 60%, rgb(239 246 255 / 0) 100%);
+    border-radius: 62% 38% 46% 54% / 44% 58% 42% 56%;
+    animation: kc-role-drift-b 16s ease-in-out infinite alternate;
+  }
+  .kc-role-blob-c {
+    background: radial-gradient(closest-side, rgb(214 230 250 / 0.75), rgb(232 241 253 / 0.4) 60%, transparent 100%);
+    border-radius: 50%;
+    animation: kc-role-drift-c 15s ease-in-out infinite alternate;
+  }
+  @keyframes kc-role-drift-a {
+    from { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+    to { transform: translate3d(3%, 4%, 0) rotate(9deg) scale(1.06); }
+  }
+  @keyframes kc-role-drift-b {
+    from { transform: translate3d(0, 0, 0) rotate(0deg) scale(1.04); }
+    to { transform: translate3d(-4%, 3%, 0) rotate(-7deg) scale(0.97); }
+  }
+  @keyframes kc-role-drift-c {
+    from { transform: translate3d(0, 0, 0) scale(1); }
+    to { transform: translate3d(-5%, -4%, 0) scale(1.08); }
+  }
+
+  /* Bottom-left waves: each layer is two identical wave tiles side by
+     side; sliding by exactly one tile (-50%) loops without a seam. */
+  .kc-role-waves {
+    -webkit-mask-image: linear-gradient(to right, #000 35%, transparent 100%);
+    mask-image: linear-gradient(to right, #000 35%, transparent 100%);
+  }
+  .kc-role-wave {
+    animation: kc-role-wave-flow 14s linear infinite;
+  }
+  .kc-role-wave-2 { animation-duration: 16s; animation-direction: reverse; }
+  .kc-role-wave-3 { animation-duration: 12s; }
+  @keyframes kc-role-wave-flow {
+    from { transform: translate3d(0, 0, 0); }
+    to { transform: translate3d(-50%, 0, 0); }
+  }
+
+  .kc-role-dots {
+    background-image: radial-gradient(rgb(148 163 184 / 0.55) 1.5px, transparent 1.6px);
+    background-size: 22px 22px;
+  }
+
+  .kc-role-card {
+    box-shadow:
+      0 1px 2px 0 rgb(15 23 42 / 0.04),
+      0 14px 34px -16px rgb(30 64 175 / 0.22);
+    transition: box-shadow 300ms ease, border-color 300ms ease;
+  }
+  .kc-role-card:hover {
+    box-shadow:
+      0 2px 4px 0 rgb(15 23 42 / 0.05),
+      0 22px 44px -16px rgb(30 64 175 / 0.32);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .kc-role-card {
+      transition: transform 300ms ease, box-shadow 300ms ease, border-color 300ms ease;
+    }
+    .kc-role-card:hover {
+      transform: translateY(-4px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .kc-role-title,
+    .kc-role-blob-a,
+    .kc-role-blob-b,
+    .kc-role-blob-c,
+    .kc-role-wave {
+      animation: none;
+    }
+  }
 }
