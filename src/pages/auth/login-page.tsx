@@ -5,6 +5,7 @@ import { AuthShell } from '@/components/auth/auth-shell'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { LoginBackground, LoginCredit } from '@/features/login-decoration/login-decoration'
 import { useAuth } from '@/lib/auth-context'
 import { dataMode } from '@/lib/data-mode'
 import { ENABLE_TEACHER_REGISTRATION, TEACHER_REGISTRATION_DISABLED_MESSAGE } from '@/lib/feature-flags'
@@ -40,6 +41,7 @@ export function LoginPage() {
     <AuthShell
       title="เข้าสู่ระบบ"
       description="สำหรับคุณครู"
+      background={<LoginBackground />}
       footer={
         <div className="space-y-1">
           {ENABLE_TEACHER_REGISTRATION ? (
@@ -58,6 +60,7 @@ export function LoginPage() {
               เข้าสู่ระบบสำหรับนักเรียน
             </Link>
           </p>
+          <LoginCredit />
         </div>
       }
     >

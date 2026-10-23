@@ -10,7 +10,7 @@ interface AuthShellProps {
   children: ReactNode
   footer?: ReactNode
   /** Optional decoration behind the content, pinned to the bottom of the
-   * page (student login only). Space is reserved below the content so the
+   * page (teacher and student login). Space is reserved below the content so the
    * form never sits on top of it. Omitted → the shell is unchanged. */
   background?: ReactNode
 }

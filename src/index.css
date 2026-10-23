@@ -398,28 +398,29 @@
   }
 
   /* ------------------------------------------------------------------
-     Student login: SlicedWaves band (features/student-login). The band
-     height uses svh so it does not jump when the iOS keyboard opens;
-     AuthShell (background prop) reserves the matching space below the form.
+     Teacher + student login: SlicedWaves band (features/login-decoration).
+     The band height uses svh so it does not jump when the iOS keyboard
+     opens; AuthShell (background prop) reserves the matching space below
+     the form.
      ------------------------------------------------------------------ */
-  .kc-student-waves {
+  .kc-login-waves {
     height: clamp(140px, 30vh, 340px);
     -webkit-mask-image: linear-gradient(to top, #000 62%, transparent 100%);
     mask-image: linear-gradient(to top, #000 62%, transparent 100%);
   }
   @supports (height: 1svh) {
-    .kc-student-waves {
+    .kc-login-waves {
       height: clamp(140px, 30svh, 340px);
     }
   }
   /* Static decoration above the waves: a soft light-blue curve in the
      upper-left corner and a pale oval peeking in from the right edge.
      Toned down in the dark theme so they stay a faint tint. */
-  .kc-student-shape-top,
-  .kc-student-shape-right {
+  .kc-login-shape-top,
+  .kc-login-shape-right {
     position: absolute;
   }
-  .kc-student-shape-top {
+  .kc-login-shape-top {
     top: -120px;
     left: -25vw;
     width: 75vw;
@@ -428,7 +429,7 @@
     background: linear-gradient(135deg, #c4e3ff 0%, #e6f3ff 65%, rgb(230 243 255 / 0) 100%);
     transform: rotate(-13deg);
   }
-  .kc-student-shape-right {
+  .kc-login-shape-right {
     top: 20%;
     right: -180px;
     width: 240px;
@@ -437,23 +438,23 @@
     background: linear-gradient(135deg, #e0efff, #f3f9ff);
   }
   @media (max-width: 600px) {
-    .kc-student-shape-top {
+    .kc-login-shape-top {
       left: -45vw;
       width: 110vw;
       height: 270px;
     }
-    .kc-student-shape-right {
+    .kc-login-shape-right {
       right: -130px;
       width: 170px;
       height: 220px;
     }
   }
-  :root[data-theme='dark'] .kc-student-shape-top,
-  :root[data-theme='dark'] .kc-student-shape-right {
+  :root[data-theme='dark'] .kc-login-shape-top,
+  :root[data-theme='dark'] .kc-login-shape-right {
     opacity: 0.1;
   }
   /* Static stand-in when WebGL2 is unavailable: soft vertical slices. */
-  .kc-student-waves-fallback {
+  .kc-login-waves-fallback {
     background: linear-gradient(90deg, rgb(69 125 116 / 0.55), rgb(6 182 212 / 0.5) 50%, rgb(91 140 255 / 0.5));
     -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 7px, transparent 7px 22px), radial-gradient(120% 90% at 50% 100%, #000 35%, transparent 75%);
     -webkit-mask-composite: source-in;

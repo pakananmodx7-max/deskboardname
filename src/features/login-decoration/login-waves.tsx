@@ -9,22 +9,22 @@ function isConstrainedDevice(): boolean {
 }
 
 /**
- * Decorative SlicedWaves band along the bottom of the student login page.
+ * Decorative SlicedWaves band along the bottom of the login pages.
  * Purely visual: aria-hidden, pointer-events none, behind the form
  * (AuthShell reserves space below the content so the form and links never
  * sit on top of the waves). Falls back to a static CSS version when WebGL2
  * is missing or the context is lost; prefers-reduced-motion renders a
  * still frame (handled inside SlicedWaves).
  */
-export function StudentLoginWaves() {
+export function LoginWaves() {
   const [fallback, setFallback] = useState(false)
   const [constrained] = useState(isConstrainedDevice)
   const dpr = Math.min(typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1, 1.5)
 
   return (
-    <div aria-hidden="true" data-testid="student-login-waves" className="kc-student-waves pointer-events-none absolute inset-x-0 bottom-0 -z-10 select-none">
+    <div aria-hidden="true" data-testid="login-waves" className="kc-login-waves pointer-events-none absolute inset-x-0 bottom-0 -z-10 select-none">
       {fallback ? (
-        <div className="kc-student-waves-fallback h-full w-full" />
+        <div className="kc-login-waves-fallback h-full w-full" />
       ) : (
         <SlicedWaves
           color1="#457d74"

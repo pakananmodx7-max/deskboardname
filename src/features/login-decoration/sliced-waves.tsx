@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react'
 /*
  * SlicedWaves — WebGL2 background from React Bits
  * (https://reactbits.dev, DavidHDev/react-bits, src/content/Backgrounds/
- * SlicedWaves). Ported to TypeScript for the student login page. The
+ * SlicedWaves). Ported to TypeScript for the login pages. The
  * shaders and the wave/ribbon maths are unchanged; additions are marked
  * "KrunameClass:":
  *   - `maxFps` caps the frame rate (mobile GPU / battery),
