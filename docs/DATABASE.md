@@ -468,7 +468,7 @@ single teacher action silently destroy academic records.
 |---|---|---|
 | `subjects.teacher_id → profiles(id)` | `on delete restrict` | Same rationale as `classrooms.teacher_id` in Phase 1 — a teacher's subjects must never disappear as a *side effect* of deleting a profile. Reassigning/archiving subjects first is an explicit, forced step. |
 | `subject_classrooms.subject_id → subjects(id)` | `on delete cascade` | If a subject were ever hard-deleted (only reachable via `service_role`, never via RLS — see above), its links should go with it rather than leaving dangling rows. |
-| `subject_classrooms.classroom_id → classrooms(id)` | `on delete cascade` | Deleting a classroom (`classrooms_delete_own` does allow this) removes just the link row — the subject and its topics are unaffected; the subject only loses that one classroom's students from its derived roster. Same pattern as `classroom_students.classroom_id` in Phase 1. |
+| `subject_classrooms.classroom_id → classrooms(id)` | `on delete cascade` | Deleting a classroom (since 0032 only through `delete_classroom_permanently` — see docs/CLASSROOM_LIFECYCLE.md) removes just the link row — the subject and its topics are unaffected; the subject only loses that one classroom's students from its derived roster. Same pattern as `classroom_students.classroom_id` in Phase 1. |
 | `topics.subject_id → subjects(id)` | `on delete cascade` | Topics have no independent existence outside their subject; if the subject were ever hard-deleted, its topics should go with it. |
 
 ## Unlink vs delete
@@ -2242,7 +2242,8 @@ redesign, no new tables):
    predicate specifically so it also holds for anything that bypasses
    RLS. It deliberately uses `pg_trigger_depth() <= 1` to distinguish a
    DIRECT delete of the column (blocked when non-empty) from the SAME
-   row being removed as a side effect of `classrooms_delete_own` (0001)
+   row being removed as a side effect of deleting the classroom
+   (`classrooms_delete_own` (0001); since 0032 `delete_classroom_permanently`)
    or `delete_subject_permanently` (0022, `SECURITY DEFINER`) deleting
    its parent classroom/subject — `ON DELETE CASCADE` referential
    actions are themselves implemented as internal triggers, so a

@@ -145,7 +145,21 @@ reset role;
 \echo '=================================================='
 set role authenticated;
 select public.set_test_user('b1b1b1b1-0000-0000-0000-000000000001');
-delete from public.classrooms where id = 'c4c4c4c4-0000-0000-0000-000000000001';
+-- Since 0032 a raw DELETE FROM classrooms is no longer allowed (the
+-- classrooms_delete_own policy is gone); the only path is archive ->
+-- delete_classroom_permanently, which deletes through the same cascade.
+do $$
+declare
+  v_id constant uuid := 'c4c4c4c4-0000-0000-0000-000000000001';
+begin
+  if to_regprocedure('public.delete_classroom_permanently(uuid,text,text)') is not null then
+    perform public.set_classroom_archived(v_id, true);
+    perform public.delete_classroom_permanently(v_id, (select name from public.classrooms where id = v_id),
+      public.get_classroom_deletion_preview(v_id)->>'fingerprint');
+  else
+    delete from public.classrooms where id = v_id;
+  end if;
+end $$;
 reset role;
 set role postgres;
 select 'B6 classroom gone (expect 0):' as label, count(*) from public.classrooms where id = 'c4c4c4c4-0000-0000-0000-000000000001';

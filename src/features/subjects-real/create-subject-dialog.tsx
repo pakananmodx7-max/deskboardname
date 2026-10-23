@@ -47,7 +47,8 @@ export function CreateSubjectDialog({ open, onOpenChange, onCreated }: CreateSub
     setClassroomsLoading(true)
     getClassrooms()
       .then((rows) => {
-        if (active) setClassrooms(rows)
+        // Archived classrooms are out of active workflows (0032).
+        if (active) setClassrooms(rows.filter((c) => c.isActive))
       })
       .catch((err: unknown) => {
         if (active) setError(toFriendlyErrorMessage(err))

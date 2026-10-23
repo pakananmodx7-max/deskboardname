@@ -57,7 +57,9 @@ export function SubjectsPageReal() {
         const rows = await Promise.all(
           subjects.map(async (subject) => ({
             subject,
-            links: await getSubjectClassroomsWithCounts(subject.id),
+            // Archived classrooms are out of active workflows (0032); they
+            // stay reachable from the classroom list's “เก็บถาวร” filter.
+            links: (await getSubjectClassroomsWithCounts(subject.id)).filter((link) => link.classroomIsActive),
           })),
         )
         setSummaries(rows)

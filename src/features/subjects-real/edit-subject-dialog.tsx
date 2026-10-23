@@ -98,14 +98,22 @@ export function EditSubjectDialog({ open, onOpenChange, subject, onSaved }: Edit
     let active = true
     setRowsLoading(true)
     Promise.all([getClassrooms(), getSubjectClassroomsWithCounts(subject.id)])
-      .then(async ([allClassrooms, linkedRows]) => {
+      .then(async ([classrooms, linkedRows]) => {
         if (!active) return
+        const linkedIds = new Set(linkedRows.map((l) => l.classroomId))
+        // Archived classrooms are out of active workflows (0032): offered
+        // only when already linked, so an existing link stays visible and
+        // can still be removed.
+        const allClassrooms = classrooms.filter((c) => c.isActive || linkedIds.has(c.id))
         const counts = await Promise.all(allClassrooms.map((c) => getStudentsByClassroom(c.id)))
         if (!active) return
         setRows(
-          allClassrooms.map((c, i) => ({ classroomId: c.id, classroomName: c.name, studentCount: counts[i].length })),
+          allClassrooms.map((c, i) => ({
+            classroomId: c.id,
+            classroomName: c.isActive ? c.name : `${c.name} (เก็บถาวร)`,
+            studentCount: counts[i].length,
+          })),
         )
-        const linkedIds = new Set(linkedRows.map((l) => l.classroomId))
         setSelectedIds(new Set(linkedIds))
         setOriginalLinkedIds(new Set(linkedIds))
       })

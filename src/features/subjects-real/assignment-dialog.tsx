@@ -139,7 +139,8 @@ export function AssignmentDialog({
         .then((subject) => setSubjectName(subject?.name ?? null))
         .catch(() => setSubjectName(null))
       getSubjectClassrooms(subjectId)
-        .then(setClassroomTargets)
+        // Archived classrooms are out of active workflows (0032).
+        .then((links) => setClassroomTargets(links.filter((link) => link.classroomIsActive)))
         .catch(() => setClassroomTargets([]))
     } else {
       setSubjectName(null)

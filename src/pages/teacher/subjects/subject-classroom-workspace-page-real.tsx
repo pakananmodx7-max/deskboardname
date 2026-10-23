@@ -244,6 +244,10 @@ export function SubjectClassroomWorkspacePageReal() {
 
   const activeClassroomId = classroomId as string
   const currentLink = links.find((link) => link.classroomId === activeClassroomId)!
+  // Archived classrooms are out of active workflows (0032): not offered in
+  // the switcher, but one opened directly (e.g. from the classroom list's
+  // “เก็บถาวร” filter) still shows its data.
+  const switchableLinks = links.filter((link) => link.classroomIsActive || link.classroomId === activeClassroomId)
 
   return (
     <div className="space-y-4">
@@ -260,7 +264,7 @@ export function SubjectClassroomWorkspacePageReal() {
           </div>
 
           <div className="flex items-center gap-2">
-            {links.length > 1 && (
+            {switchableLinks.length > 1 && (
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-muted-foreground">ห้อง:</span>
                 <NativeSelect
@@ -269,9 +273,10 @@ export function SubjectClassroomWorkspacePageReal() {
                   className="w-auto"
                   aria-label="สลับห้องเรียน"
                 >
-                  {links.map((link) => (
+                  {switchableLinks.map((link) => (
                     <option key={link.id} value={link.classroomId}>
                       {link.classroomName}
+                      {link.classroomIsActive ? '' : ' (เก็บถาวร)'}
                     </option>
                   ))}
                 </NativeSelect>

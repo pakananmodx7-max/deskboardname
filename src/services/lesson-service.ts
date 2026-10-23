@@ -610,6 +610,8 @@ export async function getLessonCopyTargets(
   subjects.forEach((subject, i) => {
     for (const link of linksBySubject[i]) {
       if (subject.id === excludeSubjectId && link.classroomId === excludeClassroomId) continue
+      // Archived classrooms are out of active workflows (0032).
+      if (!link.classroomIsActive) continue
       targets.push({
         subjectId: subject.id,
         subjectName: subject.name,

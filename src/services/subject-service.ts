@@ -33,7 +33,7 @@ interface SubjectClassroomRow {
   subject_id: string
   classroom_id: string
   created_at: string
-  classrooms: { name: string } | null
+  classrooms: { name: string; is_active?: boolean } | null
 }
 
 function mapSubject(row: SubjectRow): Subject {
@@ -57,6 +57,7 @@ function mapSubjectClassroom(row: SubjectClassroomRow): SubjectClassroom {
     subjectId: row.subject_id,
     classroomId: row.classroom_id,
     classroomName: row.classrooms?.name ?? null,
+    classroomIsActive: row.classrooms?.is_active ?? true,
     createdAt: row.created_at,
   }
 }
@@ -267,7 +268,7 @@ export async function getSubjectClassrooms(subjectId: string): Promise<SubjectCl
   const supabase = getSupabaseClient()
   const { data, error } = await supabase
     .from('subject_classrooms')
-    .select('id, subject_id, classroom_id, created_at, classrooms(name)')
+    .select('id, subject_id, classroom_id, created_at, classrooms(name, is_active)')
     .eq('subject_id', subjectId)
 
   if (error) throw error

@@ -8,10 +8,12 @@ import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
 import { CreateClassroomDialog } from '@/features/classroom-management/create-classroom-dialog'
+import { deletedToast } from '@/features/classroom-management/classroom-deletion-model'
+import { DeleteClassroomDialog } from '@/features/classroom-management/delete-classroom-dialog'
 import { EditClassroomDialog } from '@/features/classroom-management/edit-classroom-dialog'
 import { buildClassroomTabPath } from '@/features/subjects-shared/subject-classroom-nav'
-import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { classroomLifecycleErrorMessage } from '@/services/classroom-lifecycle-errors'
 import { archiveClassroom, reactivateClassroom } from '@/services/classroom-service'
 import type { Classroom } from '@/types/classroom'
 
@@ -49,6 +51,8 @@ export interface ClassroomSectionProps {
  * (CreateClassroomDialog / EditClassroomDialog), services
  * (archiveClassroom / reactivateClassroom) and routes (classroom detail,
  * its นักเรียน tab where students are moved between classrooms, รายวิชา).
+ * Archived classrooms (status filter “เก็บถาวร”) also offer
+ * "ลบห้องเรียนถาวร" — DeleteClassroomDialog, a separate guarded flow.
  */
 export function ClassroomSection({ cards, countsReady, classroomRecords, editable, scopeLabel, scopeKey, onChanged }: ClassroomSectionProps) {
   const navigate = useNavigate()
@@ -60,6 +64,7 @@ export function ClassroomSection({ cards, countsReady, classroomRecords, editabl
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<Classroom | null>(null)
   const [archiveTarget, setArchiveTarget] = useState<ClassroomCardSummary | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
 
   const grades = [...new Set((cards ?? []).map((c) => c.gradeLabel).filter((g) => g !== '-'))].sort((a, b) => a.localeCompare(b, 'th', { numeric: true }))
   const visible = cards ? filterClassroomCards(cards, { search, grade, status }) : null
@@ -69,11 +74,14 @@ export function ClassroomSection({ cards, countsReady, classroomRecords, editabl
     if (!archiveTarget) return
     try {
       const updated = archiveTarget.classroom.isActive ? await archiveClassroom(archiveTarget.classroom.id) : await reactivateClassroom(archiveTarget.classroom.id)
-      toast(updated.isActive ? 'เปิดใช้งานห้องเรียนอีกครั้งแล้ว' : 'เก็บถาวรห้องเรียนแล้ว')
+      toast(updated.isActive ? `กู้คืนห้อง "${updated.name}" แล้ว` : `เก็บถาวรห้อง "${updated.name}" แล้ว — ดูได้จากตัวกรอง “เก็บถาวร”`)
       setArchiveTarget(null)
       onChanged()
     } catch (err) {
-      toast(toFriendlyErrorMessage(err))
+      toast(classroomLifecycleErrorMessage(err))
+      // Already archived/restored elsewhere: refresh so the card shows the real state.
+      setArchiveTarget(null)
+      onChanged()
     }
   }
 
@@ -87,8 +95,11 @@ export function ClassroomSection({ cards, countsReady, classroomRecords, editabl
         ? [
             { key: 'edit', label: 'แก้ไขห้องเรียน', onSelect: () => setEditing(record), separatorBefore: true },
             card.classroom.isActive
-              ? { key: 'archive', label: 'เก็บถาวร', onSelect: () => setArchiveTarget(card), destructive: true }
+              ? { key: 'archive', label: 'เก็บถาวร / นำออกจากรายการห้องเรียน', onSelect: () => setArchiveTarget(card) }
               : { key: 'restore', label: 'กู้คืนห้องเรียน', onSelect: () => setArchiveTarget(card) },
+            ...(card.classroom.isActive
+              ? []
+              : [{ key: 'delete', label: 'ลบห้องเรียนถาวร', onSelect: () => setDeleteTarget({ id: card.classroom.id, name: card.classroom.name }), destructive: true, separatorBefore: true }]),
           ]
         : []),
     ]
@@ -278,21 +289,34 @@ export function ClassroomSection({ cards, countsReady, classroomRecords, editabl
             onOpenChange={(next) => {
               if (!next) setArchiveTarget(null)
             }}
-            title={archiveTarget?.classroom.isActive ? 'เก็บถาวรห้องเรียน?' : 'กู้คืนห้องเรียน?'}
-            description={
-              archiveTarget?.classroom.isActive
-                ? `ห้อง "${archiveTarget.classroom.name}" จะถูกเก็บถาวร ข้อมูลนักเรียน การเช็คชื่อ และคะแนนยังอยู่ครบ กู้คืนได้ภายหลัง`
-                : `ห้อง "${archiveTarget?.classroom.name ?? ''}" จะกลับมาใช้งานได้อีกครั้ง`
-            }
-            confirmLabel={archiveTarget?.classroom.isActive ? 'เก็บถาวร' : 'กู้คืน'}
-            destructive={archiveTarget?.classroom.isActive}
+            title={archiveTarget?.classroom.isActive ? `เก็บถาวรห้อง "${archiveTarget.classroom.name}"?` : `กู้คืนห้อง "${archiveTarget?.classroom.name ?? ''}"?`}
+            description={archiveTarget?.classroom.isActive ? archiveDescription : restoreDescription}
+            confirmLabel={archiveTarget?.classroom.isActive ? 'เก็บถาวร' : 'กู้คืนห้องเรียน'}
             onConfirm={confirmArchiveToggle}
+          />
+          <DeleteClassroomDialog
+            classroom={deleteTarget}
+            onOpenChange={(next) => {
+              if (!next) setDeleteTarget(null)
+            }}
+            onDeleted={(result, name) => {
+              setDeleteTarget(null)
+              toast(deletedToast(name, result.queuedFiles))
+              onChanged()
+            }}
           />
         </>
       )}
     </section>
   )
 }
+
+const archiveDescription =
+  'ห้องนี้จะถูกนำออกจากรายการห้องเรียนที่กำลังสอน และจะไม่ปรากฏในการเช็คชื่อ มอบหมายงาน หรือเลือกห้องอื่น ๆ\n' +
+  'ไม่มีข้อมูลใดถูกลบ — นักเรียน การเช็คชื่อ งาน การส่งงาน คะแนน และ QR ประจำตัวยังอยู่ครบ\n' +
+  'ดูห้องที่เก็บถาวรได้จากตัวกรอง “เก็บถาวร” และกู้คืนได้ทุกเมื่อ'
+
+const restoreDescription = 'ห้องนี้จะกลับมาอยู่ในรายการห้องเรียนที่กำลังสอน พร้อมข้อมูลเดิมทั้งหมด'
 
 function StatusBadge({ active }: { active: boolean }) {
   return (

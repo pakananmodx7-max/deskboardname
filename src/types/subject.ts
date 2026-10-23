@@ -19,6 +19,8 @@ export interface SubjectClassroom {
   subjectId: string
   classroomId: string
   classroomName: string | null
+  /** False when the classroom is archived (เก็บถาวร) — kept out of active workflows. */
+  classroomIsActive: boolean
   createdAt: string
 }
 

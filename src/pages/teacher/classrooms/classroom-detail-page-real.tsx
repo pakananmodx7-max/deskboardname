@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
 import { CLASSROOM_LIST_PATH, ClassroomBreadcrumb } from '@/features/classroom-management/classroom-breadcrumb'
+import { deletedToast } from '@/features/classroom-management/classroom-deletion-model'
+import { DeleteClassroomDialog } from '@/features/classroom-management/delete-classroom-dialog'
 import { EditClassroomDialog } from '@/features/classroom-management/edit-classroom-dialog'
 import { ClassroomOverviewTab } from '@/features/classroom-management/tabs/classroom-overview-tab'
 import { ClassroomStudentsTab } from '@/features/classroom-management/tabs/classroom-students-tab'
@@ -16,6 +19,7 @@ import { GradesTab } from '@/features/subjects-real/tabs/grades-tab'
 import { toFriendlyErrorMessage } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useActiveTabInView } from '@/lib/use-active-tab-in-view'
+import { classroomLifecycleErrorMessage } from '@/services/classroom-lifecycle-errors'
 import { archiveClassroom, getClassroomById, reactivateClassroom } from '@/services/classroom-service'
 import { getStudentsByClassroom } from '@/services/student-service'
 import { getClassroomSubjects } from '@/services/subject-service'
@@ -65,6 +69,7 @@ function isTabKey(value: string | null): value is TabKey {
 export function ClassroomDetailPageReal() {
   const { classroomId } = useParams<{ classroomId: string }>()
   const { toast } = useToast()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   // Lets the Dashboard Control Center's "ดูนักเรียน" follow-up link open
   // straight to the นักเรียน tab via ?tab=students instead of always
@@ -78,7 +83,8 @@ export function ClassroomDetailPageReal() {
   const [studentCount, setStudentCount] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [editOpen, setEditOpen] = useState(false)
-  const [archiving, setArchiving] = useState(false)
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   const [linkedSubjects, setLinkedSubjects] = useState<Subject[]>([])
   const [subjectsLoading, setSubjectsLoading] = useState(true)
@@ -156,17 +162,20 @@ export function ClassroomDetailPageReal() {
   const selectedSubject = linkedSubjects.find((s) => s.id === selectedSubjectId) ?? null
 
   async function handleToggleArchive() {
-    setArchiving(true)
     try {
       const updated = currentClassroom.isActive
         ? await archiveClassroom(currentClassroom.id)
         : await reactivateClassroom(currentClassroom.id)
       setClassroom(updated)
-      toast(updated.isActive ? 'เปิดใช้งานห้องเรียนอีกครั้งแล้ว' : 'เก็บถาวรห้องเรียนแล้ว')
+      setArchiveConfirmOpen(false)
+      toast(updated.isActive ? `กู้คืนห้อง "${updated.name}" แล้ว` : `เก็บถาวรห้อง "${updated.name}" แล้ว`)
     } catch (err) {
-      toast(toFriendlyErrorMessage(err))
-    } finally {
-      setArchiving(false)
+      toast(classroomLifecycleErrorMessage(err))
+      setArchiveConfirmOpen(false)
+      // Archived/restored/deleted elsewhere meanwhile: show the real state.
+      getClassroomById(currentClassroom.id)
+        .then((row) => setClassroom(row))
+        .catch(() => {})
     }
   }
 
@@ -211,6 +220,11 @@ export function ClassroomDetailPageReal() {
             <h1 className="text-xl font-bold tracking-tight text-foreground">{classroom.name}</h1>
             {!classroom.isActive && <Badge variant="outline">เก็บถาวร</Badge>}
           </div>
+          {!classroom.isActive && (
+            <p className="mt-1 rounded-lg bg-muted px-3 py-1.5 text-xs text-muted-foreground" role="note">
+              ห้องนี้ถูกเก็บถาวร — ไม่อยู่ในรายการห้องที่กำลังสอน ข้อมูลทั้งหมดยังอยู่ครบ กด “กู้คืนห้องเรียน” เพื่อใช้งานตามปกติ
+            </p>
+          )}
           <p className="mt-1 text-sm text-muted-foreground">
             {[
               classroom.gradeLevel,
@@ -227,9 +241,14 @@ export function ClassroomDetailPageReal() {
           <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
             แก้ไข
           </Button>
-          <Button variant="outline" size="sm" onClick={handleToggleArchive} disabled={archiving}>
-            {classroom.isActive ? 'เก็บถาวร' : 'เปิดใช้งานอีกครั้ง'}
+          <Button variant="outline" size="sm" onClick={() => setArchiveConfirmOpen(true)}>
+            {classroom.isActive ? 'เก็บถาวร' : 'กู้คืนห้องเรียน'}
           </Button>
+          {!classroom.isActive && (
+            <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
+              ลบห้องเรียนถาวร
+            </Button>
+          )}
         </div>
 
         {/* Scope row — only appears when a choice actually exists (more
@@ -282,6 +301,27 @@ export function ClassroomDetailPageReal() {
       </div>
 
       <EditClassroomDialog open={editOpen} onOpenChange={setEditOpen} classroom={classroom} onUpdated={setClassroom} />
+      <ConfirmDialog
+        open={archiveConfirmOpen}
+        onOpenChange={setArchiveConfirmOpen}
+        title={classroom.isActive ? `เก็บถาวรห้อง "${classroom.name}"?` : `กู้คืนห้อง "${classroom.name}"?`}
+        description={
+          classroom.isActive
+            ? 'ห้องนี้จะถูกนำออกจากรายการห้องเรียนที่กำลังสอน และจะไม่ปรากฏในการเช็คชื่อ มอบหมายงาน หรือเลือกห้องอื่น ๆ\nไม่มีข้อมูลใดถูกลบ — นักเรียน การเช็คชื่อ งาน การส่งงาน คะแนน และ QR ประจำตัวยังอยู่ครบ กู้คืนได้ทุกเมื่อ'
+            : 'ห้องนี้จะกลับมาอยู่ในรายการห้องเรียนที่กำลังสอน พร้อมข้อมูลเดิมทั้งหมด'
+        }
+        confirmLabel={classroom.isActive ? 'เก็บถาวร' : 'กู้คืนห้องเรียน'}
+        onConfirm={handleToggleArchive}
+      />
+      <DeleteClassroomDialog
+        classroom={deleteOpen ? { id: classroom.id, name: classroom.name } : null}
+        onOpenChange={setDeleteOpen}
+        onDeleted={(result, name) => {
+          setDeleteOpen(false)
+          toast(deletedToast(name, result.queuedFiles))
+          navigate(CLASSROOM_LIST_PATH, { replace: true })
+        }}
+      />
     </div>
   )
 }

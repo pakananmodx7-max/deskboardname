@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '@/lib/supabase'
+import { isLifecycleRpcMissing, toClassroomLifecycleError } from '@/services/classroom-lifecycle-errors'
 import type { Classroom, CreateClassroomInput, UpdateClassroomInput } from '@/types/classroom'
 
 export interface ClassroomRow {
@@ -12,6 +13,8 @@ export interface ClassroomRow {
   is_active: boolean
   created_at: string
   updated_at: string
+  /** 0032; absent before that migration. */
+  archived_at?: string | null
 }
 
 export function mapClassroom(row: ClassroomRow): Classroom {
@@ -24,6 +27,7 @@ export function mapClassroom(row: ClassroomRow): Classroom {
     academicYear: row.academic_year,
     semester: row.semester,
     isActive: row.is_active,
+    archivedAt: row.archived_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -119,16 +123,34 @@ export async function updateClassroom(classroomId: string, input: UpdateClassroo
 }
 
 /**
- * Classrooms are never hard-deleted through the app — there is no
- * DELETE-through-the-UI path here, matching `students`/`subjects`
- * (deliberately no destructive default). Archiving just flips
- * `is_active` to false; everything the classroom still references
- * (students, subject links) stays intact.
+ * Archiving just flips `is_active` to false; everything the classroom
+ * references (students, attendance, grades, subject links) stays intact.
+ * Goes through set_classroom_archived (0032), which checks ownership on
+ * the server, refuses a duplicate archive/restore (KC005/KC006) and
+ * writes the audit row. Until 0032 is installed the RPC does not exist,
+ * so the previous plain update (classrooms_update_own) is used instead.
+ * Permanent deletion is a separate, explicit flow:
+ * classroom-lifecycle-service.ts.
  */
+async function setClassroomArchived(classroomId: string, archived: boolean): Promise<Classroom> {
+  const supabase = getSupabaseClient()
+  let response
+  try {
+    response = await supabase.rpc('set_classroom_archived', { p_classroom_id: classroomId, p_archived: archived })
+  } catch (err) {
+    throw toClassroomLifecycleError(err)
+  }
+  if (response.error) {
+    if (isLifecycleRpcMissing(response.error)) return updateClassroom(classroomId, { isActive: !archived })
+    throw toClassroomLifecycleError(response.error)
+  }
+  return mapClassroom(response.data as ClassroomRow)
+}
+
 export async function archiveClassroom(classroomId: string): Promise<Classroom> {
-  return updateClassroom(classroomId, { isActive: false })
+  return setClassroomArchived(classroomId, true)
 }
 
 export async function reactivateClassroom(classroomId: string): Promise<Classroom> {
-  return updateClassroom(classroomId, { isActive: true })
+  return setClassroomArchived(classroomId, false)
 }

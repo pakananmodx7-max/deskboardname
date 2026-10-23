@@ -77,12 +77,13 @@ export function ClassroomStudentsTab({ classroom }: ClassroomStudentsTabProps) {
 
   useEffect(() => {
     getClassrooms()
-      .then(setAllClassrooms)
+      // Archived classrooms are not move targets (0032).
+      .then((rows) => setAllClassrooms(rows.filter((c) => c.isActive || c.id === classroom.id)))
       .catch(() => {
         // Move-classroom just won't offer targets if this fails; the rest
         // of the tab still works.
       })
-  }, [])
+  }, [classroom.id])
 
   const allSelected = students.length > 0 && selectedIds.length === students.length
 

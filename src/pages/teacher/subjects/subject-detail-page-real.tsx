@@ -43,7 +43,8 @@ export function SubjectDetailPageReal() {
         setSubject(row)
         if (!row) return
         const linkRows = await getSubjectClassroomsWithCounts(row.id)
-        setLinks(linkRows)
+        // Archived classrooms are out of active workflows (0032).
+        setLinks(linkRows.filter((link) => link.classroomIsActive))
       })
       .catch((err: unknown) => setError(toFriendlyErrorMessage(err)))
       .finally(() => setLoading(false))

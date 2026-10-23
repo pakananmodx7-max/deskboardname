@@ -7,6 +7,8 @@ export interface Classroom {
   academicYear: string | null
   semester: string | null
   isActive: boolean
+  /** When it was archived (null while active, or archived before 0032). */
+  archivedAt?: string | null
   createdAt: string
   updatedAt: string
 }

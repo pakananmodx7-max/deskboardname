@@ -112,7 +112,7 @@ describe('subject-classroom-workspace-page-real.tsx — navigation simplificatio
   })
 
   it('has a "รายชื่อนักเรียน" action button next to the ห้อง selector that switches to the students tab via the SAME handleTabClick used by every pill (so ?tab=students still syncs to the URL)', () => {
-    const headerBlock = source.slice(source.indexOf('links.length > 1 &&'), source.indexOf('{PILL_TABS.map((tab) =>'))
+    const headerBlock = source.slice(source.indexOf('switchableLinks.length > 1 &&'), source.indexOf('{PILL_TABS.map((tab) =>'))
     expect(headerBlock).toContain('รายชื่อนักเรียน')
     expect(headerBlock).toContain("onClick={() => handleTabClick('students')}")
   })

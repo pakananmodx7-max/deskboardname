@@ -27,7 +27,10 @@ export function StudentsPageReal() {
     setLoading(true)
     setError(null)
     return getClassrooms()
-      .then((rows) => {
+      // Archived classrooms are out of active workflows (0032); their
+      // students stay reachable from the archived classroom's own page.
+      .then((all) => {
+        const rows = all.filter((c) => c.isActive)
         setClassrooms(rows)
         setSelectedClassroomId((prev) => (prev && rows.some((c) => c.id === prev) ? prev : (rows[0]?.id ?? null)))
       })
