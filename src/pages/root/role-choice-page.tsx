@@ -1,6 +1,7 @@
 import { ArrowRight, GraduationCap, School, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
+import { DeveloperCredit } from '@/components/layout/developer-credit'
 import { cn } from '@/lib/utils'
 
 /**
@@ -108,16 +109,6 @@ function RoleCard({ to, title, subtitle, icon: Icon, tone }: RoleCardProps) {
         <ArrowRight className="size-5 sm:size-6" />
       </span>
     </Link>
-  )
-}
-
-function DeveloperCredit({ className }: { className?: string }) {
-  return (
-    <p className={cn('text-xs leading-relaxed text-slate-400', className)}>
-      <span className="block">Developed by</span>
-      <span className="block font-medium text-slate-500">Pakanan Modbut</span>
-      <span className="block">© 2026 Class N</span>
-    </p>
   )
 }
 

@@ -2,9 +2,11 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import { AuthShell } from '@/components/auth/auth-shell'
+import { DeveloperCredit } from '@/components/layout/developer-credit'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { StudentLoginShapes } from '@/features/student-login/student-login-shapes'
 import { StudentLoginWaves } from '@/features/student-login/student-login-waves'
 import { useAuth } from '@/lib/auth-context'
 import { toFriendlyErrorMessage } from '@/lib/errors'
@@ -55,7 +57,12 @@ export function StudentLoginPage() {
     <AuthShell
       title="เข้าสู่ระบบ"
       description="สำหรับนักเรียน"
-      background={<StudentLoginWaves />}
+      background={
+        <>
+          <StudentLoginShapes />
+          <StudentLoginWaves />
+        </>
+      }
       footer={
         <div className="space-y-1">
           <p>
@@ -70,6 +77,10 @@ export function StudentLoginPage() {
               เข้าสู่ระบบสำหรับคุณครู
             </Link>
           </p>
+          {/* Absolute against AuthShell's root (relative when a background is
+              set): bottom-right inside the space reserved below the form,
+              kept after the links in reading order. */}
+          <DeveloperCredit className="absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-[max(1.25rem,env(safe-area-inset-right))] z-10 text-right" />
         </div>
       }
     >
