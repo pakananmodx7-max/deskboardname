@@ -15,7 +15,7 @@ export const UNSAVED_ATTENDANCE_MESSAGE = 'การเช็คชื่อท�
  * Switching subject tabs or the date/คาบ is guarded by the callers
  * themselves (those don't change the pathname).
  */
-export function UnsavedChangesGuard({ when }: { when: boolean }) {
+export function UnsavedChangesGuard({ when, description = UNSAVED_ATTENDANCE_MESSAGE }: { when: boolean; description?: string }) {
   const blocker = useBlocker(({ currentLocation, nextLocation }) => when && currentLocation.pathname !== nextLocation.pathname)
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export function UnsavedChangesGuard({ when }: { when: boolean }) {
         if (!open && blocker.state === 'blocked') blocker.reset()
       }}
       title="ออกโดยไม่บันทึก?"
-      description={UNSAVED_ATTENDANCE_MESSAGE}
+      description={description}
       confirmLabel="ออกโดยไม่บันทึก"
       onConfirm={() => {
         if (blocker.state === 'blocked') blocker.proceed()

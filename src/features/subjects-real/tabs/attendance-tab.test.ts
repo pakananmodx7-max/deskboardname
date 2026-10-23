@@ -14,55 +14,31 @@ describe('AttendanceTab — no fake local-only success, no demo fallback (Produc
     expect(source).not.toMatch(/from ['"]@\/demo\//)
   })
 
-  it('save only succeeds after saveAttendance (the Supabase RPC call) resolves — setSaveState(\'saved\') is inside the try block, after the await', () => {
-    const fn = source.slice(source.indexOf('async function handleSave'), source.indexOf('useEffect(() => {\n    return () => {'))
-    expect(fn).toMatch(/await saveAttendance\([\s\S]*setSaveState\('saved'\)/)
-  })
-
-  it('on a failed save, the roster records are left completely untouched — no setRecords/setStudents call in the catch block', () => {
-    const fn = source.slice(source.indexOf('async function handleSave'), source.indexOf('useEffect(() => {\n    return () => {'))
-    const catchBlock = fn.slice(fn.indexOf('catch (err)'))
-    expect(catchBlock).not.toMatch(/setRecords|setStudents/)
-    expect(catchBlock).toContain("setSaveState('error')")
+  it('success is only shown after the server confirms: the auto-save engine marks a change saved in the RPC promise\'s success handler', () => {
+    const engine = readFileSync(new URL('../../attendance/attendance-autosave.ts', import.meta.url), 'utf-8')
+    const flush = engine.slice(engine.indexOf('private flush()'), engine.indexOf('private finishRequest()'))
+    expect(flush).toMatch(/this\.opts\.save\(records\)\.then\(\s*\(\) => \{[\s\S]*this\.everSaved = true/)
+    const failure = flush.slice(flush.indexOf('(err: unknown) =>'))
+    expect(failure).not.toMatch(/this\.desired =|this\.confirmed =/)
   })
 })
 
-describe('AttendanceTab — three-state save indicator (Production Bug fix, Section 6)', () => {
+describe('AttendanceTab — auto-save states', () => {
   const source = readSource()
+  const board = readFileSync(new URL('../../attendance/attendance-board.tsx', import.meta.url), 'utf-8')
 
-  it('shows all three required states: กำลังบันทึก.../บันทึกแล้ว/บันทึกไม่สำเร็จ', () => {
-    expect(source).toContain('กำลังบันทึก...')
-    expect(source).toContain('บันทึกแล้ว')
-    expect(source).toContain('บันทึกไม่สำเร็จ')
+  it('shows all three required states: กำลังบันทึก.../บันทึกแล้ว/บันทึกไม่สำเร็จ — ลองอีกครั้ง', () => {
+    expect(board).toContain('กำลังบันทึก...')
+    expect(board).toContain('บันทึกแล้ว')
+    expect(board).toContain('บันทึกไม่สำเร็จ — ลองอีกครั้ง')
   })
 
-  it('the save button disables while saving, preventing a duplicate concurrent save', () => {
-    expect(source).toContain("disabled={saveState === 'saving'")
-  })
-})
-
-describe('AttendanceTab — saved-session race fix (Production Bug fix, Section 5)', () => {
-  const source = readSource()
-
-  it('tracks which students the teacher has already edited since the current load started', () => {
-    expect(source).toContain('editedIdsRef')
-    expect(source).toMatch(/editedIdsRef\.current = new Set\(\)/)
+  it('no save button and no toast after a successful save', () => {
+    expect(source).not.toContain('บันทึกการเช็คชื่อเรียบร้อยแล้ว')
+    expect(source).not.toContain('onSave=')
   })
 
-  it('every board edit (status, note, bulk action) records the touched student ids as edited before updating local state', () => {
-    const changeFn = source.slice(source.indexOf('function handleBoardChange'), source.indexOf('function requestSelection'))
-    expect(changeFn).toContain('for (const id of touchedIds) editedIdsRef.current.add(id)')
-    expect(changeFn.indexOf('editedIdsRef.current.add')).toBeLessThan(changeFn.indexOf('setEntries(next)'))
-  })
-
-  it('the delayed saved-session fetch merges through mergeLoadedAttendance instead of blindly replacing records — this is the actual race fix', () => {
-    expect(source).toContain('mergeLoadedEntries(prev, loaded, editedIdsRef.current)')
-    // The old, buggy shape directly replaced records with no merge step —
-    // guard against ever regressing back to it.
-    expect(source).not.toMatch(/setRecords\(buildRecordsForRoster\(activeIds, attendance\)\)/)
-  })
-
-  it('the roster fetch and the attendance-session fetch remain two independent requests (not Promise.all) — the pre-existing "0 students" fix must not regress', () => {
+  it('the roster fetch and the attendance-session fetch remain two independent requests (not Promise.all)', () => {
     expect(source).not.toMatch(/Promise\.all\(\[getStudentsByClassroom/)
   })
 })
@@ -72,7 +48,7 @@ describe('AttendanceTab — real classroom+subject scoping (Section 8/9)', () =>
 
   it('always sends subject.id and the current classroom to both the read and the write path', () => {
     expect(source).toContain('getAttendance(classroomId, date, subject.id, periodNumber)')
-    expect(source).toContain('saveAttendance(classroomId, date, recordsToSave, subject.id, periodNumber)')
+    expect(source).toContain('saveAttendance(classroomId, date, records, subject.id, periodNumber)')
   })
 })
 

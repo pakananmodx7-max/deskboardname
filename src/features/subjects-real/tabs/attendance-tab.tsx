@@ -1,5 +1,5 @@
-import { CalendarDays, Download, RotateCw, Save } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { CalendarDays, Download, RotateCw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -7,15 +7,9 @@ import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/select'
 import { useToast } from '@/components/ui/toast'
 import { AttendanceBoard } from '@/features/attendance/attendance-board'
-import {
-  changedStudentIds,
-  countUnchecked,
-  decodeRecords,
-  mergeLoadedEntries,
-  recordsToSave as buildRecordsToSave,
-  type BoardEntries,
-} from '@/features/attendance/attendance-board-model'
+import { decodeRecords, type BoardEntries } from '@/features/attendance/attendance-board-model'
 import { UnsavedChangesGuard } from '@/features/attendance/unsaved-changes-guard'
+import { useAttendanceAutoSave } from '@/features/attendance/use-attendance-autosave'
 import { buildClassroomAttendanceExportTable } from '@/features/subjects-real/classroom-export-builders'
 import { downloadCsv } from '@/lib/export/csv-export'
 import { toFriendlyErrorMessage } from '@/lib/errors'
@@ -34,14 +28,14 @@ interface AttendanceTabProps {
   onDirtyChange?: (dirty: boolean) => void
 }
 
-type SaveState = 'idle' | 'saving' | 'saved' | 'error'
-
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
 /** คาบ choices; a saved session for a higher period is still offered. */
 const PERIOD_OPTIONS = Array.from({ length: 12 }, (_, i) => String(i + 1))
+
+const UNSAVED_AUTOSAVE_MESSAGE = 'การเช็คชื่อบางรายการยังบันทึกไม่เสร็จหรือบันทึกไม่สำเร็จ หากออกจากหน้านี้ตอนนี้ รายการเหล่านั้นอาจไม่ถูกบันทึก'
 
 /**
  * Real, Supabase-backed subject attendance (subject → classroom → เช็คชื่อ).
@@ -50,22 +44,21 @@ const PERIOD_OPTIONS = Array.from({ length: 12 }, (_, i) => String(i + 1))
  * saved session from getAttendance(classroomId, date, subject.id, period),
  * and writes through the save_attendance_session RPC (saveAttendance),
  * which checks teacher ownership of the classroom and subject. RLS and
- * permissions are unchanged.
+ * permissions are unchanged; no migration.
  *
- * What changed:
- *   - Students start UNCHECKED (no record), never silently "มา". Only
- *     students the teacher actually marked are saved. Unchanged saved
- *     records are not re-sent, so history is never rewritten.
- *   - Edits stay local until "บันทึกการเช็คชื่อ"; changed cards are
- *     highlighted and leaving with unsaved edits asks first.
+ * Auto-save (useAttendanceAutoSave / attendance-autosave.ts): every
+ * status, note or bulk change is shown at once and saved automatically —
+ * batched, one request at a time, latest click wins, failures kept on
+ * screen with a retry. There is no save button.
+ *   - Students start UNCHECKED (no record); only marked students are
+ *     saved, and only changed ones are sent, so history is never rewritten.
+ *   - Changing date/คาบ first finishes pending saves; if a save failed the
+ *     teacher is asked before anything is dropped. Leaving the page or a
+ *     PWA update with unsaved writes asks first (UnsavedChangesGuard).
  *   - If the saved session fails to load, editing is blocked (with retry):
  *     saving over records the teacher cannot see could overwrite them.
  *   - ลาป่วย is stored as status 'leave' with a "[ลาป่วย]" note prefix
  *     (see attendance-board-model.ts); no schema change.
- *
- * Dashboard analytics read attendance fresh whenever the dashboard is
- * opened (its loaders live in the page, not in a long-lived cache), so a
- * save here shows up there on the next visit.
  */
 export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChange }: AttendanceTabProps) {
   const { toast } = useToast()
@@ -75,26 +68,34 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
   const [students, setStudents] = useState<ClassroomStudent[]>([])
   /** Saved rows as loaded/saved (keeps archived students who have one). */
   const [savedRecords, setSavedRecords] = useState<Record<string, AttendanceRecord>>({})
-  const [baseline, setBaseline] = useState<BoardEntries>({})
-  const [entries, setEntries] = useState<BoardEntries>({})
   const [rosterLoading, setRosterLoading] = useState(true)
   const [attendanceLoading, setAttendanceLoading] = useState(true)
   const [rosterError, setRosterError] = useState<string | null>(null)
   const [attendanceError, setAttendanceError] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
-  const [saveState, setSaveState] = useState<SaveState>('idle')
   const [exporting, setExporting] = useState(false)
+  /** A date/คาบ change waiting on a failed save: ask before dropping it. */
   const [pendingSelection, setPendingSelection] = useState<{ date: string; periodInput: string } | null>(null)
-  const saveStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** Synchronous duplicate-submit guard (state updates are async). */
-  const savingRef = useRef(false)
-
-  /** Student ids the teacher has edited since the current load started —
-   * the delayed saved-session fetch never overwrites them (see
-   * mergeLoadedAttendance in attendance-service.ts for the race). */
-  const editedIdsRef = useRef<Set<string>>(new Set())
+  const [switching, setSwitching] = useState(false)
 
   const { value: periodNumber, invalid: periodInvalid } = parsePeriodNumber(periodInput)
+  const sessionKey = `${classroomId}|${subject.id}|${date}|${periodNumber ?? ''}`
+
+  const autosave = useAttendanceAutoSave(
+    sessionKey,
+    (records) => saveAttendance(classroomId, date, records, subject.id, periodNumber).then(() => undefined),
+    {
+      onSaved: (records) => {
+        setSavedRecords((prev) => {
+          const next = { ...prev }
+          for (const record of records) next[record.studentId] = record
+          return next
+        })
+      },
+      errorMessage: (err) => toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกการเช็คชื่อได้'),
+    },
+  )
+  const { reset: resetAutosave } = autosave
 
   // The roster fetch and the attendance-session fetch stay two independent
   // requests (not Promise.all): the roster must render even if the
@@ -103,15 +104,11 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
     if (periodInvalid) return
 
     let cancelled = false
-    editedIdsRef.current = new Set()
     setRosterLoading(true)
     setAttendanceLoading(true)
     setRosterError(null)
     setAttendanceError(null)
-    setSaveState('idle')
     setSavedRecords({})
-    setBaseline({})
-    setEntries({})
 
     getStudentsByClassroom(classroomId)
       .then((classroomStudents) => {
@@ -123,10 +120,9 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
           .then((attendance) => {
             if (cancelled) return
             const ids = deriveAttendanceRoster(classroomStudents, attendance.records).map((s) => s.id)
-            const loaded = decodeRecords(ids, attendance.records)
             setSavedRecords(attendance.records)
-            setBaseline(loaded)
-            setEntries((prev) => mergeLoadedEntries(prev, loaded, editedIdsRef.current))
+            // Editing is disabled while loading, so nothing local is lost here.
+            resetAutosave(ids, decodeRecords(ids, attendance.records))
             setAttendanceLoading(false)
           })
           .catch((err: unknown) => {
@@ -151,78 +147,40 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
     // periodNumber is derived from periodInput every render; depending on
     // periodInput (+ the guard above) is equivalent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classroomId, date, periodInput, subject.id, reloadToken])
+  }, [classroomId, date, periodInput, subject.id, reloadToken, resetAutosave])
 
   const roster = useMemo(
     () => deriveAttendanceRoster(students, savedRecords).sort((a, b) => (a.number ?? Number.MAX_SAFE_INTEGER) - (b.number ?? Number.MAX_SAFE_INTEGER)),
     [students, savedRecords],
   )
-  const rosterIds = roster.map((s) => s.id)
-  const changedCount = changedStudentIds(rosterIds, entries, baseline).length
-  const dirty = changedCount > 0
+  const dirty = autosave.hasUnsaved
 
   useEffect(() => {
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
 
-  function handleBoardChange(next: BoardEntries, touchedIds: string[]) {
-    for (const id of touchedIds) editedIdsRef.current.add(id)
-    setEntries(next)
-    if (saveState !== 'saving') setSaveState('idle')
+  function handleBoardChange(next: BoardEntries) {
+    autosave.update(next)
   }
 
-  /** Date/คาบ changes reload the session — ask first if edits would be lost. */
-  function requestSelection(next: { date: string; periodInput: string }) {
-    if (dirty) {
-      setPendingSelection(next)
+  /** Date/คาบ changes load another session: finish saving this one first. */
+  async function requestSelection(next: { date: string; periodInput: string }) {
+    if (!autosave.hasUnsaved) {
+      setDate(next.date)
+      setPeriodInput(next.periodInput)
       return
     }
-    setDate(next.date)
-    setPeriodInput(next.periodInput)
-  }
-
-  async function handleSave() {
-    if (savingRef.current || periodInvalid || attendanceError || rosterLoading || attendanceLoading) return
-    const recordsToSave = buildRecordsToSave(rosterIds, entries, baseline)
-    if (recordsToSave.length === 0) return
-    const snapshot = entries
-    const savedIds = recordsToSave.map((r) => r.studentId)
-    const uncheckedLeft = countUnchecked(snapshot, rosterIds)
-
-    savingRef.current = true
-    if (saveStateTimerRef.current) clearTimeout(saveStateTimerRef.current)
-    setSaveState('saving')
-    try {
-      await saveAttendance(classroomId, date, recordsToSave, subject.id, periodNumber)
-      setBaseline((prev) => {
-        const next = { ...prev }
-        for (const id of savedIds) next[id] = snapshot[id]
-        return next
-      })
-      setSavedRecords((prev) => {
-        const next = { ...prev }
-        for (const record of recordsToSave) next[record.studentId] = record
-        return next
-      })
-      setSaveState('saved')
-      toast(`บันทึกการเช็คชื่อเรียบร้อยแล้ว (${recordsToSave.length} คน)${uncheckedLeft > 0 ? ` · ยังไม่เช็ค ${uncheckedLeft} คน (ไม่ถูกบันทึก)` : ''}`)
-      saveStateTimerRef.current = setTimeout(() => setSaveState('idle'), 2500)
-    } catch (err) {
-      // `entries` is deliberately left untouched — every unsaved mark and
-      // note stays on screen and can be saved again.
-      setSaveState('error')
-      toast(toFriendlyErrorMessage(err, 'ไม่สามารถบันทึกการเช็คชื่อได้'))
-    } finally {
-      savingRef.current = false
+    setSwitching(true)
+    const saved = await autosave.flushNow()
+    setSwitching(false)
+    if (saved) {
+      setDate(next.date)
+      setPeriodInput(next.periodInput)
+    } else {
+      setPendingSelection(next)
     }
   }
-
-  useEffect(() => {
-    return () => {
-      if (saveStateTimerRef.current) clearTimeout(saveStateTimerRef.current)
-    }
-  }, [])
 
   /**
    * Exports EVERY saved attendance record for this subject+classroom
@@ -247,7 +205,7 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
 
   return (
     <div className="space-y-4">
-      <UnsavedChangesGuard when={dirty} />
+      <UnsavedChangesGuard when={dirty} description={UNSAVED_AUTOSAVE_MESSAGE} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -256,14 +214,16 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
             <Input
               type="date"
               value={date}
-              onChange={(e) => e.target.value && requestSelection({ date: e.target.value, periodInput })}
+              onChange={(e) => e.target.value && void requestSelection({ date: e.target.value, periodInput })}
+              disabled={switching}
               className="w-auto pl-9"
               aria-label="วันที่เช็คชื่อ"
             />
           </div>
           <NativeSelect
             value={periodInput}
-            onChange={(e) => requestSelection({ date, periodInput: e.target.value })}
+            onChange={(e) => void requestSelection({ date, periodInput: e.target.value })}
+            disabled={switching}
             className="w-auto min-w-36"
             aria-label="คาบเรียน"
           >
@@ -276,15 +236,9 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
           </NativeSelect>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {saveState === 'saved' && <span className="text-sm text-success">บันทึกแล้ว</span>}
-          {saveState === 'error' && <span className="text-sm text-destructive">บันทึกไม่สำเร็จ — การแก้ไขยังอยู่ ลองบันทึกอีกครั้ง</span>}
           <Button type="button" variant="outline" onClick={handleExport} disabled={exporting}>
             <Download className="size-4" />
             {exporting ? 'กำลังส่งออก...' : 'ส่งออกการเช็คชื่อ (CSV)'}
-          </Button>
-          <Button onClick={handleSave} disabled={saveState === 'saving' || busy || !dirty || periodInvalid || Boolean(attendanceError)}>
-            <Save className="size-4" />
-            {saveState === 'saving' ? 'กำลังบันทึก...' : 'บันทึกการเช็คชื่อ'}
           </Button>
         </div>
       </div>
@@ -300,13 +254,15 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
 
       <AttendanceBoard
         students={roster}
-        entries={entries}
-        baseline={baseline}
+        entries={autosave.desired}
+        baseline={autosave.confirmed}
         loading={busy}
         lockedReason={attendanceError}
-        saving={saveState === 'saving'}
+        saveStatus={autosave.status}
+        failedIds={autosave.failedIds}
+        saveError={autosave.error}
+        onRetry={autosave.retry}
         onChange={handleBoardChange}
-        onSave={handleSave}
       />
 
       <ConfirmDialog
@@ -314,10 +270,12 @@ export function AttendanceTab({ subject, classroomId, classroomName, onDirtyChan
         onOpenChange={(open) => {
           if (!open) setPendingSelection(null)
         }}
-        title="เปลี่ยนวันที่/คาบโดยไม่บันทึก?"
-        description={`มีการเปลี่ยนแปลงที่ยังไม่บันทึก ${changedCount} รายการ หากเปลี่ยนวันที่หรือคาบ การเปลี่ยนแปลงนี้จะหายไป`}
+        title="การเช็คชื่อบันทึกไม่สำเร็จ"
+        description={`มีการเช็คชื่อ ${autosave.pendingIds.size} รายการที่ยังบันทึกไม่สำเร็จ${autosave.error ? ` (${autosave.error})` : ''}\nกด "ยกเลิก" แล้ว "ลองอีกครั้ง" เพื่อบันทึก หรือเปลี่ยนวันที่/คาบโดยไม่บันทึกรายการเหล่านี้`}
         confirmLabel="เปลี่ยนโดยไม่บันทึก"
+        destructive
         onConfirm={() => {
+          autosave.discard()
           if (pendingSelection) {
             setDate(pendingSelection.date)
             setPeriodInput(pendingSelection.periodInput)

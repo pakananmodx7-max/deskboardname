@@ -1,4 +1,4 @@
-import { Briefcase, BriefcaseMedical, CheckCheck, CircleCheck, CircleDashed, CircleX, Clock, LayoutGrid, List, MessageSquareText, Save, Search, UserX } from 'lucide-react'
+import { Briefcase, BriefcaseMedical, CheckCheck, CircleCheck, CircleDashed, CircleX, Clock, CloudCheck, LayoutGrid, List, LoaderCircle, MessageSquareText, RotateCw, Search, UserX } from 'lucide-react'
 import { useState } from 'react'
 import type * as React from 'react'
 
@@ -9,6 +9,7 @@ import { RowActionsMenu } from '@/components/ui/row-actions-menu'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
+import type { AutoSaveStatus } from './attendance-autosave'
 import {
   BOARD_STATUS_LABEL,
   BOARD_STATUS_ORDER,
@@ -87,19 +88,26 @@ export interface AttendanceBoardProps {
   /** Set when editing must be blocked (e.g. the saved session failed to
    * load, so a save could overwrite records the teacher cannot see). */
   lockedReason?: string | null
-  saving: boolean
+  /** Auto-save state (attendance-autosave.ts). Editing stays enabled while
+   * saving: later clicks are queued and the latest one wins. */
+  saveStatus: AutoSaveStatus
+  /** Pending students whose last save attempt failed. */
+  failedIds?: ReadonlySet<string>
+  saveError?: string | null
+  onRetry: () => void
   /** `touchedIds` = students changed by this edit. */
   onChange: (next: BoardEntries, touchedIds: string[]) => void
-  onSave: () => void
 }
 
 /**
  * The subject เช็คชื่อ tab's card board, shared by the real (Supabase) and
- * demo tabs. Edits stay local (`entries`) until the parent saves. Clicking
- * a card cycles มาเรียน → มาสาย → ขาดเรียน → ลากิจ → ลาป่วย; an unchecked
- * student is never marked on its own.
+ * demo tabs. Every change is saved automatically by the parent
+ * (useAttendanceAutoSave); `entries` is what the teacher sees, `baseline`
+ * what the server has confirmed, and cards that differ are marked until
+ * confirmed. Clicking a card cycles มาเรียน → มาสาย → ขาดเรียน → ลากิจ →
+ * ลาป่วย; an unchecked student is never marked on its own.
  */
-export function AttendanceBoard({ students, entries, baseline, loading, lockedReason, saving, onChange, onSave }: AttendanceBoardProps) {
+export function AttendanceBoard({ students, entries, baseline, loading, lockedReason, saveStatus, failedIds, saveError, onChange, onRetry }: AttendanceBoardProps) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<BoardStatusFilter>('all')
   const [view, setView] = useState<'grid' | 'list'>('grid')
@@ -112,7 +120,8 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
   const changed = new Set(changedStudentIds(ids, entries, baseline))
   const unchecked = countUnchecked(entries, ids)
   const visible = filterBoardStudents(students, entries, { search, status: statusFilter })
-  const interactive = !loading && !lockedReason && !saving
+  const interactive = !loading && !lockedReason
+  const failed = failedIds ?? new Set<string>()
 
   function setStatus(studentId: string, status: BoardStatus) {
     onChange(withStatus(entries, studentId, status), [studentId])
@@ -158,8 +167,6 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
     ]
   }
 
-  const saveDisabled = saving || changed.size === 0 || Boolean(lockedReason) || loading
-
   return (
     <div className="space-y-4 @container" data-testid="attendance-board">
       <AttendanceSummaryBar summary={summary} loading={loading || Boolean(lockedReason)} />
@@ -201,6 +208,18 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
         </p>
       )}
 
+      {saveStatus === 'error' && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <span className="min-w-0 flex-1">
+            บันทึกไม่สำเร็จ {failed.size > 0 ? `${failed.size} รายการ` : ''} — การเช็คชื่อที่ทำไว้ยังอยู่บนหน้าจอ{saveError ? ` (${saveError})` : ''}
+          </span>
+          <Button type="button" size="sm" variant="outline" onClick={onRetry} className="border-destructive/40 text-destructive hover:bg-destructive/10">
+            <RotateCw className="size-4" />
+            ลองอีกครั้ง
+          </Button>
+        </div>
+      )}
+
       {loading ? (
         <div className="grid grid-cols-2 gap-3 @[36rem]:grid-cols-3 @[48rem]:grid-cols-4 @[58rem]:grid-cols-5 @[74rem]:grid-cols-6" role="status" aria-label="กำลังโหลดรายชื่อ">
           {Array.from({ length: 12 }, (_, i) => (
@@ -217,12 +236,14 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
             const entry = entries[student.id] ?? UNCHECKED_ENTRY
             const style = STATUS_STYLE[entry.status]
             const isChanged = changed.has(student.id)
+            const isFailed = isChanged && failed.has(student.id)
             return (
               <li
                 key={student.id}
                 data-status={entry.status}
                 data-changed={isChanged || undefined}
-                className={cn('relative rounded-2xl border transition-colors', style.card, isChanged && 'ring-2 ring-primary/50')}
+                data-save-failed={isFailed || undefined}
+                className={cn('relative rounded-2xl border transition-colors', style.card, isChanged && (isFailed ? 'ring-2 ring-destructive/70' : 'ring-2 ring-primary/40'))}
               >
                 <button
                   type="button"
@@ -248,7 +269,7 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
                 </button>
                 <span className="pointer-events-none absolute left-3 top-2.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                   {student.number ?? '-'}
-                  {isChanged && <span className="size-2 rounded-full bg-primary" title="ยังไม่บันทึก" aria-label="ยังไม่บันทึก" />}
+                  {isChanged && <PendingDot failed={isFailed} />}
                 </span>
                 <div className="absolute right-1 top-1">
                   <RowActionsMenu actions={menuFor(student)} label={`ตัวเลือกของ ${student.firstName}`} />
@@ -264,8 +285,15 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
               const entry = entries[student.id] ?? UNCHECKED_ENTRY
               const style = STATUS_STYLE[entry.status]
               const isChanged = changed.has(student.id)
+              const isFailed = isChanged && failed.has(student.id)
               return (
-                <li key={student.id} data-status={entry.status} data-changed={isChanged || undefined} className={cn('flex items-center gap-3 px-3 py-2', isChanged && 'bg-primary/5')}>
+                <li
+                  key={student.id}
+                  data-status={entry.status}
+                  data-changed={isChanged || undefined}
+                  data-save-failed={isFailed || undefined}
+                  className={cn('flex items-center gap-3 px-3 py-2', isChanged && (isFailed ? 'bg-destructive/5' : 'bg-primary/5'))}
+                >
                   <span className="w-7 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{student.number ?? '-'}</span>
                   <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-bold', style.avatar)} aria-hidden="true">
                     {studentInitials(student.firstName, student.lastName)}
@@ -277,7 +305,11 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
                     </p>
                     {entry.note && <p className="truncate text-xs text-muted-foreground">{entry.note}</p>}
                   </div>
-                  {isChanged && <span className="hidden text-[11px] text-primary @[36rem]:inline">ยังไม่บันทึก</span>}
+                  {isChanged && (
+                    <span className={cn('hidden text-[11px] @[36rem]:inline', isFailed ? 'text-destructive' : 'text-primary')}>
+                      {isFailed ? 'บันทึกไม่สำเร็จ' : 'กำลังบันทึก...'}
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => cycle(student.id)}
@@ -306,18 +338,8 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
           <span className="@[36rem]:hidden">มาครบ</span>
           <span className="hidden @[36rem]:inline">มาครบทุกคน</span>
         </Button>
-        <div className="ml-auto flex items-center gap-2 @[36rem]:gap-3">
-          <span className={cn('text-sm', changed.size > 0 ? 'font-medium text-primary' : 'text-muted-foreground')} aria-live="polite">
-            <span className="@[36rem]:hidden">{changed.size > 0 ? `ยังไม่บันทึก ${changed.size}` : ''}</span>
-            <span className="hidden @[36rem]:inline">
-              {changed.size > 0 ? `มีการเปลี่ยนแปลงที่ยังไม่บันทึก ${changed.size} รายการ` : 'ไม่มีการเปลี่ยนแปลง'}
-            </span>
-          </span>
-          <Button type="button" size="sm" onClick={onSave} disabled={saveDisabled} aria-label="บันทึกการเช็คชื่อ">
-            <Save className="size-4" />
-            <span className="@[36rem]:hidden">{saving ? 'กำลังบันทึก...' : 'บันทึก'}</span>
-            <span className="hidden @[36rem]:inline">{saving ? 'กำลังบันทึก...' : 'บันทึกการเช็คชื่อ'}</span>
-          </Button>
+        <div className="ml-auto flex items-center">
+          <AutoSaveIndicator status={saveStatus} pending={changed.size} onRetry={onRetry} />
         </div>
       </div>
 
@@ -329,8 +351,8 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
         title={bulk === 'present' ? 'เช็คชื่อมาเรียนทุกคน?' : 'เช็คชื่อขาดเรียนให้คนที่เหลือ?'}
         description={
           bulk === 'present'
-            ? `นักเรียนทั้ง ${students.length} คนจะเป็น "มาเรียน" รวมถึงคนที่เลือกสถานะไว้แล้ว (หมายเหตุยังอยู่) ยังไม่บันทึกจนกว่าจะกด "บันทึกการเช็คชื่อ"`
-            : `นักเรียนที่ยังไม่เช็ค ${unchecked} คนจะเป็น "ขาดเรียน" คนที่เช็คแล้วไม่เปลี่ยน ยังไม่บันทึกจนกว่าจะกด "บันทึกการเช็คชื่อ"`
+            ? `นักเรียนทั้ง ${students.length} คนจะเป็น "มาเรียน" รวมถึงคนที่เลือกสถานะไว้แล้ว (หมายเหตุยังอยู่) และบันทึกอัตโนมัติทันที`
+            : `นักเรียนที่ยังไม่เช็ค ${unchecked} คนจะเป็น "ขาดเรียน" คนที่เช็คแล้วไม่เปลี่ยน และบันทึกอัตโนมัติทันที`
         }
         confirmLabel={bulk === 'present' ? 'มาครบทุกคน' : 'ขาดเรียนทั้งหมด'}
         onConfirm={applyBulk}
@@ -346,7 +368,7 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
           <DialogHeader>
             <DialogTitle>หมายเหตุ — {noteFor ? `${noteFor.firstName} ${noteFor.lastName}` : ''}</DialogTitle>
             <DialogDescription>
-              หมายเหตุจะถูกบันทึกพร้อมการเช็คชื่อเมื่อกด “บันทึกการเช็คชื่อ”
+              หมายเหตุจะถูกบันทึกอัตโนมัติพร้อมการเช็คชื่อ
               {noteFor && (entries[noteFor.id] ?? UNCHECKED_ENTRY).status === 'unchecked' && ' — นักเรียนคนนี้ยังไม่ได้เช็คชื่อ ต้องเลือกสถานะก่อนจึงจะบันทึกหมายเหตุได้'}
             </DialogDescription>
           </DialogHeader>
@@ -362,6 +384,34 @@ export function AttendanceBoard({ students, entries, baseline, loading, lockedRe
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+function PendingDot({ failed }: { failed: boolean }) {
+  const label = failed ? 'บันทึกไม่สำเร็จ' : 'กำลังบันทึก'
+  return <span className={cn('size-2 rounded-full', failed ? 'bg-destructive' : 'animate-pulse bg-primary motion-reduce:animate-none')} title={label} aria-label={label} />
+}
+
+/** Compact auto-save state in the bottom bar; replaces the old save button. */
+function AutoSaveIndicator({ status, pending, onRetry }: { status: AutoSaveStatus; pending: number; onRetry: () => void }) {
+  if (status === 'error') {
+    return (
+      <Button type="button" size="sm" variant="outline" onClick={onRetry} className="border-destructive/40 text-destructive hover:bg-destructive/10" aria-live="polite">
+        <RotateCw className="size-4" />
+        บันทึกไม่สำเร็จ — ลองอีกครั้ง
+      </Button>
+    )
+  }
+  const saving = status === 'saving' || status === 'pending'
+  return (
+    <span role="status" aria-live="polite" className={cn('inline-flex items-center gap-1.5 px-2 text-sm', saving ? 'text-primary' : status === 'saved' ? 'text-success' : 'text-muted-foreground')}>
+      {saving ? (
+        <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+      ) : (
+        <CloudCheck className="size-4" aria-hidden="true" />
+      )}
+      {saving ? `กำลังบันทึก...${pending > 1 ? ` (${pending})` : ''}` : status === 'saved' ? 'บันทึกแล้ว' : 'บันทึกอัตโนมัติ'}
+    </span>
   )
 }
 

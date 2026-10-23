@@ -24,9 +24,9 @@ function render(overrides: Partial<AttendanceBoardProps> = {}): string {
     entries: BASELINE,
     baseline: BASELINE,
     loading: false,
-    saving: false,
+    saveStatus: 'idle',
     onChange: noop,
-    onSave: noop,
+    onRetry: noop,
     ...overrides,
   }
   return renderToStaticMarkup(createElement(AttendanceBoard, props))
@@ -57,18 +57,32 @@ describe('AttendanceBoard (rendered)', () => {
     expect(html).toContain('placeholder="ค้นหาชื่อนักเรียน เลขที่ หรือหมายเหตุ..."')
   })
 
-  it('no changes: save disabled and "ไม่มีการเปลี่ยนแปลง"', () => {
+  it('no manual save button: an auto-save indicator instead', () => {
     const html = render()
-    expect(html).toContain('ไม่มีการเปลี่ยนแปลง')
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*?บันทึกการเช็คชื่อ/)
+    expect(html).not.toContain('บันทึกการเช็คชื่อ</span>')
+    expect(html).not.toContain('lucide-save')
+    expect(html).toContain('บันทึกอัตโนมัติ')
+    expect(render({ saveStatus: 'saved' })).toContain('บันทึกแล้ว')
   })
 
-  it('unsaved edits are visible: changed card highlighted and counted, save enabled', () => {
-    const html = render({ entries: withStatus(BASELINE, 'c', 'late') })
+  it('pending changes: card marked, indicator says กำลังบันทึก..., editing stays enabled', () => {
+    const html = render({ entries: withStatus(BASELINE, 'c', 'late'), saveStatus: 'saving' })
     expect(html).toContain('data-changed="true"')
-    expect(html).toContain('ยังไม่บันทึก')
-    expect(html).toContain('มีการเปลี่ยนแปลงที่ยังไม่บันทึก 1 รายการ')
-    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*><svg[^>]*lucide-save/)
+    expect(html).toContain('กำลังบันทึก...')
+    expect(html).not.toMatch(/aria-label="จักรพงศ์ ด่วนชะเอม: มาสาย — คลิกเพื่อเปลี่ยนสถานะ"[^>]*disabled=""/)
+    const presentAll = html.match(/<button[^>]*>(?:(?!<\/button>).)*มาครบทุกคน/)?.[0] ?? ''
+    expect(presentAll).toContain('มาครบทุกคน')
+    expect(presentAll).not.toContain('disabled=""')
+  })
+
+  it('failed save: card marked failed, alert with the reason and a retry, never "บันทึกแล้ว"', () => {
+    const html = render({ entries: withStatus(BASELINE, 'c', 'late'), saveStatus: 'error', failedIds: new Set(['c']), saveError: 'คุณไม่มีสิทธิ์' })
+    expect(html).toContain('data-save-failed="true"')
+    expect(html).toContain('บันทึกไม่สำเร็จ — ลองอีกครั้ง')
+    expect(html).toContain('บันทึกไม่สำเร็จ 1 รายการ')
+    expect(html).toContain('คุณไม่มีสิทธิ์')
+    expect(html).toContain('ลองอีกครั้ง')
+    expect(html).not.toContain('บันทึกแล้ว')
   })
 
   it('locked (saved session failed to load): reason shown, cards and actions disabled', () => {
@@ -84,12 +98,6 @@ describe('AttendanceBoard (rendered)', () => {
     expect(render({ loading: true })).toContain('aria-label="กำลังโหลดรายชื่อ"')
     expect(render({ loading: true })).not.toContain('ยังไม่มีนักเรียนในห้องเรียนนี้')
     expect(render({ students: [], entries: {}, baseline: {} })).toContain('ยังไม่มีนักเรียนในห้องเรียนนี้')
-  })
-
-  it('saving: every card and bulk action is disabled (no edits mid-save)', () => {
-    const html = render({ saving: true, entries: withStatus(BASELINE, 'c', 'late') })
-    expect(html).toContain('กำลังบันทึก...')
-    expect(html).toMatch(/disabled=""[^>]*>.*?มาครบทุกคน/)
   })
 })
 
@@ -113,30 +121,31 @@ describe('board wiring (source checks)', () => {
   it('both modes use the same board and the unsaved-changes guard', () => {
     for (const source of [realTab, demoTab]) {
       expect(source).toContain('<AttendanceBoard')
-      expect(source).toContain('<UnsavedChangesGuard when={dirty} />')
+      expect(source).toMatch(/<UnsavedChangesGuard when=\{dirty\}/)
+      expect(source).toMatch(/useAttendanceAutoSave\(\s*sessionKey,/)
     }
   })
 
-  it('real save: one guarded RPC call with only the changed+checked records, edits kept on failure', () => {
-    expect(realTab).toContain('if (savingRef.current ||')
-    expect(realTab).toContain('const recordsToSave = buildRecordsToSave(rosterIds, entries, baseline)')
-    expect(realTab).toContain('await saveAttendance(classroomId, date, recordsToSave, subject.id, periodNumber)')
-    const catchBlock = realTab.slice(realTab.indexOf('} catch (err) {', realTab.indexOf('async function handleSave')), realTab.indexOf('} finally {', realTab.indexOf('async function handleSave')))
-    expect(catchBlock).not.toMatch(/setEntries|setBaseline/)
+  it('real auto-save: the same RPC, only changed+checked records, scoped to the session it was made in', () => {
+    expect(realTab).toContain('saveAttendance(classroomId, date, records, subject.id, periodNumber)')
+    expect(realTab).toContain('const sessionKey = `${classroomId}|${subject.id}|${date}|${periodNumber ?? \'\'}`')
+    expect(realTab).not.toMatch(/handleSave|<Save|lucide-react'.*Save/)
   })
 
   it('real: editing is locked when the saved session fails to load (no blind overwrite)', () => {
     expect(realTab).toContain('lockedReason={attendanceError}')
-    expect(realTab).toContain('Boolean(attendanceError)')
   })
 
   it('demo save writes statuses and notes in one store update; Demo Mode never touches Supabase', () => {
-    expect(demoTab).toContain('saveSubjectAttendanceEntries(subject.id, classroomId, date, recordsToSave)')
+    expect(demoTab).toContain('saveSubjectAttendanceEntries(subject.id, classroomId, date, records)')
     expect(demoTab).not.toMatch(/supabase|attendance-service/)
   })
 
-  it('changing date/คาบ with unsaved edits asks first', () => {
+  it('changing date/คาบ finishes pending saves first; asks before dropping a failed one', () => {
+    expect(realTab).toContain('const saved = await autosave.flushNow()')
     expect(realTab).toContain('setPendingSelection(next)')
+    expect(realTab).toContain('autosave.discard()')
+    expect(demoTab).toContain('await autosave.flushNow()')
     expect(demoTab).toContain('setPendingDate(next)')
   })
 
