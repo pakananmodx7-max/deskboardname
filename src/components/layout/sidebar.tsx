@@ -258,7 +258,7 @@ export function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {
             onClick={onCloseMobile}
             aria-hidden="true"
           />
-          <div role="dialog" aria-modal="true" aria-label="เมนูหลัก" className="relative z-10 h-full w-[min(18rem,86vw)] bg-sidebar shadow-elevated">
+          <div role="dialog" aria-modal="true" aria-label="เมนูหลัก" className="relative z-10 h-full w-[min(18rem,86vw)] bg-sidebar pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pt-[env(safe-area-inset-top)] shadow-elevated">
             <button
               type="button"
               onClick={onCloseMobile}

@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useBlocker } from 'react-router-dom'
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { markUnsavedWork } from '@/lib/unsaved-work'
 
 export const UNSAVED_ATTENDANCE_MESSAGE = 'การเช็คชื่อที่แก้ไขยังไม่ได้บันทึก หากออกจากหน้านี้ การเปลี่ยนแปลงจะหายไป'
 
@@ -9,7 +10,8 @@ export const UNSAVED_ATTENDANCE_MESSAGE = 'การเช็คชื่อท�
  * Warns before leaving with unsaved attendance edits:
  *   - another page or another classroom (pathname change): in-app
  *     confirm via useBlocker;
- *   - refresh / closing the tab: the browser's own beforeunload prompt.
+ *   - refresh / closing the tab: the browser's own beforeunload prompt;
+ *   - an app update: the PWA update prompt waits (unsaved-work.ts).
  * Switching subject tabs or the date/คาบ is guarded by the callers
  * themselves (those don't change the pathname).
  */
@@ -24,7 +26,11 @@ export function UnsavedChangesGuard({ when }: { when: boolean }) {
       event.returnValue = ''
     }
     window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+    const releaseUnsavedWork = markUnsavedWork()
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload)
+      releaseUnsavedWork()
+    }
   }, [when])
 
   return (

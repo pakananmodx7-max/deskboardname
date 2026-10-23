@@ -181,6 +181,14 @@
 }
 
 @layer components {
+  /* Notched phones / the installed app (index.html sets
+     viewport-fit=cover): keep the app shell out of the notch, the
+     rounded corners and the home indicator. env() is 0 on every other
+     screen, so desktop and ordinary browser tabs are unchanged. */
+  .kc-safe-area {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
   /* A soft, layered elevation for cards/panels — a visible but never
      harsh lift off the (now visibly tinted) page canvas, so panels
      read as "floating" rather than boxed-in. Reused wherever a

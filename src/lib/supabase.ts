@@ -1,5 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
+import { trackPendingWrites } from '@/lib/pending-writes'
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
 
@@ -10,8 +12,12 @@ const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
  */
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey)
 
+// The fetch wrapper only counts in-flight writes (see pending-writes.ts) so
+// a PWA update never reloads the page in the middle of a save or upload.
 export const supabase: SupabaseClient | null = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabasePublishableKey)
+  ? createClient(supabaseUrl, supabasePublishableKey, {
+      global: { fetch: trackPendingWrites((input, init) => globalThis.fetch(input, init)) },
+    })
   : null
 
 // Deliberately NOT gated behind import.meta.env.DEV: a deployed build

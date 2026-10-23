@@ -108,7 +108,7 @@ export function StudentSidebar({ profile, classroom, mobileOpen, onCloseMobile, 
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-black/40" onClick={onCloseMobile} aria-hidden="true" />
-          <div className="relative z-10 h-full w-64 bg-card shadow-xl">
+          <div className="relative z-10 h-full w-64 bg-card pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pt-[env(safe-area-inset-top)] shadow-xl">
             <button
               type="button"
               onClick={onCloseMobile}

@@ -280,7 +280,7 @@ export function ScanSubmissionsDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose(changed.current)}>
-      <DialogContent className="left-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 sm:left-1/2 sm:top-1/2 sm:h-[92vh] sm:max-h-[92vh] sm:max-w-6xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl">
+      <DialogContent className="left-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none p-0 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] sm:left-1/2 sm:top-1/2 sm:h-[92vh] sm:max-h-[92vh] sm:max-w-6xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl">
         {/* Header: context + assignment selection */}
         <div className="border-b border-border px-4 pb-3 pt-4 sm:px-6">
           <div className="flex items-start gap-3 pr-8">

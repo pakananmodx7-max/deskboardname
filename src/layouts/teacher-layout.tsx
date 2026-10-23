@@ -10,7 +10,7 @@ export function TeacherLayout() {
 
   return (
     <SemesterProvider>
-      <div className="flex h-screen overflow-hidden bg-background">
+      <div className="kc-safe-area flex h-screen overflow-hidden bg-background">
         <Sidebar mobileOpen={mobileMenuOpen} onCloseMobile={() => setMobileMenuOpen(false)} />
 
         <div className="flex min-w-0 flex-1 flex-col">

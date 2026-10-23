@@ -94,7 +94,7 @@ export function StudentLayout() {
 
   return (
     <StudentNotificationsProvider studentId={profile.id}>
-      <div className="flex h-screen overflow-hidden bg-background">
+      <div className="kc-safe-area flex h-screen overflow-hidden bg-background">
         <StudentSidebar
           profile={profile}
           classroom={classroom}
