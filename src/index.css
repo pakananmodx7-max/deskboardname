@@ -14,6 +14,8 @@
 
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-light: var(--primary-light);
 
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -56,33 +58,34 @@
      Tailwind's own `rounded-full` directly, independent of this scale. */
   --radius: 1rem;
 
-  /* A soft, visibly-tinted canvas — distinctly cooler/darker than the
-     pure-white card surfaces that sit on top of it, so cards read as
-     "elevated" rather than blending into the page (the "flat admin
-     tool" look this pass is fixing). */
-  --background: oklch(0.965 0.007 250);
-  --foreground: oklch(0.2 0.02 250);
+  /* Modern Minimal Blue & White — one blue for every accent, white
+     cards on a faint blue-grey canvas, a single text navy. Status colours
+     (success / warning / destructive) stay for status only. */
+  --background: #f5f8fc;
+  --foreground: #172b4d;
 
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.02 250);
+  --card: #ffffff;
+  --card-foreground: #172b4d;
 
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.02 250);
+  --popover: #ffffff;
+  --popover-foreground: #172b4d;
 
-  /* A softer, lighter modern blue — less saturated and less "heavy"
-     than a deep indigo, while keeping enough contrast for white text
-     on filled buttons/pills. */
-  --primary: oklch(0.58 0.14 248);
-  --primary-foreground: oklch(0.99 0.005 248);
+  --primary: #3b82c4;
+  --primary-foreground: #ffffff;
+  --primary-hover: #2d6da8;
+  /* Icon circles, selected chips, the banner wash. */
+  --primary-light: #eaf3fc;
 
-  --secondary: oklch(0.95 0.015 248);
-  --secondary-foreground: oklch(0.32 0.03 248);
+  /* Secondary buttons: light blue with blue text. */
+  --secondary: #eaf3fc;
+  --secondary-foreground: #2d6da8;
 
-  --muted: oklch(0.95 0.012 248);
-  --muted-foreground: oklch(0.5 0.02 248);
+  --muted: #f1f5fa;
+  --muted-foreground: #64748b;
 
-  --accent: oklch(0.94 0.025 248);
-  --accent-foreground: oklch(0.32 0.03 248);
+  /* Hover background for ghost/outline controls and menu rows. */
+  --accent: #edf4fb;
+  --accent-foreground: #172b4d;
 
   /* Soft red — clearly "danger" but not a harsh, saturated alarm red. */
   --destructive: oklch(0.62 0.16 21);
@@ -95,27 +98,23 @@
   --warning: oklch(0.78 0.14 75);
   --warning-foreground: oklch(0.28 0.05 75);
 
-  --border: oklch(0.91 0.012 248);
-  --input: oklch(0.91 0.012 248);
-  --ring: oklch(0.58 0.14 248);
+  --border: #e2eaf3;
+  --input: #e2eaf3;
+  --ring: #3b82c4;
 
-  /* The sidebar is its own surface — deliberately distinct from both
-     the page canvas and white cards, so the app reads as clearly
-     layered (canvas → sidebar/cards → active states) instead of one
-     flat plane. */
-  --sidebar: oklch(0.97 0.01 250);
-  --sidebar-foreground: oklch(0.32 0.03 250);
-  --sidebar-border: oklch(0.91 0.012 248);
-  --sidebar-active: oklch(0.58 0.14 248);
-  --sidebar-active-foreground: oklch(0.99 0.005 248);
+  /* Sidebar: white with a hint of blue, a step lighter than the canvas. */
+  --sidebar: #f8fafd;
+  --sidebar-foreground: #2b3a55;
+  --sidebar-border: #e2eaf3;
+  --sidebar-active: #3b82c4;
+  --sidebar-active-foreground: #ffffff;
 
-  /* Pastel accent hues for the dashboard (stat cards, hero, backdrop).
-     Surfaces mix these into var(--card) / var(--background), so the same
-     classes stay soft in light mode and tinted-dark in dark mode. */
-  --tone-blue: oklch(0.6 0.15 248);
-  --tone-lavender: oklch(0.6 0.16 295);
-  --tone-mint: oklch(0.64 0.13 165);
-  --tone-orange: oklch(0.7 0.16 55);
+  /* Accent hue for dashboard surfaces (icon chips, hover glow). */
+  --tone-blue: var(--primary);
+
+  /* "Class N" (TechText) in the dashboard banner. */
+  --class-n-ink: #285a99;
+  --class-n-accent: #5685c2;
 }
 
 :root[data-theme='dark'] {
@@ -130,6 +129,8 @@
 
   --primary: oklch(0.74 0.12 248);
   --primary-foreground: oklch(0.16 0.02 248);
+  --primary-hover: oklch(0.8 0.1 248);
+  --primary-light: oklch(0.3 0.05 248);
 
   --secondary: oklch(0.3 0.02 248);
   --secondary-foreground: oklch(0.9 0.005 248);
@@ -162,10 +163,11 @@
   --sidebar-active: oklch(0.74 0.12 248);
   --sidebar-active-foreground: oklch(0.16 0.02 248);
 
-  --tone-blue: oklch(0.74 0.12 248);
-  --tone-lavender: oklch(0.74 0.12 295);
-  --tone-mint: oklch(0.76 0.11 165);
-  --tone-orange: oklch(0.79 0.13 60);
+  --tone-blue: var(--primary);
+
+  /* Light blues that keep contrast on the dark banner. */
+  --class-n-ink: #b3d1f2;
+  --class-n-accent: #6fa5e0;
 }
 
 @layer base {
@@ -195,8 +197,8 @@
      card-like surface needs to stand out from the page. */
   .shadow-soft {
     box-shadow:
-      0 1px 2px 0 rgb(15 23 42 / 0.05),
-      0 12px 32px -8px rgb(15 23 42 / 0.12);
+      0 1px 2px 0 rgb(23 43 77 / 0.04),
+      0 8px 24px -12px rgb(23 43 77 / 0.1);
   }
 
   :root[data-theme='dark'] .shadow-soft {
@@ -224,40 +226,25 @@
      Dashboard (หน้าภาพรวม) surfaces — decoration only, never content.
      ------------------------------------------------------------------ */
   .kc-tone-blue { --tone: var(--tone-blue); }
-  .kc-tone-lavender { --tone: var(--tone-lavender); }
-  .kc-tone-mint { --tone: var(--tone-mint); }
-  .kc-tone-orange { --tone: var(--tone-orange); }
 
   /* Soft icon chip in the element's tone. */
   .kc-tone-chip {
-    background: color-mix(in oklab, var(--tone) 15%, var(--card));
+    background: color-mix(in oklab, var(--tone) 12%, var(--card));
     color: var(--tone);
   }
 
-  /* Pastel stat-card surface. */
-  .kc-pastel-card {
-    background:
-      radial-gradient(120% 90% at 100% 100%, color-mix(in oklab, var(--tone) 16%, transparent), transparent 62%),
-      linear-gradient(150deg, color-mix(in oklab, var(--card) 95%, var(--tone)), color-mix(in oklab, var(--card) 86%, var(--tone)));
-    border-color: color-mix(in oklab, var(--tone) 22%, var(--border));
-  }
-
-  /* Greeting banner: blue wash with lavender/mint accents. */
+  /* Greeting banner: a light-blue wash fading to white. */
   .kc-hero {
     background:
-      radial-gradient(55% 140% at 100% 0%, color-mix(in oklab, var(--tone-lavender) 18%, transparent), transparent 70%),
-      radial-gradient(45% 120% at 78% 100%, color-mix(in oklab, var(--tone-mint) 14%, transparent), transparent 70%),
-      linear-gradient(115deg, color-mix(in oklab, var(--card) 82%, var(--tone-blue)) 0%, color-mix(in oklab, var(--card) 93%, var(--tone-blue)) 55%, color-mix(in oklab, var(--card) 97%, var(--tone-blue)) 100%);
-    border-color: color-mix(in oklab, var(--tone-blue) 20%, var(--border));
+      radial-gradient(60% 120% at 100% 0%, color-mix(in oklab, var(--primary) 8%, transparent), transparent 70%),
+      linear-gradient(110deg, var(--primary-light) 0%, color-mix(in oklab, var(--primary-light) 45%, var(--card)) 55%, var(--card) 100%);
+    border-color: var(--border);
   }
 
-  /* Page backdrop behind the dashboard: light-blue base, edge glows. */
+  /* Page canvas behind the dashboard: a faint blue top fading into the
+     page background. */
   .kc-dashboard-backdrop {
-    background:
-      radial-gradient(42rem 26rem at 100% 0%, color-mix(in oklab, var(--tone-blue) 11%, transparent), transparent 70%),
-      radial-gradient(36rem 28rem at 0% 100%, color-mix(in oklab, var(--tone-mint) 9%, transparent), transparent 70%),
-      radial-gradient(30rem 24rem at 100% 65%, color-mix(in oklab, var(--tone-lavender) 7%, transparent), transparent 70%),
-      linear-gradient(180deg, color-mix(in oklab, var(--background) 94%, var(--tone-blue)), var(--background) 40rem);
+    background: linear-gradient(180deg, color-mix(in oklab, var(--primary-light) 60%, var(--background)), var(--background) 32rem);
   }
 
   /* Gentle hover lift (transform only when motion is allowed). */
@@ -267,7 +254,7 @@
   .kc-lift:hover {
     box-shadow:
       0 2px 4px 0 rgb(15 23 42 / 0.05),
-      0 18px 36px -12px color-mix(in oklab, var(--tone, var(--tone-blue)) 35%, transparent);
+      0 14px 30px -14px color-mix(in oklab, var(--primary) 35%, transparent);
   }
   @media (prefers-reduced-motion: no-preference) {
     .kc-lift {
@@ -278,14 +265,12 @@
     }
   }
 
-  /* Sidebar: active item gets a blue→lavender gradient on top of its
-     solid bg-sidebar-active, and a tinted glow. */
+  /* Sidebar: the active item is solid blue with a soft blue glow. */
   .kc-nav-active {
-    background-image: linear-gradient(120deg, var(--sidebar-active), color-mix(in oklab, var(--sidebar-active) 80%, var(--tone-lavender)));
-    box-shadow: 0 8px 18px -8px color-mix(in oklab, var(--sidebar-active) 70%, transparent);
+    box-shadow: 0 6px 16px -8px color-mix(in oklab, var(--sidebar-active) 70%, transparent);
   }
   .kc-sidebar-surface {
-    background: linear-gradient(180deg, var(--sidebar) 0%, color-mix(in oklab, var(--sidebar) 94%, var(--tone-blue)) 100%);
+    background: var(--sidebar);
   }
 
   /* ------------------------------------------------------------------

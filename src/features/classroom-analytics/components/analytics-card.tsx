@@ -4,24 +4,23 @@ import type * as React from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-import { ICON_TONE, type IconTone, type Resource } from '../resource'
+import type { Resource } from '../resource'
 
 interface AnalyticsCardProps {
   title: string
   icon: React.ComponentType<{ className?: string }>
-  tone?: IconTone
   action?: React.ReactNode
   className?: string
   children: React.ReactNode
 }
 
-export function AnalyticsCard({ title, icon: Icon, tone = 'blue', action, className, children }: AnalyticsCardProps) {
+export function AnalyticsCard({ title, icon: Icon, action, className, children }: AnalyticsCardProps) {
   return (
     <section className={cn('flex flex-col rounded-3xl border border-border/80 bg-card p-4 text-card-foreground shadow-soft sm:p-6', className)} aria-label={title}>
       {/* Phones: a long title keeps at least ~11rem; a wide action (filter select) drops below it instead of truncating it. */}
       <header className="mb-5 flex items-center justify-between gap-2 max-sm:flex-wrap max-sm:gap-y-3">
         <div className="flex min-w-0 items-center gap-3 max-sm:min-w-[11rem] max-sm:flex-1">
-          <span className={cn('flex size-10 shrink-0 items-center justify-center rounded-full', ICON_TONE[tone])}>
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary-light text-primary">
             <Icon className="size-5" />
           </span>
           <h2 className="truncate text-base font-bold text-foreground max-sm:whitespace-normal">{title}</h2>
@@ -97,7 +96,7 @@ export function SectionEmpty({ message, hint }: { message: string; hint?: string
 export function SectionIllustratedEmpty({ art, message, hint, action }: { art: React.ReactNode; message: string; hint?: string; action?: React.ReactNode }) {
   return (
     <div className="@container flex flex-1 flex-col">
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-2xl bg-[color-mix(in_oklab,var(--tone-blue)_7%,var(--card))] p-5 text-center @md:flex-row @md:gap-6 @md:text-left">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-2xl bg-primary-light/60 p-5 text-center @md:flex-row @md:gap-6 @md:text-left">
         {art}
         <div className="min-w-0 space-y-1.5">
           <p className="text-sm font-semibold text-foreground sm:text-base">{message}</p>

@@ -147,7 +147,7 @@ export function WeeklyTrendCard({
 // ==================================================
 
 function RankBadge({ rank, tone }: { rank: number; tone: 'red' | 'green' | 'orange' }) {
-  const color = tone === 'red' ? 'bg-destructive text-white' : tone === 'green' ? 'bg-success text-white' : 'bg-orange-500 text-white'
+  const color = tone === 'red' ? 'bg-destructive text-white' : tone === 'green' ? 'bg-success text-white' : 'bg-warning text-warning-foreground'
   return (
     <span className={cn('flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold', rank <= 3 ? color : 'bg-muted text-foreground')}>
       {rank}
@@ -188,7 +188,7 @@ function Avatar({ name }: { name: string }) {
 
 function Pill({ tone, children }: { tone: 'red' | 'green' | 'orange'; children: ReactNode }) {
   const color =
-    tone === 'red' ? 'bg-destructive/10 text-destructive' : tone === 'green' ? 'bg-success/12 text-success' : 'bg-orange-500/12 text-orange-500'
+    tone === 'red' ? 'bg-destructive/10 text-destructive' : tone === 'green' ? 'bg-success/12 text-success' : 'bg-warning/20 text-warning-foreground'
   return <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums', color)}>{children}</span>
 }
 
@@ -209,9 +209,8 @@ export function MostAbsencesCard({
     <AnalyticsCard
       title="นักเรียนที่ขาดเรียนมากที่สุด"
       icon={UserX}
-      tone="red"
       action={
-        <Link to={REPORTS_PATH} className="flex shrink-0 items-center gap-1 rounded-full bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/15">
+        <Link to={REPORTS_PATH} className="flex shrink-0 items-center gap-1 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent">
           ดูรายงาน <ArrowRight className="size-3" />
         </Link>
       }
@@ -252,7 +251,7 @@ export function TopAttendanceCard({
   onRetry: () => void
 }) {
   return (
-    <AnalyticsCard title="นักเรียนที่เข้าเรียนมากที่สุด" icon={ShieldCheck} tone="green">
+    <AnalyticsCard title="นักเรียนที่เข้าเรียนมากที่สุด" icon={ShieldCheck}>
       <SectionBody resource={resource} onRetry={onRetry} skeleton="list">
         {(rows) =>
           rows.length === 0 ? (
@@ -306,13 +305,12 @@ export function RiskCard({
     <AnalyticsCard
       title="นักเรียนที่ควรติดตามการขาดเรียน"
       icon={AlertTriangle}
-      tone="orange"
       action={
         count > ANALYTICS_RULES.TOP_N ? (
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="flex shrink-0 items-center gap-1 rounded-full bg-orange-500/12 px-3 py-1 text-xs font-medium text-orange-500 hover:bg-orange-500/20"
+            className="flex shrink-0 items-center gap-1 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground hover:bg-accent"
             aria-expanded={expanded}
           >
             {expanded ? 'ย่อรายการ' : `ดูทั้งหมด (${count})`} <ArrowRight className="size-3" />

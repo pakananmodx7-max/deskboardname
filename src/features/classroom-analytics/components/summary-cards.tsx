@@ -1,30 +1,23 @@
 import { BookOpen, FileText, School, Users } from 'lucide-react'
 import type * as React from 'react'
 
-import { cn } from '@/lib/utils'
-
 import type { SummaryCardValue } from '../resource'
-import { StatDecoration } from './dashboard-decor'
-
-type StatTone = 'kc-tone-blue' | 'kc-tone-lavender' | 'kc-tone-mint' | 'kc-tone-orange'
 
 interface SummaryCardProps {
   label: string
   icon: React.ComponentType<{ className?: string }>
-  tone: StatTone
-  /** Picks one of the two decoration shapes. */
-  variant: number
   /** null = still loading (shows a placeholder, never 0). */
   data: SummaryCardValue | null
   error?: boolean
 }
 
-function SummaryCard({ label, icon: Icon, tone, variant, data, error }: SummaryCardProps) {
+function SummaryCard({ label, icon: Icon, data, error }: SummaryCardProps) {
   return (
-    <div className={cn('kc-pastel-card kc-lift relative isolate overflow-hidden rounded-[1.25rem] border p-4 shadow-soft max-sm:p-3.5 sm:p-5', tone)}>
-      <StatDecoration variant={variant} />
+    <div className="kc-lift relative isolate overflow-hidden rounded-[1.25rem] border border-border bg-card p-4 shadow-soft max-sm:p-3.5 sm:p-5">
+      {/* The card's own icon, large and faint, in the corner. */}
+      <Icon aria-hidden="true" className="pointer-events-none absolute -bottom-3 -right-3 size-16 text-primary opacity-[0.06] max-sm:size-12" />
       <div className="relative flex items-start gap-3.5 max-sm:flex-col max-sm:gap-2.5">
-        <span className="kc-tone-chip flex size-12 shrink-0 items-center justify-center rounded-full ring-4 ring-[color:color-mix(in_oklab,var(--tone)_10%,transparent)] max-sm:size-10 sm:size-14">
+        <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-primary-light text-primary max-sm:size-10 sm:size-14">
           <Icon className="size-6 max-sm:size-5 sm:size-7" />
         </span>
         <div className="min-w-0 pt-0.5 max-sm:w-full max-sm:pt-0">
@@ -55,10 +48,10 @@ export interface SummaryCardsProps {
 export function SummaryCards({ students, studentsError, classrooms, subjects, assignments, assignmentsError }: SummaryCardsProps) {
   return (
     <div className="grid grid-cols-1 gap-4 max-sm:grid-cols-2 max-sm:gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <SummaryCard label="นักเรียนทั้งหมด" icon={Users} tone="kc-tone-blue" variant={0} data={students} error={studentsError} />
-      <SummaryCard label="ห้องเรียนทั้งหมด" icon={School} tone="kc-tone-lavender" variant={1} data={classrooms} />
-      <SummaryCard label="รายวิชาที่สอน" icon={BookOpen} tone="kc-tone-mint" variant={2} data={subjects} />
-      <SummaryCard label="งาน/แบบทดสอบ" icon={FileText} tone="kc-tone-orange" variant={3} data={assignments} error={assignmentsError} />
+      <SummaryCard label="นักเรียนทั้งหมด" icon={Users} data={students} error={studentsError} />
+      <SummaryCard label="ห้องเรียนทั้งหมด" icon={School} data={classrooms} />
+      <SummaryCard label="รายวิชาที่สอน" icon={BookOpen} data={subjects} />
+      <SummaryCard label="งาน/แบบทดสอบ" icon={FileText} data={assignments} error={assignmentsError} />
     </div>
   )
 }

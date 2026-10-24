@@ -34,7 +34,8 @@ import { SectionError, SectionSkeleton } from './analytics-card'
 import { AssignmentStatusCard, TeacherInsightsCard } from './assignment-insights'
 import { AttendanceOverviewCard, MostAbsencesCard, RiskCard, TopAttendanceCard, WeeklyTrendCard, type StudentLinkBuilder } from './attendance-sections'
 import { ClassroomSection } from './classroom-section'
-import { DashboardBackdrop, HeroDecoration } from './dashboard-decor'
+import { DashboardBackdrop } from './dashboard-decor'
+import { HeroClassN } from './hero-class-n'
 import { SummaryCards } from './summary-cards'
 import { WidgetBoundary } from './widget-boundary'
 
@@ -170,17 +171,17 @@ export function ClassroomAnalyticsDashboard(props: ClassroomAnalyticsDashboardPr
     <div className="relative isolate space-y-5">
       <DashboardBackdrop />
       <div className="kc-hero relative overflow-hidden rounded-3xl border px-5 py-5 shadow-soft sm:px-7 sm:py-7">
-        <HeroDecoration />
         <div className="relative flex items-center gap-4 sm:gap-5">
           <span className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-card/85 text-3xl shadow-sm ring-1 ring-border/60 sm:size-16" aria-hidden="true">
             👋
           </span>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="truncate text-2xl font-extrabold tracking-tight text-foreground max-sm:whitespace-normal sm:text-3xl">สวัสดี, {props.teacherName}</h1>
             <p className="mt-1.5 text-sm text-muted-foreground sm:text-base">
               ภาพรวมห้องเรียน การเข้าเรียน และการส่งงานของคุณ{scope ? ` ${scopePhrase(scope)}` : ''}
             </p>
           </div>
+          <HeroClassN />
         </div>
       </div>
 

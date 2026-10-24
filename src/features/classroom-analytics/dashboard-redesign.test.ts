@@ -78,7 +78,7 @@ describe('dashboard redesign — real data only', () => {
   it('decorations are hidden from assistive technology and carry no text', () => {
     const decor = read('./components/dashboard-decor.tsx')
     const svgs = decor.match(/<svg\b[^>]*>/g) ?? []
-    expect(svgs.length).toBeGreaterThanOrEqual(5)
+    expect(svgs.length).toBeGreaterThanOrEqual(2)
     for (const svg of svgs) expect(svg).toContain('aria-hidden="true"')
     expect(decor).not.toMatch(/<text\b/)
     // No people, avatars or invented counts in the artwork.
@@ -114,10 +114,43 @@ describe('attendance empty states', () => {
 describe('theme, motion and styling rules', () => {
   const css = read('../../index.css')
 
-  it('tone tokens exist for light and dark themes', () => {
-    for (const token of ['--tone-blue', '--tone-lavender', '--tone-mint', '--tone-orange']) {
+  it('blue & white palette: the requested light tokens, defined again for dark mode', () => {
+    const light = css.slice(css.indexOf(':root {'), css.indexOf(":root[data-theme='dark']"))
+    for (const [token, value] of [
+      ['--primary', '#3b82c4'],
+      ['--primary-hover', '#2d6da8'],
+      ['--primary-light', '#eaf3fc'],
+      ['--background', '#f5f8fc'],
+      ['--sidebar', '#f8fafd'],
+      ['--card', '#ffffff'],
+      ['--foreground', '#172b4d'],
+      ['--muted-foreground', '#64748b'],
+      ['--border', '#e2eaf3'],
+      ['--accent', '#edf4fb'],
+    ])
+      expect(light).toContain(`${token}: ${value};`)
+    for (const token of ['--primary-hover', '--primary-light', '--tone-blue', '--class-n-ink', '--class-n-accent']) {
       expect(css.match(new RegExp(`${token}:`, 'g'))?.length).toBe(2)
     }
+    // No second accent hue any more.
+    expect(css).not.toMatch(/--tone-(lavender|mint|orange)/)
+  })
+
+  it('dashboard: one style for all four stat cards, blue icons, no off-palette Tailwind hues', () => {
+    const cards = read('./components/summary-cards.tsx')
+    expect(cards).toContain('bg-card')
+    expect(cards).toContain('bg-primary-light text-primary')
+    expect(cards).not.toMatch(/tone=|kc-pastel|kc-tone-/)
+    for (const path of ['./components/summary-cards.tsx', './components/analytics-card.tsx', './components/classroom-section.tsx', './components/attendance-sections.tsx', './components/assignment-insights.tsx', './components/dashboard-decor.tsx']) {
+      expect(read(path)).not.toMatch(/\b(?:bg|text|from|to|stroke|ring)-(?:violet|purple|orange|amber|emerald|sky|teal|indigo|pink|fuchsia)-\d/)
+    }
+  })
+
+  it('status colours stay for status: present green, late yellow, absent red', () => {
+    const sections = read('./components/attendance-sections.tsx')
+    expect(sections).toContain("{ key: 'present', label: 'มาเรียน', value: b.present, stroke: 'stroke-success', dot: 'bg-success' }")
+    expect(sections).toContain("{ key: 'late', label: 'มาสาย', value: b.late, stroke: 'stroke-warning', dot: 'bg-warning' }")
+    expect(sections).toContain("{ key: 'absent', label: 'ขาดเรียน', value: b.absent, stroke: 'stroke-destructive', dot: 'bg-destructive' }")
   })
 
   it('mixes colors in oklab (an oklch mix with white swings the hue through pink)', () => {
@@ -133,8 +166,46 @@ describe('theme, motion and styling rules', () => {
   })
 
   it('no Tailwind dark: variants in the redesigned files', () => {
-    for (const path of ['./components/dashboard-decor.tsx', './components/summary-cards.tsx', './components/classroom-analytics-dashboard.tsx', './components/analytics-card.tsx', './components/attendance-sections.tsx']) {
+    for (const path of ['./components/dashboard-decor.tsx', './components/summary-cards.tsx', './components/classroom-analytics-dashboard.tsx', './components/analytics-card.tsx', './components/attendance-sections.tsx', './components/hero-class-n.tsx']) {
       expect(read(path)).not.toMatch(/\bdark:/)
     }
+  })
+})
+
+describe('greeting banner: interactive "Class N" (React Bits TechText)', () => {
+  it('replaces the old artwork on the right; the greeting stays complete', () => {
+    const html = render()
+    expect(html).toContain('สวัสดี, ครูทดสอบ')
+    expect(html).toContain('data-testid="hero-class-n"')
+    expect(html).toContain('role="img" aria-label="Class N"')
+    expect(read('./components/dashboard-decor.tsx')).not.toContain('HeroDecoration')
+  })
+
+  it('beside the greeting (flex sibling, not overlaid), 34–38% wide, left out on phones', () => {
+    const hero = read('./components/hero-class-n.tsx')
+    expect(hero).toContain('className="hidden h-28 w-[34%] shrink-0 text-[var(--class-n-ink)] md:-my-4 md:block lg:-my-5 lg:h-32 lg:w-[38%]"')
+    expect(read('./components/classroom-analytics-dashboard.tsx')).toMatch(/<div className="min-w-0 flex-1">[\s\S]*?<\/div>\s*<HeroClassN \/>/)
+  })
+
+  it('uses the requested TechText settings, colours from theme tokens', () => {
+    const css = read('../../index.css')
+    const hero = read('./components/hero-class-n.tsx')
+    for (const prop of ['text="Class N"', 'fontWeight={700}', 'fontSize={100}', 'reveal="letter"', 'dashLength={4}', 'dashGap={2}', 'specks={12}', 'intro="none"', 'introDuration={2}', 'clickKick', 'guides={false}', 'fontFamily=""', 'letterSpacing={-0.05}', 'reach={150}', 'softness={0.7}', 'lineStyle="dashed"', 'strokeWidth={1.5}', 'speed={1}', 'bounce={0.4}', 'selection', 'labels', 'align="center"', 'draggable', 'sweep'])
+      expect(hero).toContain(prop)
+    expect(hero).toContain('color="var(--class-n-ink)"')
+    expect(hero).toContain('accentColor="var(--class-n-accent)"')
+    const light = css.slice(css.indexOf(':root {'), css.indexOf(":root[data-theme='dark']"))
+    expect(light).toContain('--class-n-ink: #285a99;')
+    expect(light).toContain('--class-n-accent: #5685c2;')
+  })
+
+  it('the TechText port keeps reduced motion, off-screen pause and full cleanup', () => {
+    const src = read('./components/tech-text.tsx')
+    expect(src).toContain("window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches")
+    expect(src).toContain('const sweeping = !introducing && s.sweep && !reducedMotion && !pointer.inside && dragging < 0')
+    expect(src).toContain('new IntersectionObserver(')
+    expect(src).toContain('new ResizeObserver(resize)')
+    for (const call of ['resizeObserver.disconnect()', 'intersectionObserver.disconnect()', 'themeObserver.disconnect()', "container.removeEventListener('pointerdown', onDown)"]) expect(src).toContain(call)
+    expect(src).toContain('const token = /^var\\((--[\\w-]+)\\)$/.exec(value.trim())')
   })
 })

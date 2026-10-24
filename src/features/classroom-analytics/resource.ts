@@ -16,18 +16,6 @@ export function combineResources<A, B>(a: Resource<A>, b: Resource<B>): Resource
   return { status: 'success', data: [a.data, b.data] }
 }
 
-/** Theme switches via :root[data-theme='dark'] (not Tailwind's `dark:`),
- * so tones use theme tokens or mid-tone colors readable on both. */
-export type IconTone = 'blue' | 'violet' | 'green' | 'orange' | 'red'
-
-export const ICON_TONE: Record<IconTone, string> = {
-  blue: 'bg-primary/12 text-primary',
-  violet: 'bg-violet-500/15 text-violet-500',
-  green: 'bg-success/15 text-success',
-  orange: 'bg-orange-500/15 text-orange-500',
-  red: 'bg-destructive/12 text-destructive',
-}
-
 export function formatPercent(value: number | null, digits = 0): string {
   return value === null || !Number.isFinite(value) ? '-' : `${value.toFixed(digits)}%`
 }

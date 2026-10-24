@@ -22,7 +22,6 @@ import { formatCount } from '../resource'
 
 export const CLASSROOMS_SECTION_ID = 'classrooms'
 
-const CARD_TONES = ['from-sky-500/25 to-sky-500/5 text-sky-600', 'from-violet-500/25 to-violet-500/5 text-violet-500', 'from-emerald-500/25 to-emerald-500/5 text-emerald-600', 'from-amber-500/25 to-amber-500/5 text-amber-600']
 
 function classroomPath(id: string): string {
   return `/teacher/classrooms/${id}`
@@ -183,9 +182,9 @@ export function ClassroomSection({ cards, countsReady, classroomRecords, editabl
         </div>
       ) : view === 'grid' ? (
         <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {visible.map((card, i) => (
+          {visible.map((card) => (
             <li key={card.classroom.id} className="flex gap-3 rounded-xl border border-border bg-background/60 p-3">
-              <div className={cn('flex w-20 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br', CARD_TONES[i % CARD_TONES.length])} aria-hidden="true">
+              <div className="flex w-20 shrink-0 items-center justify-center rounded-lg bg-primary-light text-primary" aria-hidden="true">
                 <School className="size-8" />
               </div>
               <div className="min-w-0 flex-1">

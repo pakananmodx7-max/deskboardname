@@ -36,7 +36,7 @@ export function AssignmentStatusCard({ resource, onRetry, subjects = [], subject
       </NativeSelect>
     ) : null
   return (
-    <AnalyticsCard title="สถานะการส่งงาน" icon={ClipboardList} tone="orange" action={filter}>
+    <AnalyticsCard title="สถานะการส่งงาน" icon={ClipboardList} action={filter}>
       <SectionBody resource={resource} onRetry={onRetry} skeleton="chart">
         {(p) =>
           p.assignmentCount === 0 ? (
