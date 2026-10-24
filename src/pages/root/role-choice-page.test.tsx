@@ -17,7 +17,7 @@ describe('RoleChoicePage (Class N)', () => {
   })
 
   it('shows the heading, instruction and both cards', () => {
-    expect(html).toMatch(/<h1[^>]*>Class N<\/h1>/)
+    expect(html).toMatch(/<div role="heading" aria-level="1" class="[^"]*"><div class="[^"]*" role="img" aria-label="Class N">/)
     expect(html).toContain('กรุณาเลือกประเภทผู้ใช้งานเพื่อเข้าสู่ระบบ')
     expect(html).toContain('ครูผู้สอน')
     expect(html).toContain('เข้าสู่ระบบสำหรับครูผู้สอน')
@@ -37,14 +37,19 @@ describe('RoleChoicePage (Class N)', () => {
     expect(html).toMatch(/<div aria-hidden="true" class="pointer-events-none absolute inset-0/)
   })
 
-  it('animations are CSS-only, within 12–16 s for the background and 10 s for the heading, and stop for reduced motion', () => {
-    expect(css).toContain('animation: kc-role-title-flow 10s linear infinite;')
-    expect(css).toMatch(/background-clip: text;/)
+  it('the heading is the shared interactive Class N mark, in light colours whatever the app theme', () => {
+    const page = css.slice(css.indexOf('.kc-role-page {'))
+    expect(page.slice(0, page.indexOf('}'))).toContain('--class-n-ink: #285a99;')
+    expect(page.slice(0, page.indexOf('}'))).toContain('--class-n-accent: #5685c2;')
+    expect(css).not.toContain('kc-role-title')
+  })
+
+  it('background animations are CSS-only, within 12–16 s, and stop for reduced motion', () => {
     for (const s of css.matchAll(/kc-role-(?:drift-[abc]|wave-flow) (\d+)s/g)) {
       expect(Number(s[1])).toBeGreaterThanOrEqual(12)
       expect(Number(s[1])).toBeLessThanOrEqual(16)
     }
     const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'))
-    for (const cls of ['.kc-role-title', '.kc-role-blob-a', '.kc-role-blob-b', '.kc-role-blob-c', '.kc-role-wave']) expect(reduced).toContain(cls)
+    for (const cls of ['.kc-role-blob-a', '.kc-role-blob-b', '.kc-role-blob-c', '.kc-role-wave']) expect(reduced).toContain(cls)
   })
 })

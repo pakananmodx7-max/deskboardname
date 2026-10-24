@@ -284,23 +284,9 @@
       radial-gradient(60rem 40rem at 50% 45%, #ffffff 0%, transparent 70%),
       linear-gradient(180deg, #f7faff 0%, #f3f7fd 100%);
     color: #0f172a;
-  }
-
-  /* "Class N": navy → royal → sky → navy, one tile per cycle so the
-     loop is seamless (background-size 200%, moved by exactly 200%). */
-  .kc-role-title {
-    background-image: linear-gradient(90deg, #0b1f4d 0%, #1d4ed8 33%, #38bdf8 66%, #0b1f4d 100%);
-    background-size: 200% 100%;
-    background-repeat: repeat-x;
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-    animation: kc-role-title-flow 10s linear infinite;
-  }
-  @keyframes kc-role-title-flow {
-    from { background-position: 0% 50%; }
-    to { background-position: 200% 50%; }
+    /* The "Class N" mark keeps its light colours here in either theme. */
+    --class-n-ink: #285a99;
+    --class-n-accent: #5685c2;
   }
 
   .kc-role-blob-a {
@@ -373,7 +359,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .kc-role-title,
     .kc-role-blob-a,
     .kc-role-blob-b,
     .kc-role-blob-c,

@@ -1,6 +1,7 @@
 import { ArrowRight, GraduationCap, School, type LucideIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
+import { ClassNMark } from '@/components/brand/class-n-mark'
 import { DeveloperCredit } from '@/components/layout/developer-credit'
 import { cn } from '@/lib/utils'
 
@@ -10,10 +11,13 @@ import { cn } from '@/lib/utils'
  * login form appears. Purely presentational; RootPage decides whether to
  * render this at all (an authenticated session skips straight past it).
  *
- * Branded "Class N". A fixed light design (it does not follow the app's
- * dark theme); the moving background, the heading gradient and the card
- * lift are CSS-only (.kc-role-* in index.css) and stop entirely under
- * prefers-reduced-motion. Decoration never takes pointer events.
+ * Branded "Class N": the heading is the interactive Class N mark (React
+ * Bits TechText, shared with the sign-in pages and the dashboard). A fixed
+ * light design (it does not follow the app's dark theme, so the mark's
+ * colours are pinned in .kc-role-page); the moving background and the
+ * card lift are CSS-only (.kc-role-* in index.css) and stop under
+ * prefers-reduced-motion, as does the mark's idle sweep. Decoration never
+ * takes pointer events.
  */
 export function RoleChoicePage() {
   return (
@@ -28,8 +32,12 @@ export function RoleChoicePage() {
         )}
       >
         <div className="w-full max-w-[66rem] text-center">
-          <h1 className="kc-role-title inline-block pb-2 text-6xl font-extrabold leading-tight tracking-tight sm:text-7xl md:text-8xl">Class N</h1>
-          <p className="mt-3 text-base text-slate-500 sm:text-lg">กรุณาเลือกประเภทผู้ใช้งานเพื่อเข้าสู่ระบบ</p>
+          {/* Page heading (accessible name "Class N"); taller than the text
+              with a negative top margin so the letter labels have room. */}
+          <div role="heading" aria-level={1} className="mx-auto -mt-6 h-28 w-full max-w-[34rem] text-[var(--class-n-ink)] sm:h-36 md:h-44">
+            <ClassNMark />
+          </div>
+          <p className="mt-1 text-base text-slate-500 sm:text-lg">กรุณาเลือกประเภทผู้ใช้งานเพื่อเข้าสู่ระบบ</p>
 
           <div className="mx-auto mt-10 grid max-w-[66rem] gap-5 sm:mt-14 md:grid-cols-2 md:gap-7">
             <RoleCard

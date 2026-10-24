@@ -82,7 +82,8 @@ describe('Branding — one name, "Class N", everywhere it appears', () => {
 
   it('the role choice page ("/") is branded Class N: heading, instruction and developer credit, no old name or subtitle', () => {
     const source = readSource('../../pages/root/role-choice-page.tsx')
-    expect(source).toContain('>Class N</h1>')
+    expect(source).toContain('<div role="heading" aria-level={1}')
+    expect(source).toContain('<ClassNMark />')
     expect(source).toContain('กรุณาเลือกประเภทผู้ใช้งานเพื่อเข้าสู่ระบบ')
     expect(source).toContain("import { DeveloperCredit } from '@/components/layout/developer-credit'")
     const credit = readSource('./developer-credit.tsx')

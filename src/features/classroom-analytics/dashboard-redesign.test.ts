@@ -129,8 +129,12 @@ describe('theme, motion and styling rules', () => {
       ['--accent', '#edf4fb'],
     ])
       expect(light).toContain(`${token}: ${value};`)
+    // Each token is defined once for light and once for dark (the role
+    // choice page additionally pins the Class N colours for its fixed
+    // light design, outside the theme blocks).
+    const themes = css.slice(css.indexOf(':root {'), css.indexOf('@layer base'))
     for (const token of ['--primary-hover', '--primary-light', '--tone-blue', '--class-n-ink', '--class-n-accent']) {
-      expect(css.match(new RegExp(`${token}:`, 'g'))?.length).toBe(2)
+      expect(themes.match(new RegExp(`${token}:`, 'g'))?.length).toBe(2)
     }
     // No second accent hue any more.
     expect(css).not.toMatch(/--tone-(lavender|mint|orange)/)
