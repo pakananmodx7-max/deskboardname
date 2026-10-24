@@ -187,9 +187,10 @@ describe('greeting banner: interactive "Class N" (React Bits TechText)', () => {
     expect(read('./components/classroom-analytics-dashboard.tsx')).toMatch(/<div className="min-w-0 flex-1">[\s\S]*?<\/div>\s*<HeroClassN \/>/)
   })
 
-  it('uses the requested TechText settings, colours from theme tokens', () => {
+  it('uses the requested TechText settings (shared Class N mark), colours from theme tokens', () => {
     const css = read('../../index.css')
-    const hero = read('./components/hero-class-n.tsx')
+    expect(read('./components/hero-class-n.tsx')).toContain('<ClassNMark />')
+    const hero = readFileSync(new URL('../../components/brand/class-n-mark.tsx', import.meta.url), 'utf-8')
     for (const prop of ['text="Class N"', 'fontWeight={700}', 'fontSize={100}', 'reveal="letter"', 'dashLength={4}', 'dashGap={2}', 'specks={12}', 'intro="none"', 'introDuration={2}', 'clickKick', 'guides={false}', 'fontFamily=""', 'letterSpacing={-0.05}', 'reach={150}', 'softness={0.7}', 'lineStyle="dashed"', 'strokeWidth={1.5}', 'speed={1}', 'bounce={0.4}', 'selection', 'labels', 'align="center"', 'draggable', 'sweep'])
       expect(hero).toContain(prop)
     expect(hero).toContain('color="var(--class-n-ink)"')
@@ -200,7 +201,7 @@ describe('greeting banner: interactive "Class N" (React Bits TechText)', () => {
   })
 
   it('the TechText port keeps reduced motion, off-screen pause and full cleanup', () => {
-    const src = read('./components/tech-text.tsx')
+    const src = readFileSync(new URL('../../components/brand/tech-text.tsx', import.meta.url), 'utf-8')
     expect(src).toContain("window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches")
     expect(src).toContain('const sweeping = !introducing && s.sweep && !reducedMotion && !pointer.inside && dragging < 0')
     expect(src).toContain('new IntersectionObserver(')

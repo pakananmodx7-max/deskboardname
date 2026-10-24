@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-const MAIN_TITLE = 'KrunameClass'
+const MAIN_TITLE = 'Class N'
 const SUBTITLE = 'ระบบจัดการห้องเรียน'
 
 function readSource(relativeToThisFile: string): string {
@@ -17,32 +17,42 @@ function readSource(relativeToThisFile: string): string {
  * tab and the backup-export subtitle already said "KrunameClass" —
  * three different names shown across the same app. This guards the
  * unification: every one of those surfaces must show the current
- * "KrunameClass" name, and none may still show the old placeholder
+ * name — now "Class N" (it was "KrunameClass"; the browser tab title,
+ * manifest and Google Drive folder keep that name) — and none may still
+ * show the old placeholder
  * (the feature-specific "AI Classroom Assistant" name on the AI page is
  * a different, deliberately untouched concern — see ai-page.tsx).
  */
-describe('Branding — one name, "KrunameClass", everywhere it appears', () => {
+describe('Branding — one name, "Class N", everywhere it appears', () => {
   const sources: [label: string, path: string][] = [
     ['teacher sidebar', './sidebar.tsx'],
     ['student sidebar', './student-sidebar.tsx'],
     ['top header (real + demo)', './header.tsx'],
-    ['auth shell (login/signup/forgot/reset)', '../auth/auth-shell.tsx'],
   ]
 
   for (const [label, path] of sources) {
-    it(`${label} shows KrunameClass and its subtitle, and no longer shows the old placeholder name`, () => {
+    it(`${label} shows Class N and its subtitle, not the old name or placeholder`, () => {
       const source = readSource(path)
       expect(source).toContain(MAIN_TITLE)
       expect(source).toContain(SUBTITLE)
+      expect(source).not.toMatch(/>KrunameClass</)
       expect(source).not.toContain('ระบบการจัดการชั้นเรียน')
       expect(source).not.toContain('จัดทำโดยครูเนม')
       expect(source).not.toContain('AI Classroom')
     })
   }
 
+  it('the auth shell (login/signup/forgot/reset) shows the interactive Class N mark as its heading, not the old name', () => {
+    const source = readSource('../auth/auth-shell.tsx')
+    expect(source).toContain('<div role="heading" aria-level={1} className="mx-auto -mt-4 h-32 w-full max-w-[18rem] text-[var(--class-n-ink)]">')
+    expect(source).toContain('<ClassNMark />')
+    expect(source).not.toContain('KrunameClass')
+    expect(source).not.toContain('GraduationCap')
+  })
+
   it('the top header shows the new title exactly twice (once for the demo variant, once for the real variant)', () => {
     const source = readSource('./header.tsx')
-    const occurrences = source.split(MAIN_TITLE).length - 1
+    const occurrences = source.split(`>${MAIN_TITLE}</h1>`).length - 1
     expect(occurrences).toBe(2)
   })
 
@@ -55,7 +65,7 @@ describe('Branding — one name, "KrunameClass", everywhere it appears', () => {
 
   it('the teacher sidebar footer is the production copyright line, not a prototype/version label', () => {
     const source = readSource('./sidebar.tsx')
-    expect(source).toContain('© 2026 KrunameClass. All rights reserved.')
+    expect(source).toContain('© 2026 Class N. All rights reserved.')
     expect(source).not.toContain('Prototype')
     expect(source).not.toContain('v0.1.0')
   })

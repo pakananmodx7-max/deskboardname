@@ -142,7 +142,7 @@ function SidebarContent({ onNavigate, mobile = false }: { onNavigate?: () => voi
           <GraduationCap className="size-5" />
         </div>
         <div className="min-w-0 leading-tight">
-          <p className="truncate text-sm font-bold tracking-tight text-foreground">KrunameClass</p>
+          <p className="truncate text-sm font-bold tracking-tight text-foreground">Class N</p>
           <p className="truncate text-xs text-muted-foreground">ระบบจัดการห้องเรียน</p>
         </div>
       </div>
@@ -162,7 +162,7 @@ function SidebarContent({ onNavigate, mobile = false }: { onNavigate?: () => voi
       </nav>
 
       <div className="border-t border-sidebar-border px-5 py-4 text-xs text-muted-foreground">
-        © 2026 KrunameClass. All rights reserved.
+        © 2026 Class N. All rights reserved.
       </div>
     </div>
   )

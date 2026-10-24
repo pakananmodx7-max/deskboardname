@@ -1,6 +1,6 @@
-import { GraduationCap } from 'lucide-react'
 import type { ReactNode } from 'react'
 
+import { ClassNMark } from '@/components/brand/class-n-mark'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
@@ -27,14 +27,12 @@ export function AuthShell({ title, description, children, footer, background }: 
     >
       {background}
       <div className="w-full max-w-sm space-y-6">
-        <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex size-10 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <GraduationCap className="size-5" />
-          </div>
-          <div className="leading-tight">
-            <h1 className="text-lg font-bold tracking-tight">KrunameClass</h1>
-            <p className="text-xs text-muted-foreground">ระบบจัดการห้องเรียน</p>
-          </div>
+        {/* The brand: the interactive "Class N" mark (its accessible name
+            is "Class N"), announced as the page heading. Taller than the
+            text with a negative top margin, so the letter labels above the
+            selection frame are not cut off. */}
+        <div role="heading" aria-level={1} className="mx-auto -mt-4 h-32 w-full max-w-[18rem] text-[var(--class-n-ink)]">
+          <ClassNMark />
         </div>
 
         <Card>

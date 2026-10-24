@@ -3,7 +3,7 @@ import { useEffect, useRef, type CSSProperties } from 'react'
 /*
  * TechText — interactive typography from React Bits
  * (https://reactbits.dev, DavidHDev/react-bits, src/content/TextAnimations/
- * TechText). Ported to TypeScript for the dashboard banner; the drawing,
+ * TechText). Ported to TypeScript for the "Class N" mark (class-n-mark.tsx); the drawing,
  * the spring/kick physics and the pointer handling are unchanged. The
  * additions are marked "KrunameClass:": colours may be given as
  * var(--token), resolved from the element's computed style, so the text
