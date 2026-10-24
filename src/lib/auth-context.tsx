@@ -35,6 +35,11 @@ interface AuthState {
   status: 'loading' | 'ready'
   user: User | null
   profile: Profile | null
+  /** Set when startup could not finish: the session check itself threw,
+   * or the signed-in user's profile could not be loaded (the route guards
+   * wait for it). Only the startup splash reads this — to offer a retry
+   * instead of an endless loading screen; nothing else changes. */
+  startupError: 'session' | 'profile' | null
 }
 
 export interface SignUpInput {
@@ -77,15 +82,19 @@ async function fetchProfile(userId: string): Promise<Profile | null> {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(() =>
-    dataMode === 'supabase' ? { status: 'loading', user: null, profile: null } : { status: 'ready', user: null, profile: null },
+    dataMode === 'supabase'
+      ? { status: 'loading', user: null, profile: null, startupError: null }
+      : { status: 'ready', user: null, profile: null, startupError: null },
   )
 
   const loadProfile = useCallback((userId: string) => {
     fetchProfile(userId)
-      .then((profile) => setState((prev) => (prev.user?.id === userId ? { ...prev, profile } : prev)))
+      .then((profile) => setState((prev) => (prev.user?.id === userId ? { ...prev, profile, startupError: null } : prev)))
       .catch(() => {
         // A profile fetch failing shouldn't block the signed-in state —
         // the header just shows no display name until it can be loaded.
+        // It is noted for the startup splash, which offers a retry.
+        setState((prev) => (prev.user?.id === userId ? { ...prev, startupError: 'profile' } : prev))
       })
   }, [])
 
@@ -99,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (prev.user?.id === user?.id) {
           return { ...prev, status: 'ready', user }
         }
-        return { status: 'ready', user, profile: null }
+        return { status: 'ready', user, profile: null, startupError: null }
       })
       if (user) loadProfile(user.id)
     },
@@ -111,9 +120,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let active = true
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (active) applySession(data.session)
-    })
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (active) applySession(data.session)
+      })
+      .catch(() => {
+        if (active) setState((prev) => ({ ...prev, startupError: 'session' }))
+      })
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (active) applySession(session)

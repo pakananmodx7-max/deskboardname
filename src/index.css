@@ -461,4 +461,168 @@
     mask-image: repeating-linear-gradient(90deg, #000 0 7px, transparent 7px 22px), radial-gradient(120% 90% at 50% 100%, #000 35%, transparent 75%);
     mask-composite: intersect;
   }
+
+  /* ------------------------------------------------------------------
+     Startup splash (features/startup). A fixed light design over the
+     whole viewport, independent of the app theme. The pastel
+     .kc-splash-backdrop lives in index.html so it also paints before the
+     script loads; the Iridescence canvas fades in over it.
+     ------------------------------------------------------------------ */
+  .kc-splash {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    display: flex;
+    width: 100%;
+    height: 100vh;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    color-scheme: light;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    /* One-finger drags stir the background instead of scrolling the page
+       (which would cancel the pointer stream); pinch-zoom stays available
+       where the browser supports allowing it on its own. */
+    touch-action: none;
+    transition: opacity 400ms ease;
+  }
+  @supports (height: 100dvh) {
+    .kc-splash {
+      height: 100dvh;
+    }
+  }
+  @supports (touch-action: pinch-zoom) {
+    .kc-splash {
+      touch-action: pinch-zoom;
+    }
+  }
+  .kc-splash[data-leaving] {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .kc-splash-canvas {
+    position: absolute;
+    inset: 0;
+    animation: kc-splash-fade-in 700ms ease both;
+  }
+  /* A light veil: the reference's paler pastel look, and calmer contrast
+     behind the navy title, without touching the Iridescence settings. */
+  .kc-splash-canvas::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgb(255 255 255 / 0.2);
+    pointer-events: none;
+  }
+  .kc-splash-center {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(1.1rem, 3vh, 1.75rem);
+    padding: 0 1rem;
+    animation: kc-splash-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .kc-splash-title {
+    margin: 0;
+    font-family: "Avenir Next", "Inter", "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(3.25rem, 16vw, 7.5rem);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    color: #0d2266;
+    text-shadow: 0 1px 1px rgb(255 255 255 / 0.35), 0 10px 28px rgb(30 50 130 / 0.18);
+  }
+  .kc-splash-n {
+    background: linear-gradient(165deg, #1f5bff 10%, #22c3f2 90%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    text-shadow: none;
+    filter: drop-shadow(0 8px 18px rgb(34 150 240 / 0.25));
+  }
+  .kc-splash-bar {
+    position: relative;
+    width: clamp(180px, 62vw, 240px);
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.45);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.6), 0 4px 16px rgb(56 110 240 / 0.18);
+  }
+  @media (min-width: 768px) {
+    .kc-splash-bar {
+      width: 300px;
+    }
+  }
+  /* Indeterminate: a glowing segment sweeps across — no fake percentage. */
+  .kc-splash-bar-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 45%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #2f63ff, #38c8f5);
+    box-shadow: 0 0 12px rgb(56 200 245 / 0.65);
+    /* Near-constant speed: the segment is off the track only for an instant. */
+    animation: kc-splash-indeterminate 1.5s cubic-bezier(0.35, 0.15, 0.65, 0.85) infinite;
+  }
+  .kc-splash-credit {
+    position: absolute;
+    right: calc(env(safe-area-inset-right) + 1.5rem);
+    bottom: calc(env(safe-area-inset-bottom) + 1.25rem);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    text-align: right;
+  }
+  @keyframes kc-splash-fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes kc-splash-rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.985);
+    }
+  }
+  @keyframes kc-splash-indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(222%);
+    }
+  }
+  @keyframes kc-splash-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 0.9;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .kc-splash {
+      transition-duration: 200ms;
+    }
+    .kc-splash-center,
+    .kc-splash-canvas {
+      animation: kc-splash-fade-in 300ms ease both;
+    }
+    .kc-splash-bar-fill {
+      width: 100%;
+      animation: kc-splash-pulse 2.4s ease-in-out infinite;
+    }
+  }
 }

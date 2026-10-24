@@ -6,6 +6,7 @@ import { StudentProtectedRoute } from '@/components/auth/student-protected-route
 import { StudentLayout } from '@/layouts/student-layout'
 import { TeacherLayout } from '@/layouts/teacher-layout'
 import { SemesterProvider } from '@/features/semester/semester-context'
+import { StartupGate } from '@/features/startup/startup-gate'
 import { AuthProvider } from '@/lib/auth-context'
 import { ENABLE_TEACHER_REGISTRATION } from '@/lib/feature-flags'
 import { ForgotPasswordPage } from '@/pages/auth/forgot-password-page'
@@ -199,7 +200,9 @@ const router = createBrowserRouter([
 export function AppRouter() {
   return (
     <AuthProvider>
-      <RouterProvider router={router} />
+      <StartupGate>
+        <RouterProvider router={router} />
+      </StartupGate>
     </AuthProvider>
   )
 }

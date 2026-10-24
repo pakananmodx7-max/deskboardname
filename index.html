@@ -21,9 +21,29 @@
       rel="stylesheet"
     />
     <title>KrunameClass | ระบบจัดการชั้นเรียน</title>
+    <style>
+      /* Startup splash backdrop: painted right away, before the app's script
+         loads, and reused by the React splash (src/features/startup) as its
+         static / no-WebGL background. */
+      .kc-splash-backdrop {
+        background-color: #c3d3fb;
+        background-image:
+          radial-gradient(70% 45% at 92% 12%, rgb(176 150 248 / 0.7), transparent 70%),
+          radial-gradient(75% 40% at 0% 38%, rgb(140 214 250 / 0.75), transparent 70%),
+          radial-gradient(85% 45% at 100% 62%, rgb(170 146 246 / 0.6), transparent 72%),
+          radial-gradient(80% 40% at 10% 88%, rgb(150 226 248 / 0.7), transparent 70%),
+          radial-gradient(60% 35% at 60% 100%, rgb(176 150 248 / 0.55), transparent 70%),
+          linear-gradient(165deg, #d6e3ff 0%, #c6d6fb 45%, #d3cbfa 100%);
+      }
+      #root > .kc-splash-boot {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div class="kc-splash-backdrop kc-splash-boot"></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

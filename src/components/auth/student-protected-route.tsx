@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
 
+import { StartupPending } from '@/features/startup/startup-pending'
 import { useAuth } from '@/lib/auth-context'
 import { dataMode } from '@/lib/data-mode'
 
@@ -29,11 +30,7 @@ export function StudentProtectedRoute({ children }: StudentProtectedRouteProps) 
   }
 
   if (status === 'loading') {
-    return (
-      <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
-        กำลังโหลด...
-      </div>
-    )
+    return <StartupPending />
   }
 
   if (!user) {

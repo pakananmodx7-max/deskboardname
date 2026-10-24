@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 
+import { StartupPending } from '@/features/startup/startup-pending'
 import { useAuth } from '@/lib/auth-context'
 import { dataMode } from '@/lib/data-mode'
 import { RoleChoicePage } from '@/pages/root/role-choice-page'
@@ -58,11 +59,7 @@ export function RootPage() {
   }
 
   if (status === 'loading' || (user && !profile)) {
-    return (
-      <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
-        กำลังโหลด...
-      </div>
-    )
+    return <StartupPending />
   }
 
   if (!user) {
@@ -71,11 +68,7 @@ export function RootPage() {
 
   if (isStudent) {
     if (studentDestination === null) {
-      return (
-        <div className="flex h-screen items-center justify-center text-sm text-muted-foreground">
-          กำลังโหลด...
-        </div>
-      )
+      return <StartupPending />
     }
     return <Navigate to={studentDestination} replace />
   }
