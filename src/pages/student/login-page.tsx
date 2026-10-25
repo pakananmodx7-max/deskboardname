@@ -99,6 +99,11 @@ export function StudentLoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+          <div className="flex justify-end">
+            <Link to="/student/forgot-password" className="text-sm font-medium text-primary hover:underline">
+              ลืมรหัสผ่าน?
+            </Link>
+          </div>
         </div>
 
         <Button type="submit" className="w-full" disabled={submitting}>

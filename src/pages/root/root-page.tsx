@@ -4,6 +4,7 @@ import { Navigate } from 'react-router-dom'
 import { StartupPending } from '@/features/startup/startup-pending'
 import { useAuth } from '@/lib/auth-context'
 import { dataMode } from '@/lib/data-mode'
+import { isRecoveryInProgress } from '@/lib/password-recovery'
 import { RoleChoicePage } from '@/pages/root/role-choice-page'
 import { deriveMyLinkStatus, getMyLinkRequests } from '@/services/student-link-service'
 import type { StudentAccountLinkRequest } from '@/types/student-link-request'
@@ -67,6 +68,10 @@ export function RootPage() {
   }
 
   if (isStudent) {
+    // Safety net: a recovery email whose redirect was not allowed lands on
+    // the Site URL ("/") — send the student to the reset form instead of
+    // into the app with the recovery session.
+    if (isRecoveryInProgress()) return <Navigate to="/student/reset-password" replace />
     if (studentDestination === null) {
       return <StartupPending />
     }

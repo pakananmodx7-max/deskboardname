@@ -16,10 +16,12 @@ import { SignupPage } from '@/pages/auth/signup-page'
 import { RootPage } from '@/pages/root/root-page'
 import { StudentAttendancePage } from '@/pages/student/attendance/student-attendance-page'
 import { StudentDashboardPage } from '@/pages/student/dashboard/student-dashboard-page'
+import { StudentForgotPasswordPage } from '@/pages/student/forgot-password-page'
 import { StudentGradesPage } from '@/pages/student/grades/student-grades-page'
 import { StudentLinkAccountPage } from '@/pages/student/link-account-page'
 import { StudentLoginPage } from '@/pages/student/login-page'
 import { StudentPendingPage } from '@/pages/student/pending-page'
+import { StudentResetPasswordPage } from '@/pages/student/reset-password-page'
 import { StudentSignupPage } from '@/pages/student/signup-page'
 import { StudentAssignmentDetailPage } from '@/pages/student/subjects/student-assignment-detail-page'
 import { StudentSubjectDetailPage } from '@/pages/student/subjects/student-subject-detail-page'
@@ -61,6 +63,10 @@ const router = createBrowserRouter([
   { path: 'reset-password', element: <ResetPasswordPage /> },
   { path: 'student/login', element: <StudentLoginPage /> },
   { path: 'student/signup', element: <StudentSignupPage /> },
+  // Student password recovery — public (no guard), so a recovery link is
+  // never redirected away before the new password is saved.
+  { path: 'student/forgot-password', element: <StudentForgotPasswordPage /> },
+  { path: 'student/reset-password', element: <StudentResetPasswordPage /> },
   {
     path: 'student/link-account',
     element: (

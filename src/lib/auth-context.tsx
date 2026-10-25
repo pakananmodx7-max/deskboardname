@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 
 import { dataMode } from '@/lib/data-mode'
 import { ENABLE_TEACHER_REGISTRATION, TeacherRegistrationDisabledError } from '@/lib/feature-flags'
+import { clearRecoveryState, markRecoveryInProgress } from '@/lib/password-recovery'
 import { getSupabaseClient, supabase } from '@/lib/supabase'
 import type { Profile } from '@/types/profile'
 
@@ -67,7 +68,9 @@ interface AuthContextValue extends AuthState {
    * your email" message. */
   signUp: (input: SignUpInput) => Promise<{ needsEmailConfirmation: boolean }>
   signOut: () => Promise<void>
-  sendPasswordReset: (email: string) => Promise<void>
+  /** `redirectPath` is where the emailed link lands (on this origin):
+   * '/reset-password' (teacher, the default) or '/student/reset-password'. */
+  sendPasswordReset: (email: string, redirectPath?: '/reset-password' | '/student/reset-password') => Promise<void>
   updatePassword: (newPassword: string) => Promise<void>
 }
 
@@ -129,7 +132,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (active) setState((prev) => ({ ...prev, startupError: 'session' }))
       })
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      // A recovery link's session may only be used to set a new password
+      // (the reset pages check this mark); signing out ends that state.
+      if (event === 'PASSWORD_RECOVERY') markRecoveryInProgress()
+      if (event === 'SIGNED_OUT') clearRecoveryState()
       if (active) applySession(session)
     })
 
@@ -184,10 +191,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) throw error
       },
 
-      async sendPasswordReset(email) {
+      async sendPasswordReset(email, redirectPath = '/reset-password') {
         const client = getSupabaseClient()
         const { error } = await client.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/reset-password`,
+          redirectTo: `${window.location.origin}${redirectPath}`,
         })
         if (error) throw error
       },

@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
+import { captureRecoveryLink } from '@/lib/password-recovery'
 import { trackPendingWrites } from '@/lib/pending-writes'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -11,6 +12,11 @@ const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
  * throwing during module init when Supabase hasn't been set up yet.
  */
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey)
+
+// Must run before createClient(): supabase-js clears a recovery link's hash
+// while it signs in with it, so this records (without the tokens) that the
+// page was opened from a password-recovery email — see password-recovery.ts.
+captureRecoveryLink()
 
 // The fetch wrapper only counts in-flight writes (see pending-writes.ts) so
 // a PWA update never reloads the page in the middle of a save or upload.
