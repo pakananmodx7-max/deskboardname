@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NotificationsUnavailableError, type RealtimeStatus } from '@/services/app-notification-service'
 
 import { buildDemoTeacherNotifications, createDemoNotificationSource } from './demo-notifications'
-import { COUNT_RECONCILE_MS, createNotificationFeedController, OFFLINE_RESYNC_MS, STALE_AFTER_MS, type NotificationSource } from './notification-feed-controller'
+import { COUNT_RECONCILE_MS, createNotificationFeedController, LIVE_SAFETY_RESYNC_MS, LIVE_TIMEOUT_MS, OFFLINE_RESYNC_MS, STALE_AFTER_MS, type NotificationSource } from './notification-feed-controller'
 import { compareNotifications, INITIAL_FEED_STATE, notificationFeedReducer, type AppNotification, type NotificationFeedAction, type NotificationFeedState } from './notification-model'
 
 function n(id: string, minute: number, patch: Partial<AppNotification> = {}): AppNotification {
@@ -89,12 +89,14 @@ function fakeServer(initial: AppNotification[] = [], pageSize = 3) {
 
 function harness(source: NotificationSource) {
   let state: NotificationFeedState = INITIAL_FEED_STATE
+  const reported: string[][] = []
   const dispatch = (a: NotificationFeedAction) => {
     state = notificationFeedReducer(state, a)
   }
-  const controller = createNotificationFeedController(source, dispatch)
+  const controller = createNotificationFeedController(source, dispatch, { onNew: (items) => reported.push(items.map((i) => i.id)) })
   return {
     controller,
+    reported,
     get state() {
       return state
     },
@@ -226,7 +228,7 @@ describe('reconnection', () => {
     expect(h.state.unreadCount).toBe(2)
   })
 
-  it('refresh fallback: one quiet resync per minute only while offline, none while live', async () => {
+  it('refresh fallback: quiet resyncs only while offline, none while live (until the slow safety check)', async () => {
     const server = fakeServer([n('a', 1)])
     const h = harness(server.source)
     h.controller.start()
@@ -350,5 +352,105 @@ describe('Demo Mode feed', () => {
     expect(await source.countUnread()).toBe(before - 1)
     await source.markAllRead()
     expect(await source.countUnread()).toBe(0)
+  })
+})
+
+describe('teacher bell stays current while Class N is open', () => {
+  it('a channel that never becomes live (stuck join) falls back to resyncs instead of waiting forever', async () => {
+    const server = fakeServer([n('a', 1)])
+    const h = harness(server.source)
+    h.controller.start()
+    await flush()
+    expect(h.state.connection).toBe('connecting')
+    await vi.advanceTimersByTimeAsync(LIVE_TIMEOUT_MS + 1)
+    expect(h.state.connection).toBe('offline')
+    server.insert(n('req', 20, { type: 'link_request' }), false) // never delivered live
+    await vi.advanceTimersByTimeAsync(OFFLINE_RESYNC_MS + 1)
+    expect(h.state.items.map((i) => i.id)).toContain('req')
+    expect(h.state.unreadCount).toBe(2)
+  })
+
+  it('a row created between the first load and the channel going live is not missed', async () => {
+    const server = fakeServer([n('a', 1)])
+    const h = harness(server.source)
+    h.controller.start()
+    await flush()
+    server.insert(n('gap', 15), false) // committed before the join finished
+    server.status('live')
+    await flush()
+    expect(h.state.items.map((i) => i.id)).toContain('gap')
+  })
+
+  it('onNew: reports each new unread row once (live, duplicate delivery, resync) — never the first load', async () => {
+    const server = fakeServer([n('old', 1)])
+    const h = harness(server.source)
+    h.controller.start()
+    await flush()
+    server.status('live')
+    await flush()
+    expect(h.reported).toEqual([])
+    const r1 = n('r1', 59, { type: 'link_request', createdAt: new Date().toISOString() })
+    server.insert(r1)
+    server.deliver(r1)
+    await h.controller.resync()
+    expect(h.reported).toEqual([['r1']])
+  })
+
+  it('several students submitting close together: every request shows, counted once each', async () => {
+    const server = fakeServer()
+    const h = harness(server.source)
+    h.controller.start()
+    await flush()
+    server.status('live')
+    const now = new Date().toISOString()
+    for (const id of ['s1', 's2', 's3']) server.insert(n(id, 59, { type: 'link_request', createdAt: now, id }))
+    await vi.advanceTimersByTimeAsync(COUNT_RECONCILE_MS + 1)
+    expect(h.state.items.map((i) => i.id).sort()).toEqual(['s1', 's2', 's3'])
+    expect(h.state.unreadCount).toBe(3)
+    expect(h.reported.flat().sort()).toEqual(['s1', 's2', 's3'])
+  })
+
+  it('returning to the tab after 10 s catches up (the socket may have been dropped in the background)', async () => {
+    expect(STALE_AFTER_MS).toBe(10_000)
+    expect(OFFLINE_RESYNC_MS).toBe(20_000)
+    const server = fakeServer([n('a', 1)])
+    const h = harness(server.source)
+    h.controller.start()
+    await flush()
+    server.status('live')
+    await flush()
+    server.insert(n('bg', 30, { type: 'link_request', createdAt: new Date().toISOString() }), false)
+    h.controller.resyncIfStale(Date.now() + STALE_AFTER_MS + 1)
+    await flush()
+    expect(h.state.items.map((i) => i.id)).toContain('bg')
+    expect(h.reported).toEqual([['bg']])
+  })
+
+  it('stop also clears the live-timeout watchdog', async () => {
+    const server = fakeServer()
+    const h = harness(server.source)
+    h.controller.start()
+    await flush()
+    h.controller.stop()
+    const loads = server.calls.loadPage
+    await vi.advanceTimersByTimeAsync(LIVE_TIMEOUT_MS + OFFLINE_RESYNC_MS * 2)
+    expect(server.calls.loadPage).toBe(loads)
+  })
+})
+
+describe('live but silent (Realtime subscribed, nothing delivered)', () => {
+  it('a slow safety re-read every 90 s while live and visible bounds the staleness', async () => {
+    const server = fakeServer([n('a', 1)])
+    const h = harness(server.source)
+    h.controller.start()
+    await flush()
+    server.status('live')
+    await flush()
+    server.insert(n('silent', 30, { type: 'link_request' }), false) // never delivered live
+    await vi.advanceTimersByTimeAsync(LIVE_SAFETY_RESYNC_MS - 5_000)
+    expect(h.state.items.map((i) => i.id)).not.toContain('silent')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(h.state.items.map((i) => i.id)).toContain('silent')
+    h.controller.stop()
   })
 })

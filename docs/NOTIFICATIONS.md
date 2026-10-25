@@ -61,15 +61,26 @@ to teachers, and "returned for revision" (submissions have no such state).
 
 - First page of 20 + exact unread count; older pages with
   "โหลดการแจ้งเตือนก่อนหน้า" (keyset pagination on `created_at, id`).
-- Realtime `INSERT`/`UPDATE` on the user's own rows. After a dropped
-  connection, when the browser comes back online, or when the tab is shown
-  again after a minute, the newest page and count are re-read, so nothing
-  missed while offline is lost. Rows are merged by id (no duplicates).
-- While Realtime is offline the bell re-reads once a minute; it never polls
-  while live. Subscriptions and timers are removed on unmount/logout.
+- Realtime `INSERT`/`UPDATE` on the user's own rows, one channel per bell
+  (a fresh topic each time, so a quick remount never reuses a channel that
+  is still being removed). The newest page and count are re-read when the
+  channel first goes live and after every re-join, when the browser comes
+  back online, and when the tab is shown again after 10 s — nothing missed
+  while offline or in the background is lost. Rows are merged by id (no
+  duplicates); the count is re-read shortly after live events.
+- A channel that is not live within 10 s counts as offline. While not live
+  the bell re-reads every 20 s; while live and visible only a slow safety
+  re-read every 90 s (Realtime can say "subscribed" yet deliver nothing if
+  the table is missing from the `supabase_realtime` publication).
+  Subscriptions and timers are removed on unmount/logout.
+- Teacher: a new student link request also shows a small toast with the
+  student and classroom ("ดูคำขอ" opens it); several close together are
+  grouped into one toast.
+- Diagnosing a bell that does not update live:
+  `supabase/diagnostics/notifications_realtime_check.sql` (read-only).
 - Badge shows "99+" above 99. Clicking an item marks it read and opens its
   page (submission → assignment review page with that student's
-  submission open; request → นักเรียน → คำขอเชื่อมบัญชี).
+  submission open; request → นักเรียน → คำขอเชื่อมบัญชี, scrolled to and highlighted via `?request=<id>`).
 - Demo Mode uses an in-memory feed built from the demo data.
 
 Code: `src/features/notifications/`, `src/services/app-notification-service.ts`.

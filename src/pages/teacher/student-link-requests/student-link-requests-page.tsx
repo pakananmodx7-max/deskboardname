@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/components/ui/toast'
 import { toFriendlyErrorMessage } from '@/lib/errors'
+import { cn } from '@/lib/utils'
 import {
   approveLinkRequest,
   bulkApproveLinkRequests,
@@ -27,9 +29,16 @@ import type { StudentLinkRequestForReview } from '@/types/student-link-request'
  * reject_student_link_request RPCs (SECURITY DEFINER, re-verify
  * ownership themselves) — this page never writes to
  * student_account_link_requests or students directly.
+ *
+ * ?request=<id> (from a notification or its toast) reloads the list and
+ * scrolls to / highlights that request; if it is no longer pending (decided
+ * meanwhile, here or on another device) a short note says so.
  */
 export function StudentLinkRequestsPage() {
   const { toast } = useToast()
+  const [searchParams] = useSearchParams()
+  const focusId = searchParams.get('request')
+  const focusRef = useRef<HTMLDivElement | null>(null)
 
   const [requests, setRequests] = useState<StudentLinkRequestForReview[]>([])
   const [loading, setLoading] = useState(true)
@@ -54,9 +63,16 @@ export function StudentLinkRequestsPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Reload when opened, and again when a notification points at another request.
   useEffect(() => {
     refresh()
-  }, [refresh])
+  }, [refresh, focusId])
+
+  useEffect(() => {
+    if (!loading && focusId) focusRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [loading, focusId])
+
+  const focusMissing = Boolean(focusId) && !loading && !error && !requests.some((r) => r.id === focusId)
 
   const allSelected = requests.length > 0 && selectedIds.length === requests.length
 
@@ -126,6 +142,11 @@ export function StudentLinkRequestsPage() {
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {focusMissing && (
+        <p role="status" className="rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+          คำขอที่เลือกได้รับการดำเนินการแล้ว (อนุมัติหรือปฏิเสธไปแล้ว)
+        </p>
+      )}
 
       {!loading && requests.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -158,7 +179,13 @@ export function StudentLinkRequestsPage() {
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {requests.map((request) => (
-            <Card key={request.id}>
+            <Card
+              key={request.id}
+              ref={request.id === focusId ? focusRef : undefined}
+              data-request-id={request.id}
+              aria-current={request.id === focusId ? 'true' : undefined}
+              className={cn(request.id === focusId && 'ring-2 ring-primary ring-offset-2 ring-offset-background')}
+            >
               <CardContent className="space-y-3 pt-5">
                 <div className="flex items-start justify-between gap-2">
                   <label className="flex items-start gap-2">

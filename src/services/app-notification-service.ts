@@ -106,19 +106,29 @@ export function toRealtimeStatus(status: string): RealtimeStatus {
   return 'connecting'
 }
 
+let channelSequence = 0
+
 /**
  * Live INSERT/UPDATE events for the user's own rows (Realtime applies the
  * same SELECT policy). supabase-js re-joins the channel by itself after a
  * network drop; every transition is reported through `onStatus` so the
  * caller can resync missed rows. Returns the cleanup function.
+ *
+ * Each subscription gets its own channel topic: supabase-js hands back an
+ * existing channel with the same topic, and removeChannel() only drops it
+ * after the leave round-trip — so a bell that remounts quickly (React
+ * StrictMode, the teacher layout remounting) would attach to the channel
+ * being torn down, never join, never report a status, and silently get no
+ * events. Postgres changes are still filtered to this user's rows and RLS.
  */
 export function subscribeToMyNotifications(
   userId: string,
   handlers: { onChange: (notification: AppNotification) => void; onStatus: (status: RealtimeStatus) => void },
 ): () => void {
   const supabase = getSupabaseClient()
+  channelSequence += 1
   const channel = supabase
-    .channel(`notifications:${userId}`)
+    .channel(`notifications:${userId}:${Date.now().toString(36)}-${channelSequence}`)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'notifications', filter: `recipient_user_id=eq.${userId}` },

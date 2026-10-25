@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { useToast } from '@/components/ui/toast'
@@ -8,7 +8,7 @@ import { toFriendlyErrorMessage } from '@/lib/errors'
 import { useStudentNotificationsContext } from '@/lib/student-notifications-context'
 
 import { buildDemoTeacherNotifications, createDemoNotificationSource } from './demo-notifications'
-import { mergeStudentFeeds, notificationTarget, type AppNotification } from './notification-model'
+import { mergeStudentFeeds, notificationTarget, TEACHER_LINK_REQUESTS_PATH, type AppNotification } from './notification-model'
 import { NotificationPopover } from './notification-popover'
 import { createSupabaseNotificationSource } from './notification-feed-controller'
 import { useNotificationFeed, type NotificationFeed } from './use-notification-feed'
@@ -54,12 +54,64 @@ function FeedBell({ feed, unavailableText }: { feed: NotificationFeed; unavailab
   )
 }
 
+/** New link requests close together are announced in one toast. */
+export const REQUEST_TOAST_BATCH_MS = 1200
+
+/**
+ * A subtle toast for new student link requests (live, or found after a
+ * reconnect / tab return) — once per request, several at once grouped.
+ * "ดูคำขอ" opens that request (marking it read) or the request list.
+ */
+function useLinkRequestToasts(open: (n: AppNotification) => void) {
+  const { toast } = useToast()
+  const navigate = useNavigate()
+  const pending = useRef<AppNotification[]>([])
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latest = useRef({ open, toast, navigate })
+
+  useEffect(() => {
+    latest.current = { open, toast, navigate }
+  })
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current)
+    },
+    [],
+  )
+
+  return useCallback((items: AppNotification[]) => {
+    const requests = items.filter((n) => n.type === 'link_request')
+    if (requests.length === 0) return
+    pending.current.push(...requests)
+    if (timer.current) return
+    timer.current = setTimeout(() => {
+      timer.current = null
+      const batch = pending.current
+      pending.current = []
+      const { open: openOne, toast: show, navigate: go } = latest.current
+      if (batch.length === 1) {
+        const [n] = batch
+        show(`คำขอเชื่อมบัญชีใหม่ — ${n.body ?? n.title}`, 'info', { action: { label: 'ดูคำขอ', onClick: () => openOne(n) } })
+      } else {
+        show(`มีคำขอเชื่อมบัญชีใหม่ ${batch.length} รายการ`, 'info', { action: { label: 'ดูคำขอ', onClick: () => go(TEACHER_LINK_REQUESTS_PATH) } })
+      }
+    }, REQUEST_TOAST_BATCH_MS)
+  }, [])
+}
+
 /** Real mode, teacher header. */
 export function TeacherNotificationBell() {
   const { user } = useAuth()
   const userId = user?.id ?? null
   const source = useMemo(() => (userId ? createSupabaseNotificationSource(userId) : null), [userId])
-  const feed = useNotificationFeed(source)
+  const markReadRef = useRef<(ids: string[]) => Promise<void>>(async () => {})
+  const markOne = useCallback((n: AppNotification) => markReadRef.current([n.id]), [])
+  const open = useOpenNotification(markOne)
+  const onNew = useLinkRequestToasts(open)
+  const feed = useNotificationFeed(source, onNew)
+  useEffect(() => {
+    markReadRef.current = feed.markRead
+  })
   return <FeedBell feed={feed} unavailableText={TEACHER_UNAVAILABLE} />
 }
 

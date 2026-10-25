@@ -280,8 +280,10 @@ export function notificationTarget(n: AppNotification): string {
     }
     case 'deadline_teacher':
       return subjectId && classroomId && assignmentId ? buildAssignmentDetailPath(subjectId, classroomId, assignmentId) : '/teacher/subjects'
-    case 'link_request':
-      return TEACHER_LINK_REQUESTS_PATH
+    case 'link_request': {
+      const requestId = id(m, 'request_id') ?? id({ entity_id: n.entityId }, 'entity_id')
+      return requestId ? `${TEACHER_LINK_REQUESTS_PATH}?request=${requestId}` : TEACHER_LINK_REQUESTS_PATH
+    }
     case 'link_approved':
     case 'teacher_message':
       return '/student/dashboard'

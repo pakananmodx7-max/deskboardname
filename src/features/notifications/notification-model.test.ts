@@ -125,6 +125,7 @@ describe('navigation targets', () => {
 
   it('link request → the existing approval page (never an approve action)', () => {
     expect(notificationTarget(notification({ id: 'r', type: 'link_request' }))).toBe(TEACHER_LINK_REQUESTS_PATH)
+    expect(notificationTarget(notification({ id: 'r', type: 'link_request', metadata: { request_id: '7e1c4c1a-0000-4000-8000-000000000001' } }))).toBe(`${TEACHER_LINK_REQUESTS_PATH}?request=7e1c4c1a-0000-4000-8000-000000000001`)
     expect(TEACHER_LINK_REQUESTS_PATH).toBe('/teacher/students/requests')
   })
 

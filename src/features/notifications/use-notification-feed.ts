@@ -16,18 +16,20 @@ export interface NotificationFeed extends NotificationFeedState {
  * per signed-in user (memoise it): a new source starts a fresh feed and
  * the previous one is torn down (channel removed, timers cleared).
  */
-export function useNotificationFeed(source: NotificationSource | null): NotificationFeed {
+export function useNotificationFeed(source: NotificationSource | null, onNew?: (items: AppNotification[]) => void): NotificationFeed {
   const [state, dispatch] = useReducer(notificationFeedReducer, INITIAL_FEED_STATE)
   const controller = useRef<NotificationFeedController | null>(null)
   const items = useRef<AppNotification[]>([])
+  const onNewRef = useRef(onNew)
 
   useEffect(() => {
     items.current = state.items
+    onNewRef.current = onNew
   })
 
   useEffect(() => {
     if (!source) return
-    const c = createNotificationFeedController(source, dispatch)
+    const c = createNotificationFeedController(source, dispatch, { onNew: (fresh) => onNewRef.current?.(fresh) })
     controller.current = c
     c.start()
     return () => {
