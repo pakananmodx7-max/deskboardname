@@ -4,9 +4,8 @@ import { describe, expect, it } from 'vitest'
 
 import { parseRecoveryLink, recoveryLinkErrorMessage } from '@/lib/password-recovery'
 
-import { isRecoverySessionError, MIN_PASSWORD_LENGTH, studentRecoveryErrorMessage, validateNewPassword } from './password-recovery-form'
+import { isRecoverySessionError, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH, RECOVERY_ROUTES, recoveryErrorMessage, validateNewPassword } from './recovery-form'
 
-const read = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf-8')
 const BASE = 'https://krunameclass.com/student/reset-password'
 
 describe('parseRecoveryLink — what kind of link opened the page', () => {
@@ -44,13 +43,15 @@ describe('reset form rules', () => {
     expect(validateNewPassword('12345', '12345')).toBe('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร')
     expect(validateNewPassword('123456', '123457')).toBe('รหัสผ่านใหม่และการยืนยันรหัสผ่านไม่ตรงกัน')
     expect(validateNewPassword('123456', '123456')).toBeNull()
+    expect(validateNewPassword('      ', '      ')).toBe('รหัสผ่านต้องไม่เป็นช่องว่างทั้งหมด')
+    expect(validateNewPassword('a'.repeat(MAX_PASSWORD_LENGTH + 1), 'a'.repeat(MAX_PASSWORD_LENGTH + 1))).toContain('ยาวเกินไป')
   })
 
   it('error messages never say whether an email is registered', () => {
-    expect(studentRecoveryErrorMessage({ status: 429, code: 'over_email_send_rate_limit', message: 'email rate limit exceeded' })).toBe('มีการขอลิงก์บ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่')
-    expect(studentRecoveryErrorMessage({ status: 422, code: 'same_password', message: 'New password should be different from the old password.' })).toBe('รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม')
-    expect(studentRecoveryErrorMessage({ status: 422, code: 'weak_password', message: 'Password is known to be weak' })).toContain('ไม่ปลอดภัยพอ')
-    expect(studentRecoveryErrorMessage({ status: 500, message: 'Error sending recovery email' })).toBe('ขณะนี้ระบบส่งอีเมลไม่ได้ กรุณาลองใหม่ภายหลัง')
+    expect(recoveryErrorMessage({ status: 429, code: 'over_email_send_rate_limit', message: 'email rate limit exceeded' })).toBe('มีการขอลิงก์บ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่')
+    expect(recoveryErrorMessage({ status: 422, code: 'same_password', message: 'New password should be different from the old password.' })).toBe('รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม')
+    expect(recoveryErrorMessage({ status: 422, code: 'weak_password', message: 'Password is known to be weak' })).toContain('ไม่ปลอดภัยพอ')
+    expect(recoveryErrorMessage({ status: 500, message: 'Error sending recovery email' })).toBe('ขณะนี้ระบบส่งอีเมลไม่ได้ กรุณาลองใหม่ภายหลัง')
     for (const m of ['มีการขอลิงก์บ่อยเกินไป', 'ขณะนี้ระบบส่งอีเมลไม่ได้']) expect(m).not.toMatch(/ไม่พบ|ไม่มีบัญชี/)
   })
 
@@ -62,43 +63,62 @@ describe('reset form rules', () => {
 })
 
 describe('wiring', () => {
-  const router = read('../../app/router.tsx')
-  const auth = read('../../lib/auth-context.tsx')
+  const read2 = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf-8')
+  const router = read2('../../app/router.tsx')
+  const auth = read2('../../lib/auth-context.tsx')
 
-  it('both student recovery routes are public (no guard can redirect away)', () => {
+  it('every redirect target is a real, public route (no guard can redirect away)', () => {
+    expect(RECOVERY_ROUTES.teacher.resetPath).toBe('/reset-password')
+    expect(RECOVERY_ROUTES.student.resetPath).toBe('/student/reset-password')
+    expect(router).toContain("{ path: 'forgot-password', element: <ForgotPasswordPage /> }")
+    expect(router).toContain("{ path: 'reset-password', element: <ResetPasswordPage /> }")
     expect(router).toContain("{ path: 'student/forgot-password', element: <StudentForgotPasswordPage /> }")
     expect(router).toContain("{ path: 'student/reset-password', element: <StudentResetPasswordPage /> }")
   })
 
-  it('student login links to the student recovery page under the password field', () => {
-    const login = read('./login-page.tsx')
-    expect(login).toMatch(/autoComplete="current-password"[\s\S]*?<Link to="\/student\/forgot-password"[^>]*>\s*ลืมรหัสผ่าน\?\s*<\/Link>/)
+  it('both login pages link to their own recovery page', () => {
+    expect(read2('../../pages/student/login-page.tsx')).toMatch(/autoComplete="current-password"[\s\S]*?<Link to="\/student\/forgot-password"[^>]*>\s*ลืมรหัสผ่าน\?\s*<\/Link>/)
+    expect(read2('../../pages/auth/login-page.tsx')).toMatch(/<Link to="\/forgot-password"[^>]*>\s*ลืมรหัสผ่าน\?\s*<\/Link>/)
   })
 
-  it('the student link lands on /student/reset-password; the teacher default is unchanged', () => {
-    expect(read('./forgot-password-page.tsx')).toContain("await sendPasswordReset(email.trim(), '/student/reset-password')")
-    expect(auth).toContain("async sendPasswordReset(email, redirectPath = '/reset-password') {")
+  it('the emailed link lands on <origin><audience reset path>', () => {
+    expect(read2('./request-recovery-page.tsx')).toContain('await sendPasswordReset(email.trim(), routes.resetPath)')
     expect(auth).toContain('redirectTo: `${window.location.origin}${redirectPath}`,')
-    expect(read('../auth/forgot-password-page.tsx')).toContain('await sendPasswordReset(email.trim())')
+    expect(read2('../../pages/auth/forgot-password-page.tsx')).toContain('<RequestRecoveryPage audience="teacher" />')
+    expect(read2('../../pages/student/forgot-password-page.tsx')).toContain('<RequestRecoveryPage audience="student" />')
+    expect(read2('../../pages/auth/reset-password-page.tsx')).toContain('<ResetPasswordView audience="teacher" />')
+    expect(read2('../../pages/student/reset-password-page.tsx')).toContain('<ResetPasswordView audience="student" />')
   })
 
   it('the recovery link is read before the Supabase client is created (it clears the hash)', () => {
-    const client = read('../../lib/supabase.ts')
+    const client = read2('../../lib/supabase.ts')
     expect(client.indexOf('captureRecoveryLink()')).toBeGreaterThan(0)
     expect(client.indexOf('captureRecoveryLink()')).toBeLessThan(client.indexOf('createClient(supabaseUrl'))
   })
 
-  it('the form requires a recovery link, and the session is signed out after saving', () => {
-    const page = read('./reset-password-page.tsx')
+  it('the form requires a recovery link; after saving: signed out, login chosen from the verified profile role', () => {
+    const page = read2('./reset-password-view.tsx')
     expect(page).toContain('if (linkError || !user || !isRecoveryInProgress()) {')
-    expect(page).toContain('clearRecoveryState()')
+    expect(page).toContain("if (profile) setLoginPath(profile.role === 'student' ? RECOVERY_ROUTES.student.loginPath : RECOVERY_ROUTES.teacher.loginPath)")
     expect(page).toContain('await client.auth.signOut()')
     expect(page).toContain('scrubAuthParamsFromUrl()')
   })
 
+  it('"/" sends a recovery session to the reset form for either role', () => {
+    const root = read2('../../pages/root/root-page.tsx')
+    expect(root).toContain('if (isRecoveryInProgress()) return <Navigate to="/student/reset-password" replace />')
+    expect(root).toContain('if (isRecoveryInProgress()) return <Navigate to="/reset-password" replace />')
+  })
+
+  it('password fields have a labelled show/hide control', () => {
+    const input = read2('./password-input.tsx')
+    expect(input).toContain("aria-label={visible ? 'ซ่อนรหัสผ่าน' : 'แสดงรหัสผ่าน'}")
+    expect(input).toContain('aria-pressed={visible}')
+  })
+
   it('no service-role key or token logging in the browser code', () => {
-    for (const p of ['./reset-password-page.tsx', './forgot-password-page.tsx', '../../lib/password-recovery.ts', '../../lib/supabase.ts']) {
-      const src = read(p)
+    for (const p of ['./reset-password-view.tsx', './request-recovery-page.tsx', '../../lib/password-recovery.ts', '../../lib/supabase.ts']) {
+      const src = read2(p)
       expect(src).not.toMatch(/service_role|SERVICE_ROLE/)
       expect(src).not.toMatch(/console\.(log|info|debug)\(/)
     }
