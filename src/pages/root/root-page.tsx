@@ -69,14 +69,18 @@ export function RootPage() {
 
   if (isStudent) {
     // Safety net: a recovery email whose redirect was not allowed lands on
-    // the Site URL ("/") — send the student to the reset form instead of
-    // into the app with the recovery session.
+    // the Site URL ("/") — send the user to the reset form for their
+    // verified profile role instead of into the app with the recovery
+    // session.
     if (isRecoveryInProgress()) return <Navigate to="/student/reset-password" replace />
     if (studentDestination === null) {
       return <StartupPending />
     }
     return <Navigate to={studentDestination} replace />
   }
+
+  // Same safety net for a teacher's recovery link.
+  if (isRecoveryInProgress()) return <Navigate to="/reset-password" replace />
 
   return <Navigate to="/teacher/dashboard" replace />
 }
