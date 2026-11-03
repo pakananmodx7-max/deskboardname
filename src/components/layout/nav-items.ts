@@ -5,6 +5,7 @@ import {
   ClipboardList,
   FileText,
   LayoutDashboard,
+  NotebookPen,
   School,
   Settings,
   type LucideIcon,
@@ -60,14 +61,14 @@ export type NavEntry = NavLink | NavGroup | NavSection
  *       redirect there — see router.tsx). A classroom's own page
  *       (/teacher/classrooms/:id) also highlights ภาพรวม.
  *     รายวิชา, งานและสื่อการสอน, รายงาน
- *   ระบบเอกสาร, Hermes Agent, ตั้งค่า
+ *   ระบบเอกสาร, พื้นที่ทำงาน (notes/links/tasks), Hermes Agent, ตั้งค่า
  *
  * งานและสื่อการสอน opens the existing "เลือกรายวิชาก่อน" entry page.
  * Attendance has no sidebar entry of its own: it is taken in each subject's
  * เช็คชื่อ tab (รายวิชา → subject → classroom), and the old /teacher/attendance
  * URL only redirects there (see attendance-redirect-page.tsx).
- * /teacher/tasks and /teacher/add-module keep their routes but are not
- * linked here.
+ * /teacher/add-module keeps its route but is not linked here; /teacher/tasks
+ * now redirects into พื้นที่ทำงาน.
  */
 export const CLASSROOM_GROUP_ID = 'classroom-management'
 
@@ -85,6 +86,7 @@ export const navItems: NavEntry[] = [
     ],
   },
   { type: 'link', label: 'ระบบเอกสาร', to: '/teacher/documents', icon: FileText },
+  { type: 'link', label: 'พื้นที่ทำงาน', to: '/teacher/workspace', icon: NotebookPen },
   { type: 'link', label: 'Hermes Agent', to: '/teacher/hermes', icon: Bot },
   { type: 'link', label: 'ตั้งค่า', to: '/teacher/settings', icon: Settings },
 ]

@@ -61,11 +61,21 @@ describe('router — new routes for the redesigned IA', () => {
     expect(source).toContain("{ path: 'requests', element: <StudentLinkRequestsPage /> }")
   })
 
-  it('ระบบเอกสาร is the Document Center; tasks/add-module stay coming-soon placeholders', () => {
+  it('ระบบเอกสาร is the Document Center; add-module stays a coming-soon placeholder', () => {
     expect(source).toContain("{ path: 'documents', element: <DocumentCenterPage /> }")
     expect(source).not.toContain("{ path: 'documents', element: <ComingSoonModulePage")
-    expect(source).toContain("{ path: 'tasks', element: <ComingSoonModulePage")
     expect(source).toContain("{ path: 'add-module', element: <ComingSoonModulePage")
+  })
+
+  it('พื้นที่ทำงาน lives inside the teacher-only /teacher tree; the old tasks placeholder redirects to it', () => {
+    expect(source).toContain("{ path: 'workspace', element: <WorkspacePage /> }")
+    expect(source).toContain("{ path: 'tasks', element: <Navigate to=\"/teacher/workspace?tab=tasks\" replace /> }")
+    expect(source).not.toContain("{ path: 'tasks', element: <ComingSoonModulePage")
+    // Declared after the guarded '/teacher' layout opens, before the student tree could reach it.
+    const teacherTree = source.slice(source.indexOf("path: '/teacher',"))
+    expect(teacherTree).toContain('<ProtectedRoute>')
+    expect(teacherTree).toContain("{ path: 'workspace', element: <WorkspacePage /> }")
+    expect(source.slice(0, source.indexOf("path: '/teacher',"))).not.toContain('WorkspacePage />')
   })
 })
 

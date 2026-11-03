@@ -26,11 +26,12 @@ describe('navItems — teacher sidebar hierarchy', () => {
     ])
   })
 
-  it('ระบบเอกสาร, Hermes Agent and ตั้งค่า stay outside the group, in this order', () => {
+  it('ระบบเอกสาร, พื้นที่ทำงาน, Hermes Agent and ตั้งค่า stay outside the group, in this order', () => {
     const rest = navItems.slice(1)
     expect(rest.every((e) => e.type === 'link')).toBe(true)
     expect(rest.map((e) => (e.type === 'link' ? [e.label, e.to] : null))).toEqual([
       ['ระบบเอกสาร', '/teacher/documents'],
+      ['พื้นที่ทำงาน', '/teacher/workspace'],
       ['Hermes Agent', '/teacher/hermes'],
       ['ตั้งค่า', '/teacher/settings'],
     ])

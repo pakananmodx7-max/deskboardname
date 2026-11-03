@@ -1,4 +1,4 @@
-import { ListChecks, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 
 import { ProtectedRoute } from '@/components/auth/protected-route'
@@ -43,6 +43,7 @@ import { SettingsPage } from '@/pages/teacher/settings/settings-page'
 import { StudentLinkRequestsPage } from '@/pages/teacher/student-link-requests/student-link-requests-page'
 import { StudentsSectionLayout } from '@/pages/teacher/students/students-section-layout'
 import { StudentsPage } from '@/pages/teacher/students/students-page'
+import { WorkspacePage } from '@/pages/teacher/workspace/workspace-page'
 import { StudentAnalyticsPage } from '@/pages/teacher/subjects/student-analytics-page'
 import { SubjectClassroomAssignmentDetailPage } from '@/pages/teacher/subjects/subject-classroom-assignment-detail-page'
 import { SubjectClassroomWorkspacePage } from '@/pages/teacher/subjects/subject-classroom-workspace-page'
@@ -184,7 +185,12 @@ const router = createBrowserRouter([
       { path: 'ai', element: <Navigate to="/teacher/hermes" replace /> },
       { path: 'integrations', element: <IntegrationsPage /> },
       { path: 'documents', element: <DocumentCenterPage /> },
-      { path: 'tasks', element: <ComingSoonModulePage icon={ListChecks} title="งานและเตือนความจำ" description="รายการสิ่งที่ต้องทำและการเตือนความจำส่วนตัวของคุณ" badge="เร็ว ๆ นี้" /> },
+      // พื้นที่ทำงานของฉัน — the teacher's private notes, links and tasks
+      // (0033_teacher_workspace.sql). Teacher-only: <ProtectedRoute> above
+      // keeps students out and RLS limits every row to its owner.
+      { path: 'workspace', element: <WorkspacePage /> },
+      // The old "งานและเตือนความจำ" placeholder is now the workspace's tasks.
+      { path: 'tasks', element: <Navigate to="/teacher/workspace?tab=tasks" replace /> },
       { path: 'add-module', element: <ComingSoonModulePage icon={Plus} title="เพิ่มระบบใหม่" description="บอกเราว่าคุณอยากให้เพิ่มระบบอะไรเข้ามาในแพลตฟอร์มนี้ต่อไป" /> },
       { path: 'settings', element: <SettingsPage /> },
       // TEMPORARY developer-only diagnostic panel for the Teacher Agent

@@ -1,4 +1,4 @@
-import { CheckCircle2, Info, X } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react'
 import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
@@ -11,7 +11,7 @@ interface ToastAction {
 interface ToastItem {
   id: number
   message: string
-  variant: 'success' | 'info'
+  variant: 'success' | 'info' | 'error'
   action?: ToastAction
 }
 
@@ -24,6 +24,7 @@ const ToastContext = createContext<ToastContextValue | null>(null)
 
 const AUTO_DISMISS_MS = 3200
 const ACTION_DISMISS_MS = 7000
+const ERROR_DISMISS_MS = 6000
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([])
@@ -36,7 +37,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (message: string, variant: ToastItem['variant'] = 'success', options?: { action?: ToastAction }) => {
       const id = Date.now() + Math.random()
       setToasts((prev) => [...prev, { id, message, variant, action: options?.action }])
-      setTimeout(() => dismiss(id), options?.action ? ACTION_DISMISS_MS : AUTO_DISMISS_MS)
+      setTimeout(() => dismiss(id), options?.action ? ACTION_DISMISS_MS : variant === 'error' ? ERROR_DISMISS_MS : AUTO_DISMISS_MS)
     },
     [dismiss],
   )
@@ -54,6 +55,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           >
             {t.variant === 'success' ? (
               <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+            ) : t.variant === 'error' ? (
+              <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
             ) : (
               <Info className="mt-0.5 size-4 shrink-0 text-primary" />
             )}
